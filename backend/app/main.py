@@ -1,0 +1,103 @@
+# /app/main.py
+
+import os
+import time
+import uvicorn
+import asyncio
+from fastapi import FastAPI, Request, HTTPException
+from fastapi.responses import JSONResponse
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.trustedhost import TrustedHostMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
+from starlette.staticfiles import StaticFiles
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from slowapi.middleware import SlowAPIMiddleware
+
+from app.config.settings import settings
+from app.utils.lifecycle import lifespan
+from app.utils.metrics import response_time_histogram
+from app.utils.rate_limiter import limiter # <-- CHANGED: Import from new location
+from app.routes import auth, admin, webhooks, public, dashboard
+
+# Initialize the FastAPI application
+app = FastAPI(
+    title="FeelOri AI WhatsApp Assistant",
+    version="2.0.0",
+    description="Refactored AI WhatsApp assistant with enterprise features",
+    lifespan=lifespan,
+    openapi_url=f"/api/{settings.api_version}/openapi.json" if settings.environment != "production" else None,
+    docs_url=f"/api/{settings.api_version}/docs" if settings.environment != "production" else None,
+    redoc_url=f"/api/{settings.api_version}/redoc" if settings.environment != "production" else None,
+)
+
+# --- Static Files ---
+# Create a 'static' directory in your project's root folder (same level as 'app' folder)
+# Your dashboard.html file should go inside it.
+basedir = os.path.abspath(os.path.dirname(__file__))
+static_dir_path = os.path.join(basedir, "..", "static")
+os.makedirs(static_dir_path, exist_ok=True)
+app.mount("/static", StaticFiles(directory=static_dir_path), name="static")
+
+# --- Rate Limiting ---
+# THE LIMITER DEFINITION IS REMOVED FROM HERE
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+# --- Middleware ---
+# Origins for CORS
+cors_origins = [origin.strip() for origin in settings.cors_allowed_origins.split(",") if origin.strip()]
+if settings.environment != "production":
+    cors_origins.extend(["http://localhost:3000", "http://127.0.0.1:3000"])
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=cors_origins,
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["*"],
+)
+
+if settings.environment != "test":
+    allowed_hosts = [host.strip() for host in settings.allowed_hosts.split(",") if host.strip()]
+    if allowed_hosts:
+        app.add_middleware(TrustedHostMiddleware, allowed_hosts=allowed_hosts)
+
+app.add_middleware(GZipMiddleware, minimum_size=1000)
+app.add_middleware(SlowAPIMiddleware)
+
+@app.middleware("http")
+async def performance_middleware(request: Request, call_next):
+    start_time = time.time()
+    response = await call_next(request)
+    process_time = time.time() - start_time
+    response_time_histogram.labels(endpoint=request.url.path).observe(process_time)
+    response.headers["X-Process-Time"] = str(process_time)
+    return response
+
+@app.middleware("http")
+async def timeout_middleware(request: Request, call_next):
+    try:
+        return await asyncio.wait_for(call_next(request), timeout=30.0)
+    except asyncio.TimeoutError:
+        return JSONResponse({"detail": "Request timed out"}, status_code=504)
+
+# --- API Routers ---
+app.include_router(public.router)
+app.include_router(auth.router, prefix=f"/api/{settings.api_version}")
+app.include_router(admin.router, prefix=f"/api/{settings.api_version}")
+app.include_router(webhooks.router, prefix=f"/api/{settings.api_version}")
+app.include_router(dashboard.router, prefix=f"/api/{settings.api_version}")
+
+# --- Main Entry Point for Uvicorn ---
+if __name__ == "__main__":
+    port = int(os.getenv("PORT", "8000"))
+    host = os.getenv("HOST", "127.0.0.1")
+    
+    uvicorn.run(
+        "app.main:app",
+        host=host,
+        port=port,
+        reload=True if settings.environment == "development" else False,
+        workers=settings.workers if settings.environment == "production" else 1
+    )

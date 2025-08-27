@@ -1,0 +1,151 @@
+{
+  "metadata": {
+    "projectName": "FeelOri AI WhatsApp Assistant",
+    "version": "2.0.0",
+    "apiRoot": "/api/v1",
+    "description": "Mapping of backend API endpoints, configurations, and strings for frontend development."
+  },
+  "apiEndpoints": [
+    {
+      "path": "/auth/login",
+      "method": "POST",
+      "description": "Authenticates a user and returns a JWT.",
+      "auth_required": false,
+      "inputs": {
+        "body": {
+          "model": "LoginRequest",
+          "schema": {
+            "password": "string (min 12 chars)"
+          }
+        }
+      },
+      "outputs": {
+        "200": {
+          "model": "TokenResponse",
+          "schema": {
+            "access_token": "string",
+            "token_type": "string",
+            "expires_in": "integer"
+          }
+        },
+        "401": "Invalid credentials",
+        "429": "Too many failed attempts"
+      }
+    },
+    {
+      "path": "/auth/me",
+      "method": "GET",
+      "description": "Verifies the current user's token and returns their info.",
+      "auth_required": true,
+      "inputs": {},
+      "outputs": {
+        "200": {
+          "model": "APIResponse",
+          "schema": {
+            "success": true,
+            "message": "string",
+            "data": { "user": { "username": "string" } }
+          }
+        }
+      }
+    },
+    {
+      "path": "/packing/orders",
+      "method": "GET",
+      "description": "Retrieves the list of all orders for the packing dashboard.",
+      "auth_required": true,
+      "inputs": {},
+      "outputs": {
+        "200": {
+          "model": "APIResponse",
+          "schema": {
+            "data": {
+              "orders": "[...]"
+            }
+          }
+        }
+      }
+    },
+    {
+      "path": "/packing/orders/{order_id}/start",
+      "method": "POST",
+      "description": "Moves a pending order to 'In Progress'.",
+      "auth_required": true,
+      "inputs": {
+        "path": {
+          "order_id": "integer"
+        }
+      },
+      "outputs": {
+        "200": { "model": "APIResponse" }
+      }
+    },
+    {
+      "path": "/packing/orders/{order_id}/hold",
+      "method": "POST",
+      "description": "Puts an order on hold with a reason.",
+      "auth_required": true,
+      "inputs": {
+        "path": { "order_id": "integer" },
+        "body": {
+          "model": "HoldOrderRequest",
+          "schema": {
+            "reason": "string",
+            "problem_item_skus": "array[string]",
+            "notes": "string"
+          }
+        }
+      },
+      "outputs": {
+        "200": { "model": "APIResponse" }
+      }
+    },
+    {
+      "path": "/packing/orders/{order_id}/fulfill",
+      "method": "POST",
+      "description": "Fulfills an order in Shopify and marks it complete.",
+      "auth_required": true,
+      "inputs": {
+        "path": { "order_id": "integer" },
+        "body": {
+          "model": "FulfillOrderRequest",
+          "schema": {
+            "packer_name": "string",
+            "tracking_number": "string",
+            "carrier": "string"
+          }
+        }
+      },
+      "outputs": {
+        "200": { "model": "APIResponse" }
+      }
+    },
+    {
+      "path": "/packing/metrics",
+      "method": "GET",
+      "description": "Retrieves key performance indicators for the packing dashboard.",
+      "auth_required": true,
+      "inputs": {},
+      "outputs": {
+        "200": { "model": "APIResponse" }
+      }
+    }
+  ],
+  "configurable_constants": {
+    "source": "/app/config/settings.py",
+    "description": "Key values from the environment that the frontend might need.",
+    "values": {
+      "PACKER_NAMES": "settings.packing_executive_names (comma-separated)",
+      "API_VERSION": "settings.api_version"
+    }
+  },
+  "ui_strings": {
+    "source": "/app/config/strings.py",
+    "description": "Static text strings used in backend responses. Frontend could potentially reuse these.",
+    "values": {
+      "CONTACT_INFO": "Full contact details block.",
+      "RESELLER_INFO": "Information for potential resellers.",
+      "SHIPPING_POLICY_INFO": "Details on shipping timelines and costs."
+    }
+  }
+}

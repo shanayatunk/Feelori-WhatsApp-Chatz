@@ -1,0 +1,67 @@
+# Environment variables (IMPORTANT: Never commit API keys!)
+.env
+**/.env
+*.env
+
+# Dependencies
+node_modules/
+venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Build outputs
+build/
+dist/
+.next/
+
+# Logs
+*.log
+logs/
+/var/log/
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Database
+*.db
+*.sqlite
+
+# Backup files
+backups/
+
+# SSL certificates
+ssl/
+*.pem
+*.key
+*.crt
+
+# Docker volumes
+mongo_data/
+redis_data/
+prometheus_data/
+grafana_data/
+elasticsearch_data/
+
+# Test artifacts
+.pytest_cache/
+htmlcov/
+.coverage
+.nyc_output
+
+# Temporary files
+*.tmp
+*.temp
+.cache/
+
+# Executables
+*.exe
+*.out
+*.so

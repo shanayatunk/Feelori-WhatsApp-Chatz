@@ -1,0 +1,313 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FeelOri Packing Dashboard</title>
+    <style>
+        :root {
+            --primary-color: #ff4d6d;
+            --primary-color-light: rgba(255, 77, 109, 0.2);
+            --secondary-color: #6c757d;
+            --success-color: #28a745;
+            --danger-color: #dc3545;
+            --warning-color: #ffc107;
+            --bg-color: #f0f2f5;
+            --card-bg: #ffffff;
+            --border-color: #e0e0e0;
+            --text-color: #333;
+            --shadow: 0 4px 12px rgba(0,0,0,0.08);
+            --border-radius: 8px;
+        }
+        * { box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background-color: var(--bg-color); margin: 0; color: var(--text-color); line-height: 1.6; }
+        .container { max-width: 1300px; margin: auto; padding: 15px; }
+        .spinner { border: 4px solid #f3f3f3; border-top: 4px solid var(--primary-color); border-radius: 50%; width: 40px; height: 40px; animation: spin 1s linear infinite; margin: 20px auto; }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+        .loading-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(255,255,255,0.9); display: flex; align-items: center; justify-content: center; z-index: 9999; display: none; }
+        button, a.button { cursor: pointer; border: 1px solid transparent; padding: 10px 18px; border-radius: 6px; font-weight: 500; text-decoration: none; display: inline-block; transition: all 0.2s ease; font-size: 14px; }
+        button:hover, a.button:hover { transform: translateY(-1px); box-shadow: 0 4px 8px rgba(0,0,0,0.15); }
+        button:disabled { opacity: 0.6; cursor: not-allowed; transform: none; }
+        .btn-primary { background-color: var(--primary-color); color: white; border-color: var(--primary-color);}
+        .btn-secondary { background-color: var(--secondary-color); color: white; border-color: var(--secondary-color);}
+        .btn-success { background-color: var(--success-color); color: white; border-color: var(--success-color);}
+        .btn-danger { background-color: var(--danger-color); color: white; border-color: var(--danger-color);}
+        .btn-warning { background-color: var(--warning-color); color: black; border-color: var(--warning-color);}
+        .btn-outline { background-color: transparent; color: var(--secondary-color); border-color: var(--border-color); }
+        .btn-outline:hover { background-color: var(--secondary-color); color: white; border-color: var(--secondary-color); }
+        .alert { display: flex; justify-content: space-between; align-items: center; padding: 12px 16px; border-radius: 6px; margin-bottom: 15px; border-left: 4px solid; }
+        .alert-close { cursor: pointer; border: none; background: none; font-size: 1.2rem; font-weight: bold; color: inherit; opacity: 0.7; padding: 0 0 0 15px; }
+        .alert-close:hover { opacity: 1; }
+        .alert-error { background-color: #f8d7da; color: #721c24; border-left-color: var(--danger-color); }
+        .alert-success { background-color: #d4edda; color: #155724; border-left-color: var(--success-color); }
+        #login-container { max-width: 400px; margin: 100px auto; text-align: center; background: var(--card-bg); padding: 40px; border-radius: var(--border-radius); box-shadow: var(--shadow); }
+        #login-container h1 { margin-bottom: 10px; color: var(--primary-color); }
+        #login-container input { width: 100%; padding: 12px; margin-bottom: 20px; border: 1px solid #ccc; border-radius: 4px; font-size: 16px; transition: border-color 0.2s ease; }
+        #login-container input:focus { outline: none; border-color: var(--primary-color); box-shadow: 0 0 0 3px var(--primary-color-light); }
+        .header { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; margin-bottom: 20px; padding-bottom: 15px; border-bottom: 2px solid var(--border-color); }
+        .header h1 { margin: 0; color: var(--text-color); }
+        .header-controls { display: flex; gap: 10px; align-items: center; }
+        .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 15px; margin-bottom: 20px; overflow: hidden; max-height: 500px; transition: max-height 0.5s ease-in-out, margin-bottom 0.5s ease-in-out, padding 0.5s ease-in-out; }
+        .stats-collapsed .stats { max-height: 0; margin-bottom: 0; padding-top: 0; padding-bottom: 0; }
+        .stat-card { background: var(--card-bg); padding: 20px; border-radius: var(--border-radius); box-shadow: var(--shadow); text-align: center; cursor: pointer; border: 2px solid transparent; transition: all 0.2s ease-in-out; }
+        .stat-card:hover { transform: translateY(-3px); border-color: #ccc; }
+        .stat-card.active { border-color: var(--primary-color); box-shadow: 0 0 15px var(--primary-color-light); }
+        .stat-icon { font-size: 1.5em; margin-bottom: 8px; color: var(--secondary-color); }
+        .stat-number { font-size: 2.2em; font-weight: bold; color: var(--primary-color); margin: 0; }
+        .stat-label { margin: 5px 0 0 0; color: var(--secondary-color); font-size: 0.9em; font-weight: 500; }
+        .tabs { display: none; }
+        .columns { display: grid; grid-template-columns: 1fr; gap: 20px; }
+        .column { background-color: #f8f9fa; border-radius: var(--border-radius); padding: 15px; border: 1px solid var(--border-color); }
+        .column h2 { margin: 0 0 15px; font-size: 1.2em; padding: 0 5px; color: var(--text-color); display: flex; justify-content: space-between; align-items: center; }
+        .column-count { background: var(--primary-color); color: white; padding: 4px 8px; border-radius: 12px; font-size: 0.8em; }
+        .order-card { background-color: var(--card-bg); border-radius: 6px; padding: 15px; margin-bottom: 12px; box-shadow: 0 2px 4px rgba(0,0,0,0.07); cursor: pointer; transition: all 0.2s ease; border-left: 4px solid transparent; }
+        .order-card:hover { transform: translateY(-3px); box-shadow: 0 5px 10px rgba(0,0,0,0.12); }
+        .order-card.highlight { animation: highlight-fade 2s ease-out; }
+        @keyframes highlight-fade { 0% { background-color: var(--primary-color-light); } 100% { background-color: var(--card-bg); } }
+        .order-card.pending { border-left-color: var(--warning-color); }
+        .order-card.in-progress { border-left-color: var(--primary-color); }
+        .order-card.on-hold { border-left-color: var(--danger-color); }
+        .order-card.completed { border-left-color: var(--success-color); }
+        .order-card h3 { margin: 0 0 8px; color: var(--text-color); font-size: 1.1em; display: flex; justify-content: space-between; align-items: center; }
+        .order-card p { margin: 4px 0; color: #666; font-size: 0.9em; }
+        .order-priority { display: inline-block; padding: 2px 8px; border-radius: 12px; font-size: 0.8em; font-weight: bold; }
+        .priority-high { background: #ffebee; color: #c62828; }
+        .priority-medium { background: #fff3e0; color: #ef6c00; }
+        .priority-low { background: #e8f5e8; color: #2e7d32; }
+        .hold-details, .previously-on-hold { border-radius: 4px; padding: 8px; margin-top: 10px; font-size: 0.85em; }
+        .hold-details strong, .previously-on-hold strong { display: block; margin-bottom: 4px; }
+        .hold-details ul, .previously-on-hold ul { margin: 5px 0 0 20px; padding: 0; list-style-type: circle; }
+        .hold-details { background-color: #fff0f3; border: 1px solid #ffd0d9; }
+        .hold-details strong { color: var(--danger-color); }
+        .previously-on-hold { background-color: #fff9e6; border: 1px solid #ffecb3; }
+        .previously-on-hold strong { color: #ef6c00; }
+        .packer-info { font-size: 0.85em; color: var(--secondary-color); font-style: italic; margin-top: 8px; }
+        #search-container { width: 100%; margin-bottom: 15px; }
+        #search-orders { width: 100%; padding: 12px; font-size: 16px; border-radius: 6px; border: 1px solid var(--border-color); }
+        #search-orders:focus { border-color: var(--primary-color); box-shadow: 0 0 0 3px var(--primary-color-light); outline: none; }
+        .modal { display: none; position: fixed; z-index: 1000; left: 0; top: 0; width: 100%; height: 100%; overflow: auto; background-color: rgba(0,0,0,0.5); animation: fadeIn 0.2s ease; }
+        @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+        .modal-content { background-color: var(--card-bg); margin: 5% auto; padding: 0; border-radius: var(--border-radius); max-width: 600px; width: 90%; box-shadow: var(--shadow); animation: slideIn 0.3s ease; }
+        @keyframes slideIn { from { transform: translateY(-50px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+        .modal-header { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--border-color); padding: 20px; background: #f8f9fa; border-radius: var(--border-radius) var(--border-radius) 0 0; }
+        .modal-header h2 { margin: 0; color: var(--text-color); }
+        .close-button { font-size: 1.5rem; font-weight: bold; cursor: pointer; color: #aaa; transition: color 0.2s ease; padding: 5px; line-height: 1; }
+        .close-button:hover { color: #000; }
+        .modal-body { padding: 20px; max-height: 60vh; overflow-y: auto; }
+        .modal-body .item { display: flex; align-items: center; margin-bottom: 15px; padding: 10px; background: #f8f9fa; border-radius: 6px; }
+        .modal-body .item img { width: 60px; height: 60px; border-radius: 4px; margin-right: 15px; object-fit: cover; border: 1px solid var(--border-color); }
+        .item-details h4 { margin: 0 0 5px 0; color: var(--text-color); }
+        .item-details p { margin: 0; color: #666; font-size: 0.9em; }
+        .modal-footer { border-top: 1px solid var(--border-color); padding: 20px; text-align: right; background: #f8f9fa; border-radius: 0 0 var(--border-radius) var(--border-radius); }
+        .modal-footer button { margin-left: 10px; }
+        .form-group { margin-bottom: 20px; }
+        .form-group label { display: block; margin-bottom: 8px; font-weight: 500; color: var(--text-color); }
+        .form-group input, .form-group select, .form-group textarea { width: 100%; padding: 12px; border: 1px solid #ccc; border-radius: 4px; font-size: 14px; transition: border-color 0.2s ease; }
+        .form-group input:focus, .form-group select:focus, .form-group textarea:focus { outline: none; border-color: var(--primary-color); box-shadow: 0 0 0 3px var(--primary-color-light); }
+        .form-group textarea { resize: vertical; min-height: 80px; }
+        .checkbox-group { display: flex; flex-direction: column; gap: 8px; }
+        .checkbox-group label { display: flex; align-items: center; font-weight: normal; cursor: pointer; padding: 8px; border-radius: 4px; transition: background-color 0.2s ease; }
+        .checkbox-group label:hover { background-color: #f0f2f5; }
+        .checkbox-group input[type="checkbox"] { width: auto; margin-right: 8px; transform: scale(1.2); }
+        #toggle-stats-btn { margin-right: 10px; }
+        #toggle-stats-btn .icon { display: inline-block; transition: transform 0.3s ease; }
+        .stats-collapsed #toggle-stats-btn .icon { transform: rotate(180deg); }
+        @media (min-width: 768px) { .columns { grid-template-columns: repeat(4, 1fr); } }
+        @media (max-width: 767px) { .container { padding: 10px; } .modal-content { margin: 10% auto; width: 95%; } .header { flex-direction: column; gap: 10px; text-align: center; } .header-controls { order: 2; } .stats { grid-template-columns: repeat(2, 1fr); } #search-container { order: 3; } }
+        .empty-state { text-align: center; padding: 40px 20px; color: #666; }
+    </style>
+</head>
+<body>
+    <div class="loading-overlay" id="loading-overlay"><div class="spinner"></div></div>
+    <div class="container" id="main-container">
+        <div id="login-container">
+            <h1>🔐 FeelOri Dashboard Login</h1>
+            <p>Please enter your credentials to continue.</p>
+            <form id="login-form"><input type="password" id="password" placeholder="Enter Password" required><button type="submit" class="btn-primary" id="login-btn">Log In</button></form>
+            <div id="login-error"></div>
+        </div>
+        <div id="dashboard-container" style="display: none;">
+            <div class="header">
+                <div><h1>📦 Packing Dashboard</h1><div id="last-updated" style="font-size: 0.9em; color: #666;"></div></div>
+                <div class="header-controls">
+                    <button id="toggle-stats-btn" class="btn-outline">Hide Stats <span class="icon">▲</span></button>
+                    <button id="refresh-button" class="btn-primary">🔄 Refresh</button>
+                    <button id="logout-button" class="btn-outline">Logout</button>
+                </div>
+                <div id="search-container">
+                    <input type="search" id="search-orders" placeholder="🔍 Search by Order # or Customer Name...">
+                </div>
+            </div>
+            <div class="stats" id="stats-container"></div>
+            <div id="error-container"></div>
+            <div class="columns" id="columns"></div>
+        </div>
+    </div>
+    <div id="details-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header"><h2 id="details-modal-title">Order Details</h2><span class="close-button">&times;</span></div>
+            <div class="modal-body" id="details-modal-body"></div>
+            <div class="modal-footer" id="details-modal-footer"></div>
+        </div>
+    </div>
+    <script src="https://cdn.jsdelivr.net/npm/morphdom@2.7.0/dist/morphdom-umd.min.js"></script>
+    <script>
+        const CONFIG = { API_BASE: "/api/v1", PACKER_NAMES: ["Swathi", "Dharam", "Pushpa", "Deepika"], CARRIER_NAMES: ["India Post", "Delhivery", "Blue Dart", "DTDC", "FedEx", "Other"], HOLD_REASONS: ["Out of Stock", "Item Damaged", "Address Issue", "Customer Request", "Quality Check", "Other"], REFRESH_INTERVAL: 30000, TOKEN_KEY: 'feelori_jwt_token' };
+        class AppState { constructor() { this.orders = []; this.currentView = 'Total'; this.searchQuery = ''; this.activeModal = null; this.isLoading = false; this.lastUpdated = null; this.refreshTimer = null; } updateOrders(newOrders) { this.orders = newOrders; this.lastUpdated = new Date(); } getOrdersByStatus(status) { let filteredOrders = []; if (status === 'Total') { filteredOrders = this.orders; } else { filteredOrders = this.orders.filter(order => (status === 'Pending') ? ['Pending', 'Needs Stock Check'].includes(order.status) : order.status === status); } if (this.searchQuery) { const query = this.searchQuery.toLowerCase(); return filteredOrders.filter(order => order.order_number.toLowerCase().includes(query) || order.customer.name.toLowerCase().includes(query)); } return filteredOrders; } getStats() { const stats = { pending: this.getOrdersByStatus('Pending').length, inProgress: this.getOrdersByStatus('In Progress').length, onHold: this.getOrdersByStatus('On Hold').length, completed: this.getOrdersByStatus('Completed').length }; stats.total = this.orders.length; return stats; } }
+        const Utils = { showLoading() { document.getElementById('loading-overlay').style.display = 'flex'; }, hideLoading() { document.getElementById('loading-overlay').style.display = 'none'; }, showError(message, containerId = 'error-container') { const container = document.getElementById(containerId); const alertId = `alert-${Date.now()}`; container.insertAdjacentHTML('beforeend', `<div class="alert alert-error" id="${alertId}"><span>${this.sanitizeHtml(message)}</span><button class="alert-close" data-dismiss="${alertId}">&times;</button></div>`); setTimeout(() => document.getElementById(alertId)?.remove(), 5000); }, showSuccess(message, containerId = 'error-container') { const container = document.getElementById(containerId); const alertId = `alert-${Date.now()}`; container.insertAdjacentHTML('beforeend', `<div class="alert alert-success" id="${alertId}"><span>${this.sanitizeHtml(message)}</span><button class="alert-close" data-dismiss="${alertId}">&times;</button></div>`); setTimeout(() => document.getElementById(alertId)?.remove(), 3000); }, formatDate(date) { return new Intl.DateTimeFormat('en-IN', { timeStyle: 'medium', dateStyle: 'short' }).format(date); }, debounce(func, wait) { let timeout; return function executedFunction(...args) { const later = () => { clearTimeout(timeout); func(...args); }; clearTimeout(timeout); timeout = setTimeout(later, wait); }; }, validateTrackingNumber(trackingNumber) { return trackingNumber && trackingNumber.trim().length >= 6; }, sanitizeHtml(str) { const temp = document.createElement('div'); temp.textContent = str; return temp.innerHTML; } };
+        class ApiService { static async request(endpoint, method = 'GET', body = null) { const token = localStorage.getItem(CONFIG.TOKEN_KEY); if (!token && endpoint !== '/auth/login') throw new Error('Authentication required'); const options = { method, headers: {} }; if (token) options.headers['Authorization'] = `Bearer ${token}`; if (body) { options.headers['Content-Type'] = 'application/json'; options.body = JSON.stringify(body); } const response = await fetch(`${CONFIG.API_BASE}${endpoint}`, options); if (response.status === 401) { localStorage.removeItem(CONFIG.TOKEN_KEY); app.showLogin(); throw new Error('Session expired. Please login again.'); } if (!response.ok) { const errorData = await response.json().catch(() => ({})); throw new Error(errorData.message || `API Error: ${response.statusText}`); } return response.json(); } static login(password) { return this.request('/auth/login', 'POST', { password }); } static getOrders() { return this.request('/packing/orders'); } static updateOrderStatus(orderId, action, data = {}) { return this.request(`/packing/orders/${orderId}/${action}`, 'POST', data); } }
+        class PackingDashboard {
+            constructor() { this.state = new AppState(); this.bindEvents(); this.init(); }
+            init() { 
+                if (localStorage.getItem('stats-collapsed') === 'true') { this.toggleStats(true); }
+                if (localStorage.getItem(CONFIG.TOKEN_KEY)) { this.showDashboard(); this.fetchOrders(); this.startAutoRefresh(); } else { this.showLogin(); } 
+            }
+            bindEvents() {
+                document.getElementById('login-form').addEventListener('submit', e => this.handleLogin(e));
+                document.getElementById('logout-button').addEventListener('click', () => this.handleLogout());
+                document.getElementById('refresh-button').addEventListener('click', Utils.debounce(() => this.fetchOrders(), 1000));
+                document.getElementById('search-orders').addEventListener('input', Utils.debounce(e => this.handleSearch(e.target.value), 300));
+                document.getElementById('columns').addEventListener('click', e => { const card = e.target.closest('.order-card'); if (card) this.openDetailsModal(Number(card.dataset.orderId)); });
+                document.getElementById('stats-container').addEventListener('click', e => { const statCard = e.target.closest('.stat-card'); if (statCard) { this.setView(statCard.dataset.status); if (!document.getElementById('main-container').classList.contains('stats-collapsed')) { this.toggleStats(); } } });
+                document.getElementById('toggle-stats-btn').addEventListener('click', () => this.toggleStats());
+                document.getElementById('details-modal-footer').addEventListener('click', e => { const button = e.target.closest('button'); if (!button) return; const { action, orderId } = button.dataset; if (action) this.handleModalAction(action, orderId ? Number(orderId) : null); });
+                document.addEventListener('click', e => { if (e.target.matches('[data-dismiss]')) { document.getElementById(e.target.dataset.dismiss)?.remove(); } });
+                window.addEventListener('click', e => { if (e.target.classList.contains('modal')) this.closeModal(); });
+                document.addEventListener('keydown', e => { if (e.key === 'Escape') this.closeModal(); });
+                document.addEventListener('visibilitychange', () => { if (!document.hidden) this.fetchOrders(); });
+            }
+            toggleStats(immediate = false) {
+                const container = document.getElementById('main-container');
+                const btn = document.getElementById('toggle-stats-btn');
+                const isCollapsed = container.classList.toggle('stats-collapsed');
+                btn.innerHTML = isCollapsed ? `Show Stats <span class="icon">▼</span>` : `Hide Stats <span class="icon">▲</span>`;
+                if (!immediate) localStorage.setItem('stats-collapsed', isCollapsed);
+            }
+            showLogin() { document.getElementById('login-container').style.display = 'block'; document.getElementById('dashboard-container').style.display = 'none'; this.stopAutoRefresh(); }
+            showDashboard() { document.getElementById('login-container').style.display = 'none'; document.getElementById('dashboard-container').style.display = 'block'; }
+            async handleLogin(e) { e.preventDefault(); const password = document.getElementById('password').value; const loginBtn = document.getElementById('login-btn'); const errorDiv = document.getElementById('login-error'); loginBtn.disabled = true; loginBtn.textContent = 'Logging in...'; errorDiv.innerHTML = ''; try { const response = await ApiService.login(password); localStorage.setItem(CONFIG.TOKEN_KEY, response.access_token); this.showDashboard(); await this.fetchOrders(); this.startAutoRefresh(); } catch (error) { errorDiv.innerHTML = `<div class="alert alert-error">${error.message}</div>`; } finally { loginBtn.disabled = false; loginBtn.textContent = 'Log In'; } }
+            handleLogout() { localStorage.removeItem(CONFIG.TOKEN_KEY); this.state = new AppState(); this.showLogin(); }
+            async fetchOrders() { if (this.state.isLoading) return; this.state.isLoading = true; Utils.showLoading(); try { const response = await ApiService.getOrders(); this.state.updateOrders(response.data.orders); this.render(); this.updateLastUpdated(); } catch (error) { Utils.showError(`Failed to fetch orders: ${error.message}`); } finally { this.state.isLoading = false; Utils.hideLoading(); } }
+            startAutoRefresh() { this.stopAutoRefresh(); this.state.refreshTimer = setInterval(() => { if (!document.hidden) this.fetchOrders(); }, CONFIG.REFRESH_INTERVAL); }
+            stopAutoRefresh() { if (this.state.refreshTimer) clearInterval(this.state.refreshTimer); this.state.refreshTimer = null; }
+            updateLastUpdated() { const el = document.getElementById('last-updated'); if (this.state.lastUpdated) el.textContent = `Last updated: ${Utils.formatDate(this.state.lastUpdated)}`; }
+            handleSearch(query) { this.state.searchQuery = query; this.renderColumns(); }
+            render() {
+                this.renderStats();
+                this.renderColumns();
+            }
+            renderStats() {
+                const container = document.getElementById('stats-container');
+                const stats = this.state.getStats();
+                const newHtml = `<div class="stat-card" data-status="Total"><div class="stat-icon">📊</div><div class="stat-number">${stats.total}</div><div class="stat-label">Total Orders</div></div><div class="stat-card" data-status="Pending"><div class="stat-icon">🕒</div><div class="stat-number">${stats.pending}</div><div class="stat-label">Pending</div></div><div class="stat-card" data-status="In Progress"><div class="stat-icon">⏳</div><div class="stat-number">${stats.inProgress}</div><div class="stat-label">In Progress</div></div><div class="stat-card" data-status="On Hold"><div class="stat-icon">⏸️</div><div class="stat-number">${stats.onHold}</div><div class="stat-label">On Hold</div></div><div class="stat-card" data-status="Completed"><div class="stat-icon">✅</div><div class="stat-number">${stats.completed}</div><div class="stat-label">Completed</div></div>`;
+                morphdom(container, `<div>${newHtml}</div>`, {childrenOnly: true});
+            }
+            renderColumns() {
+                const container = document.getElementById('columns');
+                if (container.children.length === 0) {
+                    const statuses = ["Pending", "In Progress", "On Hold", "Completed"];
+                    container.innerHTML = statuses.map(status => {
+                        return `<div class="column" data-column-status="${status}">
+                                    <h2>${status}<span class="column-count">0</span></h2>
+                                    <div class="order-list"></div>
+                                </div>`;
+                    }).join('');
+                }
+                ["Pending", "In Progress", "On Hold", "Completed"].forEach(status => {
+                    this.renderOrderList(status);
+                });
+                this.setView(this.state.currentView, true);
+            }
+            renderOrderList(status) {
+                const column = document.querySelector(`.column[data-column-status="${status}"]`);
+                if (!column) return;
+                const container = column.querySelector('.order-list');
+                const countEl = column.querySelector('.column-count');
+                const orders = this.state.getOrdersByStatus(status);
+                if (countEl.textContent != orders.length) { countEl.textContent = orders.length; }
+                const newHtml = orders.length ? orders.map(order => this.renderOrderCard(order)).join('') : '<div class="empty-state">No orders here</div>';
+                morphdom(container, `<div>${newHtml}</div>`, { 
+                    childrenOnly: true, 
+                    getNodeKey: node => node.dataset ? node.dataset.orderId : null 
+                });
+            }
+            renderOrderCard(order) {
+                const itemCount = order.items.length;
+                const totalQuantity = order.items.reduce((sum, item) => sum + item.quantity, 0);
+                const statusClass = order.status.toLowerCase().replace(/\s+/g, '-');
+                const priority = order.priority || 'medium';
+                let holdDetailsHtml = '';
+                if (order.status === 'On Hold' && (order.notes || order.problem_item_skus?.length)) {
+                    const notesHtml = order.notes ? `<p><strong>Notes:</strong> ${Utils.sanitizeHtml(order.notes)}</p>` : '';
+                    const skusHtml = order.problem_item_skus?.length ? `<strong>Problem SKUs:</strong><ul>${order.problem_item_skus.map(sku => `<li>${Utils.sanitizeHtml(sku)}</li>`).join('')}</ul>` : '';
+                    holdDetailsHtml = `<div class="hold-details">${notesHtml}${skusHtml}</div>`;
+                }
+                let packerInfoHtml = '';
+                if (order.status === 'Completed' && order.packer_name) {
+                    packerInfoHtml = `<p class="packer-info">Packed by: ${Utils.sanitizeHtml(order.packer_name)}</p>`;
+                }
+                let previouslyOnHoldHtml = '';
+                if (order.status === 'Pending' && order.previously_on_hold_reason) {
+                    const reasonHtml = `<strong>Previously On Hold:</strong> ${Utils.sanitizeHtml(order.previously_on_hold_reason)}`;
+                    const skusHtml = order.previously_problem_skus?.length ? `<ul>${order.previously_problem_skus.map(sku => `<li>SKU: ${Utils.sanitizeHtml(sku)}</li>`).join('')}</ul>` : '';
+                    previouslyOnHoldHtml = `<div class="previously-on-hold">${reasonHtml}${skusHtml}</div>`;
+                }
+                return `<div class="order-card ${statusClass}" data-order-id="${order.order_id}"><h3>#${Utils.sanitizeHtml(order.order_number)}<span class="order-priority priority-${priority}">${priority.toUpperCase()}</span></h3><p><strong>${Utils.sanitizeHtml(order.customer.name)}</strong></p><p>Items: ${itemCount} | Qty: ${totalQuantity}</p>${order.hold_reason ? `<p style="color: var(--danger-color); font-weight: bold;">⚠️ ${Utils.sanitizeHtml(order.hold_reason)}</p>` : ''}${holdDetailsHtml}${previouslyOnHoldHtml}${packerInfoHtml}</div>`;
+            }
+            setView(view, isRender = false) { if (!isRender) this.state.currentView = view; document.querySelectorAll('.stat-card').forEach(c => c.classList.remove('active')); const activeCard = document.querySelector(`.stat-card[data-status="${this.state.currentView}"]`); if (activeCard) activeCard.classList.add('active'); if (window.innerWidth >= 768) { document.querySelectorAll('.column').forEach(col => { const shouldShow = this.state.currentView === 'Total' || col.dataset.columnStatus === this.state.currentView; col.style.display = shouldShow ? 'block' : 'none'; }); } else { document.querySelectorAll('.column').forEach(col => { col.style.display = (this.state.currentView === 'Total' || col.dataset.columnStatus === this.state.currentView) ? 'block' : 'none'; }); } }
+            openDetailsModal(orderId) { const order = this.state.orders.find(o => o.order_id === orderId); if (!order) return; document.getElementById('details-modal-title').textContent = `Order #${order.order_number}`; const itemsHtml = order.items.map(item => `<div class="item"><img src="${item.image_url}" alt="${Utils.sanitizeHtml(item.title)}" onerror="this.style.display='none'"><div class="item-details"><h4>${Utils.sanitizeHtml(item.title)}</h4><p><strong>Quantity:</strong> ${item.quantity} | <strong>SKU:</strong> ${Utils.sanitizeHtml(item.sku)}</p>${item.variant ? `<p><strong>Variant:</strong> ${Utils.sanitizeHtml(item.variant)}</p>` : ''}</div></div>`).join(''); document.getElementById('details-modal-body').innerHTML = `<div style="margin-bottom: 20px; padding: 15px; background: #f8f9fa; border-radius: 6px;"><p><strong>Customer:</strong> ${Utils.sanitizeHtml(order.customer.name)} (${Utils.sanitizeHtml(order.customer.phone || 'N/A')})</p><p><strong>Status:</strong> <span style="color: var(--primary-color); font-weight: bold;">${Utils.sanitizeHtml(order.status)}</span></p>${order.notes ? `<p><strong>Notes:</strong> ${Utils.sanitizeHtml(order.notes)}</p>` : ''}</div><h4>Items (${order.items.length}):</h4>${itemsHtml}`; this.renderModalFooter(order); this.showModal(document.getElementById('details-modal')); }
+            renderModalFooter(order) { let footerHtml = ''; const id = order.order_id; switch (order.status) { case 'Pending': case 'Needs Stock Check': footerHtml = `<button class="btn-primary" data-action="start" data-order-id="${id}">Start Packing</button><button class="btn-warning" data-action="openHold" data-order-id="${id}">Put on Hold</button>`; break; case 'In Progress': footerHtml = `<button class="btn-success" data-action="openFulfill" data-order-id="${id}">Fulfill Order</button><button class="btn-warning" data-action="openHold" data-order-id="${id}">Put on Hold</button>`; break; case 'On Hold': footerHtml = `<button class="btn-primary" data-action="requeue" data-order-id="${id}">Move to Pending</button>`; break; } document.getElementById('details-modal-footer').innerHTML = `${footerHtml}<button class="btn-outline" data-action="close">Cancel</button>`; }
+            showModal(modal) { this.state.activeModal = modal; modal.style.display = 'block'; modal.querySelector('.close-button').onclick = () => this.closeModal(); document.body.style.overflow = 'hidden'; }
+            closeModal() { if (this.state.activeModal) { this.state.activeModal.style.display = 'none'; this.state.activeModal = null; document.body.style.overflow = ''; } }
+            handleModalAction(action, orderId) { const order = orderId ? this.state.orders.find(o => o.order_id === orderId) : null; switch (action) { case 'start': case 'requeue': this.handleSimpleAction(orderId, action); break; case 'openHold': this.openHoldModal(order); break; case 'openFulfill': this.openFulfillModal(order); break; case 'confirmHold': this.handleHold(orderId); break; case 'confirmFulfill': this.handleFulfill(orderId); break; case 'close': this.closeModal(); break; case 'back': this.openDetailsModal(orderId); break; } }
+            async handleSimpleAction(orderId, action) {
+                try {
+                    Utils.showLoading();
+                    await ApiService.updateOrderStatus(orderId, action);
+                    this.closeModal();
+                    await this.fetchOrders();
+                    Utils.showSuccess(`Order successfully moved to ${action === 'start' ? 'In Progress' : 'Pending'}.`);
+                    if (action === 'start') {
+                        this.setView('In Progress');
+                        setTimeout(() => {
+                            const card = document.querySelector(`.order-card[data-order-id="${orderId}"]`);
+                            if (card) {
+                                card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                                card.classList.add('highlight');
+                                setTimeout(() => card.classList.remove('highlight'), 2000);
+                            }
+                        }, 100);
+                    }
+                } catch (error) { Utils.showError(`Action failed: ${error.message}`); } finally { Utils.hideLoading(); }
+            }
+            openHoldModal(order) {
+                if (!order) return;
+                document.getElementById('details-modal-title').textContent = `Put Order #${order.order_number} on Hold`;
+                const itemsCheckboxes = order.items.map(item => `<label><input type="checkbox" name="problem_item" value="${item.sku}"> ${Utils.sanitizeHtml(item.title)} (${Utils.sanitizeHtml(item.sku)})</label>`).join('');
+                document.getElementById('details-modal-body').innerHTML = `<div class="form-group"><label for="hold-reason">Reason for Hold *</label><select id="hold-reason" required>${CONFIG.HOLD_REASONS.map(reason => `<option value="${reason}">${reason}</option>`).join('')}</select></div><div class="form-group"><label>Problem Item(s) (if applicable)</label><div class="checkbox-group">${itemsCheckboxes}</div></div><div class="form-group"><label for="hold-notes">Additional Notes</label><textarea id="hold-notes" placeholder="Optional notes..."></textarea></div>`;
+                document.getElementById('details-modal-footer').innerHTML = `<button class="btn-danger" data-action="confirmHold" data-order-id="${order.order_id}">Confirm Hold</button><button class="btn-outline" data-action="back" data-order-id="${order.order_id}">Back</button>`;
+            }
+            openFulfillModal(order) { if (!order) return; document.getElementById('details-modal-title').textContent = `Fulfill Order #${order.order_number}`; document.getElementById('details-modal-body').innerHTML = `<div class="form-group"><label for="packer-name">Packer Name *</label><select id="packer-name" required><option value="">Select Packer</option>${CONFIG.PACKER_NAMES.map(name => `<option value="${name}">${name}</option>`).join('')}</select></div><div class="form-group"><label for="carrier-name">Carrier *</label><select id="carrier-name" required><option value="">Select Carrier</option>${CONFIG.CARRIER_NAMES.map(carrier => `<option value="${carrier}" ${carrier === 'India Post' ? 'selected' : ''}>${carrier}</option>`).join('')}</select></div><div class="form-group"><label for="tracking-number">Tracking Number *</label><input type="text" id="tracking-number" placeholder="Enter tracking number" required><small style="color: #666;">Must be at least 6 characters.</small></div><div class="form-group"><label for="fulfillment-notes">Notes (Optional)</label><textarea id="fulfillment-notes" placeholder="Optional notes..."></textarea></div>`; document.getElementById('details-modal-footer').innerHTML = `<button class="btn-success" data-action="confirmFulfill" data-order-id="${order.order_id}">Mark as Fulfilled</button><button class="btn-outline" data-action="back" data-order-id="${order.order_id}">Back</button>`; setTimeout(() => document.getElementById('packer-name').focus(), 100); }
+            async handleHold(orderId) {
+                const reason = document.getElementById('hold-reason').value;
+                const problemItemSkus = Array.from(document.querySelectorAll('input[name="problem_item"]:checked')).map(cb => cb.value);
+                const notes = document.getElementById('hold-notes').value.trim();
+                if (!reason) { Utils.showError('Please select a reason for the hold.', 'details-modal-body'); return; }
+                try {
+                    Utils.showLoading();
+                    await ApiService.updateOrderStatus(orderId, 'hold', { reason, problem_item_skus: problemItemSkus, notes });
+                    this.closeModal();
+                    await this.fetchOrders();
+                    Utils.showSuccess('Order put on hold successfully.');
+                } catch (error) {
+                    Utils.showError(`Failed to hold order: ${error.message}`);
+                } finally {
+                    Utils.hideLoading();
+                }
+            }
+            async handleFulfill(orderId) { const packerName = document.getElementById('packer-name').value; const carrier = document.getElementById('carrier-name').value; const trackingNumber = document.getElementById('tracking-number').value.trim(); const notes = document.getElementById('fulfillment-notes').value.trim(); if (!packerName) { Utils.showError('Please select a packer name.', 'details-modal-body'); return; } if (!carrier) { Utils.showError('Please select a carrier.', 'details-modal-body'); return; } if (!Utils.validateTrackingNumber(trackingNumber)) { Utils.showError('Please enter a valid tracking number (at least 6 characters).', 'details-modal-body'); return; } try { Utils.showLoading(); await ApiService.updateOrderStatus(orderId, 'fulfill', { packer_name: packerName, carrier, tracking_number: trackingNumber, notes }); this.closeModal(); await this.fetchOrders(); Utils.showSuccess('Order fulfilled successfully.'); } catch (error) { Utils.showError(`Failed to fulfill order: ${error.message}`); } finally { Utils.hideLoading(); } }
+        }
+        let app; document.addEventListener('DOMContentLoaded', () => { app = new PackingDashboard(); });
+    </script>
+</body>
+</html>

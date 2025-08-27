@@ -1,0 +1,9 @@
+{
+  "name": "feelori-backend",
+  "scripts": {
+    "start:test": "cross-env ENVIRONMENT=test python -m uvicorn app.server:app --host 127.0.0.1 --port 8000"
+  },
+  "devDependencies": {
+    "cross-env": "^7.0.3"
+  }
+}

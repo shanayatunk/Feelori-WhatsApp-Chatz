@@ -1,0 +1,55 @@
+# backend/requirements.in
+
+# Web Framework
+fastapi
+uvicorn
+
+# Database & Caching
+motor
+redis
+
+# Configuration & Validation
+python-dotenv
+pydantic
+pydantic-settings
+
+# AI APIs & HTTP
+httpx[http2]
+openai
+google-generativeai
+
+
+# Visual Search & AI Models
+numpy
+torch
+transformers
+scikit-learn
+Pillow
+huggingface_hub
+rapidfuzz
+
+# Auth & Security
+bcrypt
+python-jose[cryptography]
+passlib
+itsdangerous
+
+# Rate Limiting
+slowapi
+
+# Logging, Monitoring & Tracing
+structlog
+tenacity
+prometheus-client
+sentry-sdk
+opentelemetry-sdk
+opentelemetry-instrumentation-fastapi
+opentelemetry-exporter-jaeger
+opentelemetry-instrumentation-httpx
+psutil
+apscheduler
+
+# Testing
+pytest
+pytest-asyncio
+pytest-mock

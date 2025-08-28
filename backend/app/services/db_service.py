@@ -2,9 +2,12 @@
 
 import logging
 from motor.motor_asyncio import AsyncIOMotorClient
+from bson import ObjectId
 from datetime import datetime, timedelta
+from typing import List
 
 from app.config.settings import settings
+from app.models.api import Rule, StringResource
 from app.utils.circuit_breaker import CircuitBreaker, RedisCircuitBreaker
 from app.utils.metrics import database_operations_counter
 from app.services.cache_service import cache_service
@@ -35,6 +38,8 @@ class DatabaseService:
             await self.db.orders.create_index([("phone_numbers", 1)])
             await self.db.customers.create_index("phone_number", unique=True)
             await self.db.security_events.create_index([("timestamp", -1)])
+            await self.db.rules.create_index("name", unique=True)
+            await self.db.strings.create_index("key", unique=True)
             logger.info("Database indexes created successfully.")
         except Exception as e:
             logger.error(f"Failed to create database indexes: {e}")
@@ -113,6 +118,38 @@ class DatabaseService:
         if target_type == "active": query["last_interaction"] = {"$gte": now - timedelta(hours=24)}
         elif target_type == "recent": query["last_interaction"] = {"$gte": now - timedelta(days=7)}
         return await self.db.customers.find(query, {"phone_number": 1}).to_list(length=None)
+
+    # --- Rules Engine ---
+    async def get_all_rules(self) -> list:
+        rules = await self.db.rules.find({}).to_list(length=100)
+        for rule in rules:
+            rule["_id"] = str(rule["_id"])
+        return rules
+
+    async def create_rule(self, rule: Rule) -> dict:
+        result = await self.db.rules.insert_one(rule.dict())
+        new_rule = await self.db.rules.find_one({"_id": result.inserted_id})
+        new_rule["_id"] = str(new_rule["_id"])
+        return new_rule
+
+    async def update_rule(self, rule_id: str, rule: Rule) -> dict:
+        result = await self.db.rules.update_one({"_id": ObjectId(rule_id)}, {"$set": rule.dict()})
+        if result.modified_count == 0:
+            return None
+        updated_rule = await self.db.rules.find_one({"_id": ObjectId(rule_id)})
+        updated_rule["_id"] = str(updated_rule["_id"])
+        return updated_rule
+
+    # --- Strings Manager ---
+    async def get_all_strings(self) -> list:
+        strings = await self.db.strings.find({}).to_list(length=100)
+        for s in strings:
+            s["_id"] = str(s["_id"])
+        return strings
+
+    async def update_strings(self, strings: List[StringResource]):
+        for s in strings:
+            await self.db.strings.update_one({"key": s.key}, {"$set": {"value": s.value}}, upsert=True)
         
     # --- Packing Dashboard ---
     async def get_all_packing_orders(self) -> list:

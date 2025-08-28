@@ -38,8 +38,8 @@ class WhatsAppService:
         """Wrapper for API calls to add retry logic."""
         return await self.circuit_breaker.call(func, *args, **kwargs)
 
-    async def send_message(self, to_phone: str, message: str) -> Optional[str]:
-        """Sends a text message via WhatsApp Business API and returns the message ID (wamid)."""
+    async def send_message(self, to_phone: str, message: str, image_url: Optional[str] = None) -> Optional[str]:
+        """Sends a text or image message via WhatsApp Business API and returns the message ID (wamid)."""
         try:
             url = f"{self.base_url}/{self.phone_id}/messages"
             if not to_phone:
@@ -54,9 +54,15 @@ class WhatsAppService:
                 "messaging_product": "whatsapp",
                 "recipient_type": "individual",
                 "to": clean_phone,
-                "type": "text",
-                "text": {"body": message[:4096]},
             }
+
+            if image_url:
+                payload["type"] = "image"
+                payload["image"] = {"link": image_url, "caption": message[:1024]}
+            else:
+                payload["type"] = "text"
+                payload["text"] = {"body": message[:4096]}
+
             headers = {"Authorization": f"Bearer {self.access_token}", "Content-Type": "application/json"}
 
             response = await self.resilient_api_call(self.http_client.post, url, json=payload, headers=headers)

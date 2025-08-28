@@ -1,12 +1,12 @@
 # /app/routes/admin.py
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from typing import Optional
+from typing import Optional, List
 
 from app.config.settings import settings
-from app.models.api import APIResponse, BroadcastRequest
+from app.models.api import APIResponse, BroadcastRequest, Rule, StringResource
 from app.utils.dependencies import verify_jwt_token, get_remote_address
-from app.services import security_service, shopify_service, db_service
+from app.services import security_service, shopify_service, db_service, cache_service
 from app.services.order_service import get_or_create_customer # For broadcast
 from app.services.whatsapp_service import whatsapp_service
 from app.utils.rate_limiter import limiter
@@ -119,7 +119,11 @@ async def broadcast_message(
 
     sent_count, failed_count = 0, 0
     for customer in customers_to_message:
-        wamid = await whatsapp_service.send_message(customer["phone_number"], message)
+        wamid = await whatsapp_service.send_message(
+            customer["phone_number"],
+            message,
+            image_url=broadcast_data.image_url
+        )
         if wamid:
             sent_count += 1
         else:
@@ -142,3 +146,84 @@ async def broadcast_message(
         data={"sent_count": sent_count, "failed_count": failed_count},
         version=settings.api_version
     )
+
+
+@router.get("/health", response_model=APIResponse)
+@limiter.limit("10/minute")
+async def get_system_health(request: Request, current_user: dict = Depends(verify_jwt_token)):
+    """Provides a health check of all critical system components."""
+    security_service.EnhancedSecurityService.validate_admin_session(request, current_user)
+
+    # 1. Check Database
+    db_status = "connected" if not db_service.circuit_breaker.is_open else "error"
+
+    # 2. Check Cache (Redis)
+    try:
+        await cache_service.redis.ping()
+        cache_status = "connected"
+    except Exception:
+        cache_status = "error"
+
+    # 3. Check WhatsApp Configuration
+    whatsapp_status = "configured" if settings.whatsapp_access_token and settings.whatsapp_phone_id else "not_configured"
+
+    # 4. Check Shopify Configuration
+    shopify_status = "configured" if settings.shopify_access_token else "not_configured"
+
+    services = {
+        "database": db_status,
+        "cache": cache_status,
+        "whatsapp": whatsapp_status,
+        "shopify": shopify_status,
+    }
+
+    overall_status = "healthy" if all(s in ["connected", "configured"] for s in services.values()) else "degraded"
+
+    health_data = {
+        "status": overall_status,
+        "services": services
+    }
+
+    return APIResponse(
+        success=True,
+        message="System health retrieved successfully.",
+        data=health_data,
+        version=settings.api_version
+    )
+
+@router.get("/rules", response_model=APIResponse)
+async def get_rules(request: Request, current_user: dict = Depends(verify_jwt_token)):
+    """Get all rules from the rules engine."""
+    security_service.EnhancedSecurityService.validate_admin_session(request, current_user)
+    rules = await db_service.get_all_rules()
+    return APIResponse(success=True, message="Rules retrieved successfully", data={"rules": rules}, version=settings.api_version)
+
+@router.post("/rules", response_model=APIResponse)
+async def create_rule(rule: Rule, request: Request, current_user: dict = Depends(verify_jwt_token)):
+    """Create a new rule in the rules engine."""
+    security_service.EnhancedSecurityService.validate_admin_session(request, current_user)
+    new_rule = await db_service.create_rule(rule)
+    return APIResponse(success=True, message="Rule created successfully", data={"rule": new_rule}, version=settings.api_version)
+
+@router.put("/rules/{rule_id}", response_model=APIResponse)
+async def update_rule(rule_id: str, rule: Rule, request: Request, current_user: dict = Depends(verify_jwt_token)):
+    """Update an existing rule in the rules engine."""
+    security_service.EnhancedSecurityService.validate_admin_session(request, current_user)
+    updated_rule = await db_service.update_rule(rule_id, rule)
+    if not updated_rule:
+        raise HTTPException(status_code=404, detail="Rule not found")
+    return APIResponse(success=True, message="Rule updated successfully", data={"rule": updated_rule}, version=settings.api_version)
+
+@router.get("/strings", response_model=APIResponse)
+async def get_strings(request: Request, current_user: dict = Depends(verify_jwt_token)):
+    """Get all string resources."""
+    security_service.EnhancedSecurityService.validate_admin_session(request, current_user)
+    strings = await db_service.get_all_strings()
+    return APIResponse(success=True, message="Strings retrieved successfully", data={"strings": strings}, version=settings.api_version)
+
+@router.put("/strings", response_model=APIResponse)
+async def update_strings(strings: List[StringResource], request: Request, current_user: dict = Depends(verify_jwt_token)):
+    """Update all string resources."""
+    security_service.EnhancedSecurityService.validate_admin_session(request, current_user)
+    await db_service.update_strings(strings)
+    return APIResponse(success=True, message="Strings updated successfully", version=settings.api_version)

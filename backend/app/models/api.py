@@ -19,6 +19,7 @@ class BroadcastRequest(BaseModel):
     message: str
     target_type: str = Field(default="all", pattern="^(all|active|recent)$")
     target_phones: Optional[List[str]] = None
+    image_url: Optional[str] = None
 
 class APIResponse(BaseModel):
     success: bool
@@ -36,3 +37,12 @@ class FulfillOrderRequest(BaseModel):
     packer_name: str
     tracking_number: str
     carrier: str
+
+class Rule(BaseModel):
+    name: str
+    keywords: List[str]
+    phrases: List[str]
+
+class StringResource(BaseModel):
+    key: str
+    value: str

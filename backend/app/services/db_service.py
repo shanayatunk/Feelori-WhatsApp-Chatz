@@ -12,6 +12,7 @@ from app.utils.circuit_breaker import CircuitBreaker, RedisCircuitBreaker
 from app.utils.metrics import database_operations_counter
 from app.services.cache_service import cache_service
 from app.services import security_service, shopify_service
+from app.config import strings # Make sure this import is present
 
 # This service manages all interactions with the MongoDB database, including
 # creating indexes, CRUD operations, and complex aggregation queries for stats.
@@ -52,7 +53,7 @@ class DatabaseService:
         return await self.circuit_breaker.call(self.db.customers.insert_one, customer_data)
 
     async def update_conversation_history(self, phone_number: str, message: str, response: str, wamid: str | None = None):
-        entry = {"timestamp": datetime.utcnow(), "message": message, "response": response, "wamid": wamid, "status": "sent" if wamid else None}
+        entry = {"timestamp": datetime.utcnow(), "message": message, "response": response, "wamid": wamid, "status": "sent" if wamid else "internal"}
         await self.circuit_breaker.call(
             self.db.customers.update_one,
             {"phone_number": phone_number},
@@ -63,6 +64,16 @@ class DatabaseService:
         await self.db.customers.update_one({"phone_number": phone_number}, {"$set": {"name": name}})
         await cache_service.redis.delete(f"customer:v2:{phone_number}")
 
+    async def get_customer_by_id(self, customer_id: str):
+        """Finds a single customer by their MongoDB ObjectId."""
+        try:
+            customer = await self.db.customers.find_one({"_id": ObjectId(customer_id)})
+            if customer:
+                customer["_id"] = str(customer["_id"])
+            return customer
+        except Exception:
+            return None
+
     # --- Security Operations ---
     async def log_security_event(self, event_type: str, ip_address: str, details: dict):
         event_data = {"event_type": event_type, "ip_address": ip_address, "timestamp": datetime.utcnow(), "details": details}
@@ -70,7 +81,7 @@ class DatabaseService:
 
     # --- Admin & Dashboard Operations ---
     async def get_system_stats(self) -> dict:
-        # Complex logic for fetching stats, as in original file
+        """Get system statistics with an optimized aggregation pipeline."""
         now = datetime.utcnow()
         last_24_hours = now - timedelta(hours=24)
         pipeline = [{"$facet": {
@@ -85,10 +96,19 @@ class DatabaseService:
         active_24h = customer_stats.get("active_24h", 0)
         total_24h_msgs = message_stats.get("total_24h", 0)
         
+        # FIX: Safely get the queue size, defaulting to 0 if the stream doesn't exist.
+        queue_size = 0
+        try:
+            if cache_service.redis:
+                queue_size = await cache_service.redis.xlen("webhook_messages")
+        except Exception:
+            # This can happen if the stream doesn't exist yet, which is fine.
+            queue_size = 0
+
         return {
             "customers": {"total": total_customers, "active_24h": active_24h},
             "messages": {"total_24h": total_24h_msgs},
-            "system": {"queue_size": await cache_service.redis.xlen("webhook_messages") if cache_service.redis else 0}
+            "system": {"queue_size": queue_size}
         }
 
     async def get_paginated_customers(self, page: int, limit: int) -> tuple[list, dict]:
@@ -118,6 +138,38 @@ class DatabaseService:
         if target_type == "active": query["last_interaction"] = {"$gte": now - timedelta(hours=24)}
         elif target_type == "recent": query["last_interaction"] = {"$gte": now - timedelta(days=7)}
         return await self.db.customers.find(query, {"phone_number": 1}).to_list(length=None)
+
+    # --- THIS IS THE FIX ---
+    async def get_human_escalation_requests(self, limit: int = 5) -> List:
+        """Finds the most recent human escalation request for each unique customer."""
+        pipeline = [
+            {"$unwind": "$conversation_history"},
+            {"$match": {"conversation_history.response": strings.HUMAN_ESCALATION}},
+            {"$sort": {"conversation_history.timestamp": -1}},
+            {
+                "$group": {
+                    "_id": "$_id",
+                    "name": {"$first": "$name"},
+                    "phone_number": {"$first": "$phone_number"},
+                    "latest_escalation_time": {"$first": "$conversation_history.timestamp"}
+                }
+            },
+            {"$sort": {"latest_escalation_time": -1}},
+            {"$limit": limit},
+            {
+                "$project": {
+                    "_id": 1,
+                    "name": 1,
+                    "phone_number": 1,
+                    "timestamp": "$latest_escalation_time"
+                }
+            }
+        ]
+        requests = await self.db.customers.aggregate(pipeline).to_list(length=limit)
+        for req in requests:
+            req["_id"] = str(req["_id"])
+        return requests
+    # --- END OF FIX ---
 
     # --- Rules Engine ---
     async def get_all_rules(self) -> list:

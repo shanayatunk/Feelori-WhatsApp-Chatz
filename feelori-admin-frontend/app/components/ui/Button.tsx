@@ -15,6 +15,7 @@ export const Button = ({ children, onClick, className = '', disabled = false, va
       onClick={onClick}
       disabled={disabled}
       className={`${baseClasses} ${variantClasses[variant]} ${className}`}
+      suppressHydrationWarning={true}
       {...props}
     >
       {children}

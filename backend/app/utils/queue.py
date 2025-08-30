@@ -95,13 +95,21 @@ class RedisMessageQueue:
             quoted_wamid=data.get("quoted_wamid")
         )
 
-        # If there's a response to send, send it via WhatsApp
+        # If there's a response to send or log, handle it
         if response_text:
-            wamid = await whatsapp_service.send_message(from_number, response_text)
+            is_log_only = response_text.startswith('[') and response_text.endswith(']')
+            wamid = None
+
+            # Only send a message if it's not a log-only entry
+            if not is_log_only:
+                wamid = await whatsapp_service.send_message(from_number, response_text)
+            
+            # Always log the conversation turn
             await db_service.update_conversation_history(from_number, data["message_text"], response_text, wamid)
+            
             if wamid:
                 message_counter.labels(status="success", message_type=data["message_type"]).inc()
-            else:
+            elif not is_log_only:
                 message_counter.labels(status="send_failed", message_type=data["message_type"]).inc()
 
     async def add_message(self, message_data: Dict):

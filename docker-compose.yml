@@ -3,23 +3,36 @@ services:
     build: ./backend
     container_name: feelori_backend
     env_file: ./backend/.env
+    # FIX: Explicitly set the REDIS_URL for the backend service.
+    # This ensures it uses the correct internal Docker hostname 'redis'
+    # instead of a potentially incorrect value from the .env file.
+    environment:
+      - REDIS_URL=redis://redis:6379
     ports:
       - "8000:8000"
     depends_on:
-      - mongo
-      - redis
+      mongo:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 
   mongo:
     image: mongo:latest
     container_name: feelori_mongo
     ports:
-      - "27018:27017"
+      - "27017:27017"
     volumes:
       - mongo-data:/data/db
     environment:
       - MONGO_INITDB_ROOT_USERNAME=admin
       - MONGO_INITDB_ROOT_PASSWORD=securepassword
+    healthcheck:
+      test: echo 'db.runCommand("ping").ok' | mongosh --quiet
+      interval: 10s
+      timeout: 10s
+      retries: 5
+      start_period: 40s
 
   redis:
     image: redis:latest
@@ -28,6 +41,11 @@ services:
       - "6380:6379"
     volumes:
       - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
 volumes:
   mongo-data:

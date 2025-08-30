@@ -6,15 +6,14 @@ from typing import Optional, List
 from app.config.settings import settings
 from app.models.api import APIResponse, BroadcastRequest, Rule, StringResource
 from app.utils.dependencies import verify_jwt_token, get_remote_address
-from app.services import security_service, shopify_service, db_service, cache_service
+from app.services import security_service, shopify_service, cache_service
+from app.services.db_service import db_service
 from app.services.order_service import get_or_create_customer # For broadcast
 from app.services.whatsapp_service import whatsapp_service
+from app.services.string_service import string_service
+from app.services.rule_service import rule_service
 from app.utils.rate_limiter import limiter
 import asyncio
-
-# This file defines the API routes for administrative purposes, such as
-# viewing statistics, customers, and broadcasting messages. All routes here
-# are protected and require JWT authentication.
 
 router = APIRouter(
     prefix="/admin",
@@ -22,12 +21,10 @@ router = APIRouter(
     dependencies=[Depends(verify_jwt_token)]
 )
 
-
 @router.get("/stats", response_model=APIResponse)
 @limiter.limit("10/minute")
 async def get_admin_stats(request: Request, current_user: dict = Depends(verify_jwt_token)):
     """Get system statistics with an optimized aggregation pipeline."""
-    # Implementation moved to db_service for better separation of concerns
     stats = await db_service.get_system_stats()
     return APIResponse(
         success=True,
@@ -57,7 +54,7 @@ async def get_admin_products(
 
 
 @router.get("/customers", response_model=APIResponse)
-@limiter.limit("5/minute")
+@limiter.limit("30/minute")
 async def get_customers(
     request: Request,
     page: int = 1,
@@ -71,6 +68,24 @@ async def get_customers(
         success=True,
         message=f"Retrieved {len(customers)} customers",
         data={"customers": customers, "pagination": pagination_data},
+        version=settings.api_version
+    )
+
+
+@router.get("/customers/{customer_id}", response_model=APIResponse)
+@limiter.limit("20/minute")
+async def get_customer_details(customer_id: str, request: Request, current_user: dict = Depends(verify_jwt_token)):
+    """Get detailed information for a single customer, including conversation history."""
+    security_service.EnhancedSecurityService.validate_admin_session(request, current_user)
+    
+    customer = await db_service.get_customer_by_id(customer_id)
+    if not customer:
+        raise HTTPException(status_code=404, detail="Customer not found")
+        
+    return APIResponse(
+        success=True,
+        message="Customer details retrieved successfully.",
+        data={"customer": customer},
         version=settings.api_version
     )
 
@@ -154,8 +169,8 @@ async def get_system_health(request: Request, current_user: dict = Depends(verif
     """Provides a health check of all critical system components."""
     security_service.EnhancedSecurityService.validate_admin_session(request, current_user)
 
-    # 1. Check Database
-    db_status = "connected" if not db_service.circuit_breaker.is_open else "error"
+    # --- FIX: Use is_open() method with parentheses ---
+    db_status = "connected" if not await db_service.circuit_breaker.is_open() else "error"
 
     # 2. Check Cache (Redis)
     try:
@@ -226,4 +241,37 @@ async def update_strings(strings: List[StringResource], request: Request, curren
     """Update all string resources."""
     security_service.EnhancedSecurityService.validate_admin_session(request, current_user)
     await db_service.update_strings(strings)
+    # FIX: Reload the strings into the cache after updating the database
+    await string_service.load_strings()
     return APIResponse(success=True, message="Strings updated successfully", version=settings.api_version)
+
+@router.get("/escalations", response_model=APIResponse)
+@limiter.limit("10/minute")
+async def get_escalation_requests(request: Request, current_user: dict = Depends(verify_jwt_token)):
+    """Get recent human escalation requests."""
+    security_service.EnhancedSecurityService.validate_admin_session(request, current_user)
+    escalations = await db_service.get_human_escalation_requests()
+    return APIResponse(
+        success=True,
+        message="Escalation requests retrieved successfully",
+        data={"escalations": escalations},
+        version=settings.api_version
+    )
+
+@router.post("/rules", response_model=APIResponse)
+async def create_rule(rule: Rule, request: Request, current_user: dict = Depends(verify_jwt_token)):
+    """Create a new rule in the rules engine."""
+    security_service.EnhancedSecurityService.validate_admin_session(request, current_user)
+    new_rule = await db_service.create_rule(rule)
+    await rule_service.load_rules()  # Reload rules after creating
+    return APIResponse(success=True, message="Rule created successfully", data={"rule": new_rule}, version=settings.api_version)
+
+@router.put("/rules/{rule_id}", response_model=APIResponse)
+async def update_rule(rule_id: str, rule: Rule, request: Request, current_user: dict = Depends(verify_jwt_token)):
+    """Update an existing rule in the rules engine."""
+    security_service.EnhancedSecurityService.validate_admin_session(request, current_user)
+    updated_rule = await db_service.update_rule(rule_id, rule)
+    if not updated_rule:
+        raise HTTPException(status_code=404, detail="Rule not found")
+    await rule_service.load_rules()  # Reload rules after updating
+    return APIResponse(success=True, message="Rule updated successfully", data={"rule": updated_rule}, version=settings.api_version)

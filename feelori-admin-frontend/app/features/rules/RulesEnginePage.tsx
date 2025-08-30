@@ -96,7 +96,7 @@ export const RulesEnginePage = () => {
                     </CardHeader>
                     <CardContent className="space-y-4">
                         {intents.map((intent, idx) => (
-                            <div key={intent.id} className="p-4 border rounded-lg bg-gray-50/50">
+                            <div key={intent._id || `new-intent-${idx}`} className="p-4 border rounded-lg bg-gray-50/50">
                                 <Input
                                     className="text-md font-semibold mb-3 bg-white"
                                     value={intent.name}

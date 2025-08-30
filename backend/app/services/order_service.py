@@ -7,12 +7,12 @@ import asyncio
 import logging
 from datetime import datetime, timedelta
 from dataclasses import dataclass, field
-from typing import Set, Dict, List, Tuple, Optional
+from typing import Set, Dict, List, Tuple, Optional, Any
 
 from rapidfuzz import process, fuzz
 
 from app.config.settings import settings
-from app.config import strings, rules, persona
+from app.config import strings, rules as default_rules, persona
 from app.models.domain import Product
 from app.services.security_service import EnhancedSecurityService
 from app.services.ai_service import ai_service
@@ -20,6 +20,9 @@ from app.services.shopify_service import shopify_service
 from app.services.whatsapp_service import whatsapp_service
 from app.services.db_service import db_service
 from app.services.cache_service import cache_service
+from app.services import security_service
+from app.services.string_service import string_service
+from app.services.rule_service import rule_service
 from app.utils.queue import message_queue
 from app.utils.metrics import message_counter, active_customers_gauge
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -28,7 +31,6 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 logger = logging.getLogger(__name__)
 scheduler = AsyncIOScheduler()
 
-# (The SearchConfig, QueryBuilder, and QuestionDetector classes remain the same)
 @dataclass
 class SearchConfig:
     """Configuration for search behavior."""
@@ -63,7 +65,7 @@ class QueryBuilder:
     def _fuzzy_correct_keywords(self, keywords: List[str]) -> List[str]:
         corrected = []
         for kw in keywords:
-            match, score, _ = process.extractOne(kw, rules.VALID_KEYWORDS, scorer=fuzz.token_sort_ratio)
+            match, score, _ = process.extractOne(kw, default_rules.VALID_KEYWORDS, scorer=fuzz.token_sort_ratio)
             if score >= 80:
                 if kw != match: logger.info(f"Fuzzy keyword correction: {kw} -> {match} (Score: {score})")
                 corrected.append(match)
@@ -72,8 +74,8 @@ class QueryBuilder:
         return corrected
 
     def _extract_keywords(self, message: str) -> List[str]:
-        words = [w.lower().strip() for w in rules.WORD_RE.findall(message.lower()) if len(w) >= self.config.MIN_WORD_LENGTH and w.lower() not in self.config.STOP_WORDS]
-        normalized = [rules.PLURAL_MAPPINGS.get(w, w) for w in words]
+        words = [w.lower().strip() for w in default_rules.WORD_RE.findall(message.lower()) if len(w) >= self.config.MIN_WORD_LENGTH and w.lower() not in self.config.STOP_WORDS]
+        normalized = [default_rules.PLURAL_MAPPINGS.get(w, w) for w in words]
         return list(dict.fromkeys(self._fuzzy_correct_keywords(normalized)))
 
     def _build_prioritized_query(self, keywords: List[str]) -> str:
@@ -129,11 +131,10 @@ class QuestionDetector:
 async def process_message(phone_number: str, message_text: str, message_type: str, quoted_wamid: str | None) -> str | None:
     """Processes an incoming message and routes it to the correct handler."""
     try:
-        # --- THIS IS A FIX ---
         clean_phone = EnhancedSecurityService.sanitize_phone_number(phone_number)
         
         if clean_phone == settings.packing_dept_whatsapp_number:
-            return strings.PACKING_DEPT_REDIRECT
+            return string_service.get_string("PACKING_DEPT_REDIRECT", strings.PACKING_DEPT_REDIRECT)
 
         customer = await get_or_create_customer(clean_phone)
         last_question_raw = await cache_service.redis.get(f"state:last_bot_question:{clean_phone}")
@@ -143,13 +144,11 @@ async def process_message(phone_number: str, message_text: str, message_type: st
             await cache_service.redis.delete(f"state:last_bot_question:{clean_phone}")
             clean_msg = message_text.lower().strip()
 
-            if last_question == "offer_bestsellers" and clean_msg in rules.AFFIRMATIVE_RESPONSES:
-                await handle_bestsellers(customer=customer)
-                return None
-            if last_question == "offer_unfiltered_products" and clean_msg in rules.AFFIRMATIVE_RESPONSES:
-                await handle_show_unfiltered_products(customer=customer)
-                return None
-            if clean_msg in rules.NEGATIVE_RESPONSES:
+            if last_question == "offer_bestsellers" and clean_msg in default_rules.AFFIRMATIVE_RESPONSES:
+                return await handle_bestsellers(customer=customer)
+            if last_question == "offer_unfiltered_products" and clean_msg in default_rules.AFFIRMATIVE_RESPONSES:
+                return await handle_show_unfiltered_products(customer=customer)
+            if clean_msg in default_rules.NEGATIVE_RESPONSES:
                 return "No problem! Let me know if there's anything else I can help you find. ✨"
         
         intent = await analyze_intent(message_text, message_type, customer, quoted_wamid)
@@ -159,59 +158,75 @@ async def process_message(phone_number: str, message_text: str, message_type: st
         
     except Exception as e:
         logger.error(f"Message processing error for {phone_number}: {e}", exc_info=True)
-        return strings.ERROR_GENERAL
+        return string_service.get_string("ERROR_GENERAL", strings.ERROR_GENERAL)
 
-async def get_or_create_customer(phone_number: str) -> Dict:
-    """Retrieves a customer from cache/DB or creates a new one."""
-    cache_key = f"customer:v2:{phone_number}"
-    cached_customer_raw = await cache_service.get(cache_key)
-    if cached_customer_raw:
-        try:
-            return json.loads(cached_customer_raw)
-        except json.JSONDecodeError:
-             logger.warning(f"Failed to decode customer from cache for {phone_number}")
+# --- Helper function to get or create a customer ---
+async def get_or_create_customer(phone_number: str, profile_name: str = None) -> Dict[str, Any]:
+    """Retrieves an existing customer or creates a new one."""
+    cached_customer = await cache_service.get(f"customer:v2:{phone_number}")
+    if cached_customer:
+        return json.loads(cached_customer)
 
-    customer_data = await db_service.get_customer(phone_number)
-    if customer_data:
-        serialized = json.dumps(customer_data, default=str)
-        await cache_service.set(cache_key, serialized, ttl=1800)
-        return customer_data
+    customer = await db_service.get_customer(phone_number)
+    if not customer:
+        customer_data = {
+            "phone_number": phone_number,
+            "name": profile_name,
+            "conversation_history": [],
+            "last_interaction": datetime.utcnow(),
+        }
+        await db_service.create_customer(customer_data)
+        customer = await db_service.get_customer(phone_number)
     
-    new_customer = {
-        "id": str(uuid.uuid4()), "phone_number": phone_number,
-        "created_at": datetime.utcnow(), "conversation_history": [],
-        "preferences": {}, "last_interaction": datetime.utcnow(),
-        "total_messages": 0, "favorite_categories": []
-    }
-    await db_service.create_customer(new_customer)
-    serialized_new = json.dumps(new_customer, default=str)
-    await cache_service.set(cache_key, serialized_new, ttl=1800)
-    active_customers_gauge.inc()
-    return new_customer
+    await cache_service.set(f"customer:v2:{phone_number}", json.dumps(customer, default=str), ttl=1800)
+    return customer
+
+# --- Helper function to extract text from any message type ---
+def get_message_text(message: Dict[str, Any]) -> str:
+    """Extracts the textual content from various WhatsApp message types."""
+    msg_type = message.get("type")
+    if msg_type == "text":
+        return message.get("text", {}).get("body", "")
+    elif msg_type == "interactive":
+        interactive = message.get("interactive", {})
+        interactive_type = interactive.get("type")
+        if interactive_type == "button_reply":
+            return interactive.get("button_reply", {}).get("id", "")
+        elif interactive_type == "list_reply":
+            return interactive.get("list_reply", {}).get("id", "")
+    elif msg_type == "image":
+        return "[User sent an image]"
+    return f"[Unsupported message type: '{msg_type}']"
 
 def _analyze_interactive_intent(message: str) -> str:
     """Analyze intent for interactive messages based on their prefix."""
-    for prefix, intent in rules.INTERACTIVE_PREFIXES.items():
+    for prefix, intent in default_rules.INTERACTIVE_PREFIXES.items():
         if message.startswith(prefix):
             return intent
     return "interactive_response"
 
 def analyze_text_intent(message_lower: str) -> str:
-    """Analyzes intent for text messages with optimized performance and context awareness."""
-    message_words = set(rules.WORD_RE.findall(message_lower))
+    """Analyzes intent for text messages using rules from the database."""
+    message_words = set(default_rules.WORD_RE.findall(message_lower))
     
-    for single_word_patterns, multi_word_patterns, intent in rules.INTENT_RULES:
+    # Use the dynamic rules from the service
+    for rule in rule_service.get_rules():
+        single_word_patterns = set(rule.get("keywords", []))
+        multi_word_phrases = rule.get("phrases", [])
+        intent = rule.get("name")
+
         if single_word_patterns and not message_words.isdisjoint(single_word_patterns):
             return intent
-        if multi_word_patterns and any(p in message_lower for p in multi_word_patterns):
+        if multi_word_phrases and any(p in message_lower for p in multi_word_phrases):
             return intent
     
-    is_greeting = not message_words.isdisjoint(rules.GREETING_KEYWORDS_SET)
-    has_high_priority_context = not message_words.isdisjoint(rules.HIGH_PRIORITY_CONTEXT_WORDS)
+    # Fallback for conversational patterns
+    has_high_priority_context = not message_words.isdisjoint(default_rules.HIGH_PRIORITY_CONTEXT_WORDS)
+    is_greeting = not message_words.isdisjoint(default_rules.GREETING_KEYWORDS_SET)
     
     if is_greeting and not has_high_priority_context:
         return "greeting"
-    if not message_words.isdisjoint(rules.THANK_KEYWORDS_SET):
+    if not message_words.isdisjoint(default_rules.THANK_KEYWORDS_SET):
         return "thank_you"
     
     return "general"
@@ -259,7 +274,6 @@ async def route_message(intent: str, phone_number: str, message: str, customer: 
         "general": handle_general_inquiry
     }
     handler = handler_map.get(intent, handle_general_inquiry)
-    # Pass all available arguments to the handler
     return await handler(phone_number=phone_number, message=message, customer=customer, quoted_wamid=quoted_wamid)
 
 
@@ -273,8 +287,7 @@ async def handle_product_search(message: str, customer: Dict, **kwargs) -> Optio
         text_query, price_filter = query_builder.build_query_parts(message)
         
         if not text_query and not price_filter:
-            await _handle_unclear_request(customer, message)
-            return None
+            return await _handle_unclear_request(customer, message)
 
         filtered_products, unfiltered_count = await shopify_service.get_products(
             query=text_query, filters=price_filter, limit=config.MAX_SEARCH_RESULTS
@@ -287,18 +300,14 @@ async def handle_product_search(message: str, customer: Dict, **kwargs) -> Optio
                 response = f"I found {unfiltered_count} item(s), but none are {price_str}. 😔\n\nWould you like to see them anyway?"
                 await cache_service.redis.set(f"state:last_search:{customer['phone_number']}", json.dumps({"query": message, "page": 1}), ex=900)
                 await cache_service.redis.set(f"state:last_bot_question:{customer['phone_number']}", "offer_unfiltered_products", ex=900)
-                await whatsapp_service.send_message(customer["phone_number"], response)
-                return None
+                return response
             else:
-                await _handle_no_results(customer, message)
-                return None
+                return await _handle_no_results(customer, message)
 
-        await _handle_standard_search(filtered_products, message, customer)
-        return None
+        return await _handle_standard_search(filtered_products, message, customer)
     except Exception as e:
         logger.error(f"Error in product search: {e}", exc_info=True)
-        await _handle_error(customer)
-        return None
+        return await _handle_error(customer)
 
 async def handle_show_unfiltered_products(customer: Dict, **kwargs) -> Optional[str]:
     """Shows products from the last search, ignoring any price filters."""
@@ -315,8 +324,7 @@ async def handle_show_unfiltered_products(customer: Dict, **kwargs) -> Optional[
     products, _ = await shopify_service.get_products(query=text_query, filters=None, limit=config.MAX_SEARCH_RESULTS)
 
     if not products: return f"I'm sorry, I still couldn't find any results for '{original_message}'."
-    await _handle_standard_search(products, original_message, customer)
-    return None
+    return await _handle_standard_search(products, original_message, customer)
 
 async def handle_contextual_product_question(message: str, customer: Dict, **kwargs) -> Optional[str]:
     """Handles questions asked in reply to a specific product message."""
@@ -341,9 +349,8 @@ async def handle_contextual_product_question(message: str, customer: Dict, **kwa
 
     prompt = ai_service.create_qa_prompt(last_product, message)
     ai_answer = await ai_service.generate_response(prompt)
-    await whatsapp_service.send_message(phone_number, ai_answer)
     await _send_product_card(products=[last_product], customer=customer, header_text="This is the product we're discussing:", body_text="Tap to view details.")
-    return None
+    return ai_answer
 
 async def handle_interactive_button_response(message: str, customer: Dict, **kwargs) -> Optional[str]:
     """Handles replies from interactive buttons on a product card."""
@@ -377,7 +384,7 @@ async def handle_buy_request(product_id: str, customer: Dict) -> Optional[str]:
     if len(variants) > 1:
         variant_options = {v['title']: v['id'] for v in variants[:3]}
         await whatsapp_service.send_quick_replies(customer["phone_number"], f"Please select an option for *{product.title}*:", variant_options)
-        return None
+        return "[Bot asked for variant selection]"
     elif variants:
         cart_url = shopify_service.get_add_to_cart_url(variants[0]["id"])
         return f"Great choice! Add *{product.title}* to your cart here:\n{cart_url}"
@@ -393,14 +400,13 @@ async def handle_price_inquiry(message: str, customer: Dict, **kwargs) -> Option
     if product_list_raw:
         product_list = [Product(**p) for p in json.loads(product_list_raw)]
         if len(product_list) > 1:
-            await whatsapp_service.send_message(phone_number, "I just showed you a few designs. Please tap 'View Details' on the one you're interested in for the price! 👍")
-            return None
+            return "I just showed you a few designs. Please tap 'View Details' on the one you're interested in for the price! 👍"
 
     product_to_price_raw = await cache_service.redis.get(f"state:last_single_product:{phone_number}")
     if product_to_price_raw:
         product_to_price = Product.parse_raw(product_to_price_raw)
         await whatsapp_service.send_product_detail_with_buttons(phone_number, product_to_price)
-        return None
+        return "[Bot sent product details]"
     
     return "I can help with prices! Which product are you interested in? Try searching for something like 'gold necklaces' first."
 
@@ -411,7 +417,7 @@ async def handle_product_detail(message: str, customer: Dict, **kwargs) -> Optio
     if product:
         await cache_service.redis.set(f"state:last_single_product:{customer['phone_number']}", product.json(), ex=900)
         await whatsapp_service.send_product_detail_with_buttons(customer["phone_number"], product)
-        return None
+        return "[Bot sent product details]"
     return "Sorry, I couldn't find details for that product."
 
 async def handle_latest_arrivals(customer: Dict, **kwargs) -> Optional[str]:
@@ -419,14 +425,14 @@ async def handle_latest_arrivals(customer: Dict, **kwargs) -> Optional[str]:
     products, _ = await shopify_service.get_products(query="", limit=5, sort_key="CREATED_AT")
     if not products: return "I couldn't fetch the latest arrivals right now. Please try again shortly."
     await _send_product_card(products=products, customer=customer, header_text="Here are our latest arrivals! ✨", body_text="Freshly added to our collection.")
-    return None
+    return "[Sent latest arrival recommendations]"
 
 async def handle_bestsellers(customer: Dict, **kwargs) -> Optional[str]:
     """Shows the top-selling products."""
     products, _ = await shopify_service.get_products(query="", limit=5, sort_key="BEST_SELLING")
     if not products: return "I couldn't fetch our bestsellers right now. Please try again shortly."
     await _send_product_card(products=products, customer=customer, header_text="Check out our bestsellers! 🌟", body_text="These are the items our customers love most.")
-    return None
+    return "[Sent bestseller recommendations]"
 
 async def handle_more_results(message: str, customer: Dict, **kwargs) -> Optional[str]:
     """Shows more results based on the last search or viewed product."""
@@ -454,7 +460,7 @@ async def handle_more_results(message: str, customer: Dict, **kwargs) -> Optiona
     products, _ = await shopify_service.get_products(search_query, limit=5, filters=price_filter)
     if not products: return f"I couldn't find any more designs for '{raw_query_for_display}'. Try something else."
     await _send_product_card(products=products, customer=customer, header_text=header_text, body_text="Here are a few more options.")
-    return None
+    return f"[Sent more results for '{raw_query_for_display}']"
 
 async def handle_shipping_inquiry(message: str, customer: Dict, **kwargs) -> Optional[str]:
     """Provides shipping information and handles contextual delivery time questions."""
@@ -462,7 +468,7 @@ async def handle_shipping_inquiry(message: str, customer: Dict, **kwargs) -> Opt
     if any(k in message_lower for k in {"policy", "cost", "charge", "fee"}):
         city_info = ""
         if "delhi" in message_lower: city_info = "For Delhi, delivery is typically within **3-5 business days!** 🏙️\n\n"
-        return strings.SHIPPING_POLICY_INFO.format(city_info=city_info)
+        return string_service.get_string("SHIPPING_POLICY_INFO", strings.SHIPPING_POLICY_INFO).format(city_info=city_info)
 
     cities = ["hyderabad", "delhi", "mumbai", "bangalore", "chennai", "kolkata"]
     found_city = next((city for city in cities if city in message_lower), None)
@@ -491,7 +497,7 @@ async def handle_visual_search(message: str, customer: Dict, **kwargs) -> Option
         elif match_type == 'very_similar': header_text = f"🌟 Found {len(products)} Excellent Matches"
         
         await _send_product_card(products=products, customer=customer, header_text=header_text, body_text="Here are some products matching your style!")
-        return None
+        return "[Sent visual search results]"
     except Exception as e:
         logger.error(f"Critical error in visual search: {e}", exc_info=True)
         return "Something went wrong during the visual search. Please try again. 😔"
@@ -500,20 +506,20 @@ async def handle_order_inquiry(phone_number: str, customer: Dict, **kwargs) -> s
     """Handles order status inquiries."""
     message_lower = (customer.get("conversation_history", [{}])[-1] or {}).get("message", "").lower()
     if any(k in message_lower for k in {"where", "find", "how"}) and "order number" in message_lower:
-        return strings.ORDER_NUMBER_HELP
+        return string_service.get_string("ORDER_NUMBER_HELP", strings.ORDER_NUMBER_HELP)
     
     security_message = _perform_security_check(phone_number, customer)
     if security_message: return security_message
     
     orders = await shopify_service.search_orders_by_phone(phone_number)
-    return _format_orders_response(orders) if orders else strings.NO_ORDERS_FOUND
+    return _format_orders_response(orders) if orders else string_service.get_string("NO_ORDERS_FOUND", strings.NO_ORDERS_FOUND)
 
 async def handle_support_request(message: str, customer: Dict, **kwargs) -> str:
     """Handles support requests for damaged items, returns, etc."""
     complaint_keywords = {"damaged", "broken", "defective", "wrong", "incorrect", "bad", "poor", "dull"}
     if any(keyword in message.lower() for keyword in complaint_keywords):
-        return strings.SUPPORT_COMPLAINT_RESPONSE
-    return strings.SUPPORT_GENERAL_RESPONSE
+        return string_service.get_string("SUPPORT_COMPLAINT_RESPONSE", strings.SUPPORT_COMPLAINT_RESPONSE)
+    return string_service.get_string("SUPPORT_GENERAL_RESPONSE", strings.SUPPORT_GENERAL_RESPONSE)
 
 def get_last_conversation_date(history: list) -> Optional[datetime]:
     if not history: return None
@@ -556,17 +562,17 @@ async def handle_general_inquiry(message: str, customer: Dict, **kwargs) -> str:
         return await ai_service.generate_response(message, context)
     except Exception as e:
         logger.error(f"General inquiry AI error: {e}")
-        return strings.ERROR_AI_GENERAL
+        return string_service.get_string("ERROR_AI_GENERAL", strings.ERROR_AI_GENERAL)
 
 # --- Handlers for string constants ---
-async def handle_human_escalation(**kwargs) -> str: return strings.HUMAN_ESCALATION
-async def handle_price_feedback(**kwargs) -> str: return strings.PRICE_FEEDBACK_RESPONSE
-async def handle_discount_inquiry(**kwargs) -> str: return strings.DISCOUNT_INFO
-async def handle_review_inquiry(**kwargs) -> str: return strings.REVIEW_INFO
-async def handle_bulk_order_inquiry(**kwargs) -> str: return strings.BULK_ORDER_INFO
-async def handle_reseller_inquiry(**kwargs) -> str: return strings.RESELLER_INFO
-async def handle_contact_inquiry(**kwargs) -> str: return strings.CONTACT_INFO
-async def handle_thank_you(**kwargs) -> str: return strings.THANK_YOU_RESPONSE
+async def handle_human_escalation(**kwargs) -> str: return string_service.get_string("HUMAN_ESCALATION", strings.HUMAN_ESCALATION)
+async def handle_price_feedback(**kwargs) -> str: return string_service.get_string("PRICE_FEEDBACK_RESPONSE", strings.PRICE_FEEDBACK_RESPONSE)
+async def handle_discount_inquiry(**kwargs) -> str: return string_service.get_string("DISCOUNT_INFO", strings.DISCOUNT_INFO)
+async def handle_review_inquiry(**kwargs) -> str: return string_service.get_string("REVIEW_INFO", strings.REVIEW_INFO)
+async def handle_bulk_order_inquiry(**kwargs) -> str: return string_service.get_string("BULK_ORDER_INFO", strings.BULK_ORDER_INFO)
+async def handle_reseller_inquiry(**kwargs) -> str: return string_service.get_string("RESELLER_INFO", strings.RESELLER_INFO)
+async def handle_contact_inquiry(**kwargs) -> str: return string_service.get_string("CONTACT_INFO", strings.CONTACT_INFO)
+async def handle_thank_you(**kwargs) -> str: return string_service.get_string("THANK_YOU_RESPONSE", strings.THANK_YOU_RESPONSE)
 
 
 # --- Helper Functions for Handlers ---
@@ -583,7 +589,7 @@ def _identify_search_category(keywords: List[str]) -> str:
     if any(w in {"set", "sets", "matching"} for w in keywords): return "sets"
     return "unknown"
 
-async def _handle_no_results(customer: Dict, original_query: str):
+async def _handle_no_results(customer: Dict, original_query: str) -> str:
     """Provides intelligent responses when a search yields no results."""
     config = SearchConfig()
     query_builder = QueryBuilder(config)
@@ -596,14 +602,14 @@ async def _handle_no_results(customer: Dict, original_query: str):
     if search_category in {"bangles", "rings", "bracelets"}:
         response = f"While we don't carry {search_category} right now, we have stunning **earrings and necklace sets** that would complement your look beautifully.\n\nWould you like me to show you some of our bestselling sets? ✨"
         
-    await whatsapp_service.send_message(customer["phone_number"], response)
     await cache_service.redis.set(f"state:last_bot_question:{customer['phone_number']}", "offer_bestsellers", ex=900)
+    return response
 
-async def _handle_unclear_request(customer: Dict, original_message: str):
+async def _handle_unclear_request(customer: Dict, original_message: str) -> str:
     """Handles cases where the search intent is unclear."""
-    await whatsapp_service.send_message(customer["phone_number"], "I'd love to help! Could you tell me what type of jewelry you're looking for? (e.g., Necklaces, Earrings, Sets)")
+    return "I'd love to help! Could you tell me what type of jewelry you're looking for? (e.g., Necklaces, Earrings, Sets)"
 
-async def _handle_standard_search(products: List[Product], message: str, customer: Dict):
+async def _handle_standard_search(products: List[Product], message: str, customer: Dict) -> str:
     """Handles standard product search results."""
     phone_number = customer["phone_number"]
     await cache_service.redis.set(f"state:last_search:{phone_number}", json.dumps({"query": message, "page": 1}), ex=900)
@@ -621,6 +627,8 @@ async def _handle_standard_search(products: List[Product], message: str, custome
             city = pending_question.get("context", {}).get("city")
             contextual_answer = f"Regarding your question about delivery to **{city.title()}**: it typically takes **3-5 business days**." if city else "Regarding delivery: it's typically **3-5 business days** for metro cities."
             await whatsapp_service.send_message(phone_number, contextual_answer)
+    
+    return f"[Sent {len(products)} product recommendations]"
 
 async def _send_product_card(products: List[Product], customer: Dict, header_text: str, body_text: str):
     """Sends a rich multi-product message card."""
@@ -632,9 +640,9 @@ async def _send_product_card(products: List[Product], customer: Dict, header_tex
         section_title="Products", product_items=product_items, fallback_products=products
     )
 
-async def _handle_error(customer: Dict):
+async def _handle_error(customer: Dict) -> str:
     """Handles unexpected errors gracefully."""
-    await whatsapp_service.send_message(customer["phone_number"], "Sorry, I'm having trouble searching right now. 😔 Please try again in a moment.")
+    return "Sorry, I'm having trouble searching right now. 😔 Please try again in a moment."
 
 def _perform_security_check(phone_number: str, customer: Dict) -> Optional[str]:
     """Checks if a user is asking for order details of another number."""
@@ -673,39 +681,55 @@ def _format_orders_response(orders: List[Dict]) -> str:
 
 # --- Webhook Processing Logic ---
 
-async def process_webhook_message(message: Dict, webhook_data: Dict):
-    """Processes a message from the WhatsApp webhook and adds it to the queue."""
+async def process_webhook_message(message: Dict[str, Any], webhook_data: Dict[str, Any]):
+    """
+    Main function to process an incoming webhook message from a user.
+    """
     try:
-        message_id, from_number = message.get("id"), message.get("from")
-        if not all([message_id, from_number]): return
-        
-        # --- THIS IS THE FIX ---
-        # Use the directly imported class name
-        clean_phone = EnhancedSecurityService.sanitize_phone_number(from_number)
-        if await message_queue.is_duplicate_message(message_id, clean_phone): return
+        from_number = message.get("from")
+        wamid = message.get("id")
+        if not from_number or not wamid:
+            logger.warning("Webhook message missing 'from' or 'id'.")
+            return
 
-        profile_name = (webhook_data.get("contacts", [{}])[0] or {}).get("profile", {}).get("name")
-        message_type = message.get("type", "text")
-        message_text = ""
+        clean_phone = security_service.EnhancedSecurityService.sanitize_phone_number(from_number)
 
-        if message_type == "text": message_text = EnhancedSecurityService.validate_message_content(message.get("text", {}).get("body", ""))
-        elif message_type == "interactive":
-            interactive = message.get("interactive", {})
-            reply_type = interactive.get("type")
-            if reply_type == "list_reply": message_text = interactive.get("list_reply", {}).get("id", "")
-            elif reply_type == "button_reply": message_text = interactive.get("button_reply", {}).get("id", "")
-        elif message_type == "image":
-            media_id = (message.get("image") or {}).get("id")
-            message_text = f"visual_search_{media_id}" if media_id else ""
-        
-        if message_text:
-            await message_queue.add_message({
-                "from_number": clean_phone, "message_text": message_text,
-                "message_type": message_type, "profile_name": profile_name,
-                "quoted_wamid": (message.get("context") or {}).get("id")
-            })
+        if await message_queue.is_duplicate_message(wamid, clean_phone):
+            logger.info(f"Duplicate message {wamid} from {clean_phone} received, ignoring.")
+            return
+
+        if not await security_service.rate_limiter.check_phone_rate_limit(clean_phone):
+            logger.warning(f"Rate limit exceeded for {clean_phone}.")
+            return
+
+        message_text = get_message_text(message)
+        message_type = message.get("type", "unknown")
+        profile_name = webhook_data.get("contacts", [{}])[0].get("profile", {}).get("name")
+        quoted_wamid = message.get("context", {}).get("id")
+
+        if message_type == "image":
+            media_id = message.get("image", {}).get("id")
+            caption = message.get("image", {}).get("caption", "")
+            message_text = f"visual_search_{media_id}_caption_{caption}"
+
+        if not message_text:
+            logger.info(f"Ignoring empty message from {clean_phone}")
+            return
+
+        message_data = {
+            "from_number": clean_phone,
+            "message_text": message_text,
+            "message_type": message_type,
+            "wamid": wamid,
+            "profile_name": profile_name,
+            "quoted_wamid": quoted_wamid
+        }
+
+        await message_queue.add_message(message_data)
+
     except Exception as e:
-        logger.error(f"Error processing webhook message: {e}", exc_info=True)
+        logger.error(f"Error in process_webhook_message: {e}", exc_info=True)
+
 
 async def handle_status_update(status_data: Dict):
     """Processes a message status update from WhatsApp with retries."""

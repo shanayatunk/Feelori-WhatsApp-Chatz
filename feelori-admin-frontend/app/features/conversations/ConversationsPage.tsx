@@ -1,89 +1,114 @@
-import React from 'react';
+"use client";
+import React, { useState, useEffect } from 'react';
+import { apiService } from '../../../lib/api';
 import { Card, CardHeader, CardContent, CardTitle, CardDescription } from '../../components/ui/Card';
+import { Button } from '../../components/ui/Button';
 
-export const ConversationsPage = () => {
-    const [conversations, setConversations] = React.useState<any[]>([]);
-    const [selectedConvo, setSelectedConvo] = React.useState<any>(null);
-    const [messages, setMessages] = React.useState<any[]>([]);
-    const [loading, setLoading] = React.useState(true);
+// Define a type for our customer data for better type safety
+interface Customer {
+  _id: string;
+  phone_number: string;
+  name: string;
+  last_interaction: string;
+}
 
-    React.useEffect(() => {
-        setTimeout(() => {
-            setConversations([
-                { id: 1, name: 'Priya Sharma', phone: '+919876543210', lastMessage: 'Is this available in gold?', time: '5m ago', status: 'delivered' },
-                { id: 2, name: 'Amit Singh', phone: '+919123456789', lastMessage: 'Thank you!', time: '2h ago', status: 'read' },
-                { id: 3, name: 'Sneha Reddy', phone: '+918765432109', lastMessage: 'What is the price for #1234?', time: '1d ago', status: 'sent' },
-            ]);
-            setLoading(false);
-        }, 1000);
-    }, []);
+// The component now accepts an `onViewCustomer` function as a prop
+export const ConversationsPage = ({ onViewCustomer }: { onViewCustomer: (id: string) => void }) => {
+  const [customers, setCustomers] = useState<Customer[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [pagination, setPagination] = useState({ page: 1, limit: 15, total: 0, pages: 1 });
 
-    const handleSelectConvo = (convo: any) => {
-        setSelectedConvo(convo);
-        setMessages([
-            { from: 'user', text: 'Hi, I saw a necklace I liked.' },
-            { from: 'bot', text: 'Hello! I can help with that. Could you describe it or send a picture?' },
-            { from: 'user', text: 'It was a gold choker with red stones.' },
-            { from: 'bot', text: 'Searching for gold chokers with red stones for you now... ✨' },
-        ]);
-    };
+  const fetchCustomers = async (page = 1) => {
+    setLoading(true);
+    setError(null);
+    try {
+      const response = await apiService.getCustomers(page, pagination.limit);
+      setCustomers(response.customers);
+      setPagination(response.pagination);
+    } catch (err: any) {
+      setError(err.message || 'Failed to fetch conversations.');
+    } finally {
+      setLoading(false);
+    }
+  };
 
-    const StatusTick = ({ status }: { status: string }) => {
-        if (status === 'read') return <span className="text-blue-500">✓✓</span>;
-        if (status === 'delivered') return <span className="text-gray-900">✓✓</span>;
-        return <span className="text-gray-900">✓</span>;
-    };
+  useEffect(() => {
+    fetchCustomers(pagination.page);
+  }, [pagination.page]);
 
-    return (
-        <div className="h-[calc(100vh-84px)] flex flex-col">
-            <h1 className="text-3xl font-bold text-black pb-4">Conversation Explorer</h1>
-            <div className="flex-grow grid grid-cols-1 lg:grid-cols-3 gap-6 overflow-hidden">
-                <Card className="lg:col-span-1 flex flex-col">
-                    <CardHeader><CardTitle>Recent Chats</CardTitle></CardHeader>
-                    <CardContent className="flex-grow overflow-y-auto p-2">
-                        {loading ? <p className="text-gray-900">Loading...</p> : (
-                            <div className="space-y-2">
-                                {conversations.map(convo => (
-                                    <div key={convo.id} onClick={() => handleSelectConvo(convo)}
-                                        className={`p-3 rounded-lg cursor-pointer transition-colors ${selectedConvo?.id === convo.id ? 'bg-[#ff4d6d] text-white' : 'hover:bg-gray-100'}`}>
-                                        <div className="flex justify-between items-center">
-                                            <p className={`font-semibold ${selectedConvo?.id === convo.id ? 'text-white' : 'text-gray-900'}`}>{convo.name}</p>
-                                            <p className={`text-xs ${selectedConvo?.id === convo.id ? 'text-gray-200' : 'text-gray-700'}`}>{convo.time}</p>
-                                        </div>
-                                        <div className="flex justify-between items-center">
-                                            <p className={`text-sm truncate ${selectedConvo?.id === convo.id ? 'text-gray-200' : 'text-gray-700'}`}>{convo.lastMessage}</p>
-                                            <StatusTick status={convo.status} />
-                                        </div>
-                                    </div>
-                                ))}
-                            </div>
-                        )}
-                    </CardContent>
-                </Card>
-                <Card className="lg:col-span-2 flex flex-col">
-                    <CardHeader>
-                        <CardTitle>{selectedConvo ? selectedConvo.name : 'Select a Conversation'}</CardTitle>
-                        <CardDescription>{selectedConvo ? selectedConvo.phone : 'No chat selected'}</CardDescription>
-                    </CardHeader>
-                    <CardContent className="flex-grow overflow-y-auto bg-gray-50">
-                        {selectedConvo ? (
-                            <div className="space-y-4 text-gray-900">
-                                {messages.map((msg, i) => (
-                                    <div key={i} className={`flex ${msg.from === 'user' ? 'justify-end' : 'justify-start'}`}>
-                                        <div className={`max-w-xs lg:max-w-md p-3 rounded-lg ${msg.from === 'user' ? 'bg-[#ff4d6d] text-white' : 'bg-white border'}`}>
-                                            {msg.text}
-                                        </div>
-                                    </div>
-                                ))}
-                            </div>
-                        ) : (
-                            <div className="flex items-center justify-center h-full text-gray-700">
-                                <p>Select a conversation from the left to view the transcript.</p>
-                            </div>
-                        )}
-                    </CardContent>
-                </Card>
+  const handlePageChange = (newPage: number) => {
+    if (newPage > 0 && newPage <= pagination.pages) {
+      setPagination(prev => ({ ...prev, page: newPage }));
+    }
+  };
+  
+  if (loading) {
+    return <div className="text-center p-10">Loading conversations...</div>;
+  }
+
+  if (error) {
+    return <div className="text-center p-10 text-red-500">{error}</div>;
+  }
+
+  return (
+    <div className="space-y-6">
+      <h1 className="text-3xl font-bold text-black">Customer Conversations</h1>
+      <Card>
+        <CardHeader>
+          <CardTitle>Recent Interactions</CardTitle>
+          <CardDescription>
+            Showing {customers.length} customers on page {pagination.page} of {pagination.pages}
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="border rounded-lg">
+            <table className="min-w-full divide-y">
+              <thead className="bg-gray-50">
+                <tr>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Name</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Phone Number</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Last Interaction</th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="bg-white divide-y">
+                {customers.map((customer) => (
+                  <tr key={customer._id}>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">{customer.name}</td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{customer.phone_number}</td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                      {/* FIX: Be more explicit with date and time formatting options for better browser compatibility */}
+                      {new Date(customer.last_interaction).toLocaleString('en-IN', {
+                        dateStyle: 'short',
+                        timeStyle: 'medium',
+                        timeZone: 'Asia/Kolkata',
+                      })}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
+                      {/* This button now calls the onViewCustomer function passed from the parent */}
+                      <Button className="text-sm" onClick={() => onViewCustomer(customer._id)}>
+                        View Chat
+                      </Button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div className="flex justify-between items-center mt-4">
+              <Button onClick={() => handlePageChange(pagination.page - 1)} disabled={pagination.page <= 1}>
+                Previous
+              </Button>
+              <span className="text-sm">
+                Page {pagination.page} of {pagination.pages}
+              </span>
+              <Button onClick={() => handlePageChange(pagination.page + 1)} disabled={pagination.page >= pagination.pages}>
+                Next
+              </Button>
             </div>
-        </div>
-    );
+        </CardContent>
+      </Card>
+    </div>
+  );
 };

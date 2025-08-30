@@ -14,17 +14,22 @@ const StatCard = ({ title, value, icon, color = '#ff4d6d' }: { title: string; va
     </Card>
   );
 
-export const DashboardPage = ({ setPage }: { setPage: (page: string) => void; }) => {
+export const DashboardPage = ({ setPage, onViewCustomer }: { setPage: (page: string) => void; onViewCustomer: (customerId: string) => void; }) => {
   const [stats, setStats] = React.useState<any>(null);
+  const [escalations, setEscalations] = React.useState<any[]>([]);
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);
 
   React.useEffect(() => {
-    const fetchStats = async () => {
+    const fetchData = async () => {
       try {
         setLoading(true);
-        const data = await apiService.getStats();
-        setStats(data);
+        const [statsData, escalationsData] = await Promise.all([
+          apiService.getStats(),
+          apiService.getEscalations()
+        ]);
+        setStats(statsData);
+        setEscalations(escalationsData);
       } catch (err: any) {
         setError(err.message);
       } finally {
@@ -32,7 +37,7 @@ export const DashboardPage = ({ setPage }: { setPage: (page: string) => void; })
       }
     };
 
-    fetchStats();
+    fetchData();
   }, []);
 
   if (loading) return <div className="text-center p-10 text-gray-900">Loading dashboard...</div>;
@@ -53,12 +58,24 @@ export const DashboardPage = ({ setPage }: { setPage: (page: string) => void; })
             <CardContent><div className="h-64 bg-gray-200 rounded-md flex items-center justify-center text-gray-400">Chart Placeholder</div></CardContent>
         </Card>
         <Card>
-            <CardHeader><CardTitle>Human Support Requests</CardTitle></CardHeader>
+            <CardHeader>
+                <CardTitle>Human Support Requests</CardTitle>
+                <CardDescription>Recent conversations that triggered the 'human_escalation' intent.</CardDescription>
+            </CardHeader>
             <CardContent>
-                <p className="text-sm text-gray-700 mb-4">Conversations that triggered the 'human_escalation' intent.</p>
                 <div className="space-y-2 text-sm">
-                    <div className="flex justify-between p-2 rounded hover:bg-gray-50 text-gray-900"><span>Priya Sharma (+91...210)</span><a href="#" className="text-[#ff4d6d] font-medium">View</a></div>
-                    <div className="flex justify-between p-2 rounded hover:bg-gray-50 text-gray-900"><span>Rohan Mehra (+91...556)</span><a href="#" className="text-[#ff4d6d] font-medium">View</a></div>
+                    {escalations.length > 0 ? (
+                        escalations.map(e => (
+                            <div key={e._id} className="flex justify-between items-center p-2 rounded hover:bg-gray-50 text-gray-900">
+                                <span>{e.name} ({e.phone_number})</span>
+                                <button onClick={() => onViewCustomer(e._id)} className="text-[#ff4d6d] font-medium hover:underline">
+                                    View
+                                </button>
+                            </div>
+                        ))
+                    ) : (
+                        <p className="text-gray-500 text-center py-4">No recent escalation requests.</p>
+                    )}
                 </div>
             </CardContent>
         </Card>

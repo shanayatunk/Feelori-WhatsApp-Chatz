@@ -10,6 +10,8 @@ from app.utils.queue import message_queue
 from app.services.db_service import db_service
 from app.services.order_service import scheduler
 from app.services import security_service
+from app.services.string_service import string_service
+from app.services.rule_service import rule_service
 from app.config.settings import settings
 
 # This file manages the application's lifespan, handling startup tasks like
@@ -54,6 +56,9 @@ async def lifespan(app: FastAPI):
         ADMIN_PASSWORD_HASH = None
 
     await db_service.create_indexes()
+    # Load dynamic configurations from the database into memory
+    await string_service.load_strings()
+    await rule_service.load_rules()
     
     await message_queue.start_workers()
     scheduler.start()

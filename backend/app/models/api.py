@@ -46,3 +46,16 @@ class Rule(BaseModel):
 class StringResource(BaseModel):
     key: str
     value: str
+
+# --- FIX START: Add the missing models ---
+
+class OrderUpdate(BaseModel):
+    status: Optional[str] = None
+    packer_name: Optional[str] = None
+
+class OrderHold(BaseModel):
+    reason: str
+    notes: Optional[str] = None
+    problem_item_skus: Optional[List[str]] = None
+
+# --- FIX END ---

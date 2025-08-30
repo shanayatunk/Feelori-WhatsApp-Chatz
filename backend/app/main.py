@@ -17,7 +17,7 @@ from slowapi.middleware import SlowAPIMiddleware
 from app.config.settings import settings
 from app.utils.lifecycle import lifespan
 from app.utils.metrics import response_time_histogram
-from app.utils.rate_limiter import limiter # <-- CHANGED: Import from new location
+from app.utils.rate_limiter import limiter
 from app.routes import auth, admin, webhooks, public, dashboard
 
 # Initialize the FastAPI application
@@ -32,31 +32,40 @@ app = FastAPI(
 )
 
 # --- Static Files ---
-# Create a 'static' directory in your project's root folder (same level as 'app' folder)
-# Your dashboard.html file should go inside it.
 basedir = os.path.abspath(os.path.dirname(__file__))
 static_dir_path = os.path.join(basedir, "..", "static")
 os.makedirs(static_dir_path, exist_ok=True)
 app.mount("/static", StaticFiles(directory=static_dir_path), name="static")
 
 # --- Rate Limiting ---
-# THE LIMITER DEFINITION IS REMOVED FROM HERE
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 # --- Middleware ---
+
+# --- Fix Start: Correct CORS Configuration ---
 # Origins for CORS
-cors_origins = [origin.strip() for origin in settings.cors_allowed_origins.split(",") if origin.strip()]
-if settings.environment != "production":
-    cors_origins.extend(["http://localhost:3000", "http://127.0.0.1:3000"])
+cors_origins = []
+if settings.cors_allowed_origins:
+    cors_origins.extend([origin.strip() for origin in settings.cors_allowed_origins.split(",")])
+
+# Ensure localhost is allowed in development, removing duplicates
+if settings.environment == "development":
+    cors_origins.extend([
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+    ])
+cors_origins = list(set(cors_origins))
+
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=cors_origins,
     allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allow_headers=["*"],
+    allow_methods=["*"], # Allow all methods
+    allow_headers=["*"], # Allow all headers
 )
+# --- Fix End ---
 
 if settings.environment != "test":
     allowed_hosts = [host.strip() for host in settings.allowed_hosts.split(",") if host.strip()]

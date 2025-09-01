@@ -26,7 +26,6 @@ class Settings(BaseSettings):
     shopify_access_token: str
     shopify_webhook_secret: str | None = None
     shopify_storefront_access_token: str | None = None
-    # --- THIS IS THE FIX ---
     product_search_source: str = "storefront"
 
     # AI APIs
@@ -51,6 +50,8 @@ class Settings(BaseSettings):
     ssl_cert_path: str | None = None
     ssl_key_path: str | None = None
     workers: int = 4
+    # --- THIS IS THE CHANGE ---
+    # Default to production for safety. Must be explicitly set to 'development' to enable debug features.
     environment: str = Field(default="production", env="ENVIRONMENT")
 
     # Redis
@@ -117,3 +118,4 @@ def validate_environment(settings_obj: Settings):
 
 settings = Settings()
 validate_environment(settings)
+

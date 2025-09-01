@@ -33,9 +33,11 @@ app = FastAPI(
 
 # --- Static Files ---
 basedir = os.path.abspath(os.path.dirname(__file__))
-static_dir_path = os.path.join(basedir, "..", "static")
+static_dir_path = os.path.join(basedir, "static")
+# Ensure the directory exists, especially in container environments
 os.makedirs(static_dir_path, exist_ok=True)
 app.mount("/static", StaticFiles(directory=static_dir_path), name="static")
+
 
 # --- Rate Limiting ---
 app.state.limiter = limiter
@@ -43,29 +45,18 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 # --- Middleware ---
 
-# --- Fix Start: Correct CORS Configuration ---
 # Origins for CORS
 cors_origins = []
 if settings.cors_allowed_origins:
     cors_origins.extend([origin.strip() for origin in settings.cors_allowed_origins.split(",")])
 
-# Ensure localhost is allowed in development, removing duplicates
-if settings.environment == "development":
-    cors_origins.extend([
-        "http://localhost:3000",
-        "http://127.0.0.1:3000",
-    ])
-cors_origins = list(set(cors_origins))
-
-
 app.add_middleware(
     CORSMiddleware,
     allow_origins=cors_origins,
     allow_credentials=True,
-    allow_methods=["*"], # Allow all methods
-    allow_headers=["*"], # Allow all headers
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
-# --- Fix End ---
 
 if settings.environment != "test":
     allowed_hosts = [host.strip() for host in settings.allowed_hosts.split(",") if host.strip()]
@@ -98,7 +89,7 @@ app.include_router(admin.router, prefix=f"/api/{settings.api_version}")
 app.include_router(webhooks.router, prefix=f"/api/{settings.api_version}")
 app.include_router(dashboard.router, prefix=f"/api/{settings.api_version}")
 
-# --- Main Entry Point for Uvicorn ---
+# --- Main Entry Point for Uvicorn (for local development) ---
 if __name__ == "__main__":
     port = int(os.getenv("PORT", "8000"))
     host = os.getenv("HOST", "127.0.0.1")

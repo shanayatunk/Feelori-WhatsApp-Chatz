@@ -25,7 +25,7 @@ async def verify_jwt_token(token: str = Depends(oauth2_scheme)) -> dict:
 async def verify_webhook_signature(request: Request):
     body = await request.body()
     signature = request.headers.get("x-hub-signature-256", "")
-    if not security_service.SecurityService.verify_webhook_signature(body, signature, settings.whatsapp_webhook_secret):
+    if not security_service.SecurityService.verify_webhook_signature(body, signature, settings.whatsapp_app_secret):
         webhook_signature_counter.labels(status="invalid").inc()
         await db_service.log_security_event("invalid_webhook_signature", get_remote_address(request), {"signature": signature[:50]})
         raise HTTPException(status_code=403, detail="Invalid signature")

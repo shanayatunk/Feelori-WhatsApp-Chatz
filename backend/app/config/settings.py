@@ -17,7 +17,7 @@ class Settings(BaseSettings):
     whatsapp_access_token: str
     whatsapp_phone_id: str
     whatsapp_verify_token: str
-    whatsapp_webhook_secret: str
+    whatsapp_app_secret: str
     whatsapp_catalog_id: str | None = None
     whatsapp_business_account_id: str | None = None
 

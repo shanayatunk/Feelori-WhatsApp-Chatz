@@ -21,15 +21,20 @@ logger = logging.getLogger(__name__)
 
 class DatabaseService:
     def __init__(self, mongo_uri: str):
-        self.client = AsyncIOMotorClient(
-            mongo_uri,
-            maxPoolSize=settings.max_pool_size,
-            minPoolSize=settings.min_pool_size,
-            retryWrites=True,
-            readPreference='secondaryPreferred'
-        )
-        self.db = self.client.get_default_database()
-        self.circuit_breaker = RedisCircuitBreaker(cache_service.redis, "database")
+        try:
+            self.client = AsyncIOMotorClient(
+                mongo_uri,
+                maxPoolSize=settings.max_pool_size,
+                minPoolSize=settings.min_pool_size,
+                tls=True,                          # enforce TLS
+                tlsAllowInvalidCertificates=False  # required for Atlas
+            )
+            self.db = self.client.get_default_database()
+            self.circuit_breaker = RedisCircuitBreaker(cache_service.redis, "database")
+            logger.info("MongoDB client initialized successfully.")
+        except Exception as e:
+            logger.error(f"Error initializing MongoDB client: {e}")
+            raise
 
     async def create_indexes(self):
         """Create all necessary database indexes on startup."""

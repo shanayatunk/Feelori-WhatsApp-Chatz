@@ -1,3 +1,5 @@
+# backend/gunicorn_conf.py
+
 # Gunicorn config file
 
 # Basic configuration
@@ -9,3 +11,10 @@ worker_class = "uvicorn.workers.UvicornWorker"
 forwarded_allow_ips = "*"
 proxy_protocol = True
 proxy_allow_ips = '*'
+
+# --- Logging ---
+# Send access and error logs to stdout and stderr
+accesslog = "-"
+errorlog = "-"
+# Set the log level
+loglevel = "info"

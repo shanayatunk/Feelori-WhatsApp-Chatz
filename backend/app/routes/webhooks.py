@@ -2,6 +2,7 @@
 
 import json
 import asyncio
+import structlog # Import structlog
 from fastapi import APIRouter, Depends, HTTPException, Request, Query
 from fastapi.responses import JSONResponse, PlainTextResponse
 
@@ -24,6 +25,7 @@ router = APIRouter(
     tags=["Webhooks"]
 )
 
+log = structlog.get_logger(__name__) # Add this line
 
 # --- WhatsApp Webhooks ---
 
@@ -35,7 +37,9 @@ async def verify_whatsapp_webhook(
 ):
     """WhatsApp webhook verification (GET request)."""
     if hub_mode == "subscribe" and hub_verify_token == settings.whatsapp_verify_token:
+        log.info("WhatsApp webhook verification successful.")
         return PlainTextResponse(hub_challenge)
+    log.error("WhatsApp webhook verification failed.")
     raise HTTPException(status_code=403, detail="Forbidden")
 
 @router.post("/whatsapp")
@@ -46,23 +50,32 @@ async def handle_whatsapp_webhook(
 ):
     """Enhanced webhook handler for both messages and status updates."""
     with response_time_histogram.labels(endpoint="whatsapp_webhook").time():
+        log.info("WhatsApp webhook received a request.")
         data = json.loads(verified_body.decode())
+        log.debug("Webhook payload", data=data)
+
         client_ip = get_remote_address(request)
 
         if not await security_service.rate_limiter.check_ip_rate_limit(client_ip, limit=100, window=60):
+            log.warning("Rate limit exceeded for IP", client_ip=client_ip)
             return JSONResponse({"status": "rate_limited"}, status_code=429)
 
         for entry in data.get("entry", []):
             for change in entry.get("changes", []):
-                if change.get("field") != "messages": continue
+                if change.get("field") != "messages": 
+                    log.debug("Ignoring non-message change", change=change)
+                    continue
                 value = change.get("value", {})
                 if "statuses" in value:
                     for status_data in value.get("statuses", []):
+                        log.info("Processing status update", status=status_data)
                         asyncio.create_task(order_service.handle_status_update(status_data))
                 elif "messages" in value:
                     for message in value.get("messages", []):
+                        log.info("Processing incoming message", message=message)
                         asyncio.create_task(order_service.process_webhook_message(message, value))
         
+        log.info("Webhook processing complete.")
         return JSONResponse({"status": "success"})
 
 

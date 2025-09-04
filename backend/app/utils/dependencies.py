@@ -4,6 +4,7 @@ import base64
 import hmac
 import hashlib
 import secrets
+import structlog # Import structlog
 from fastapi import Request, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 
@@ -14,6 +15,7 @@ from app.utils.metrics import webhook_signature_counter
 from app.utils.request_utils import get_remote_address
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl=f"/api/{settings.api_version}/auth/login")
+log = structlog.get_logger(__name__) # Add this line
 
 async def verify_jwt_token(token: str = Depends(oauth2_scheme)) -> dict:
     # FIX: Use the jwt_service instance, not the module
@@ -28,8 +30,10 @@ async def verify_webhook_signature(request: Request):
     if not security_service.SecurityService.verify_webhook_signature(body, signature, settings.whatsapp_app_secret):
         webhook_signature_counter.labels(status="invalid").inc()
         await db_service.log_security_event("invalid_webhook_signature", get_remote_address(request), {"signature": signature[:50]})
+        log.error("Invalid webhook signature.", signature=signature) # Add this
         raise HTTPException(status_code=403, detail="Invalid signature")
     webhook_signature_counter.labels(status="valid").inc()
+    log.info("Webhook signature verified successfully.") # And this
     return body
 
 async def verify_shopify_signature(request: Request) -> bytes:
@@ -53,7 +57,6 @@ async def verify_shopify_signature(request: Request) -> bytes:
 
 async def verify_metrics_access(request: Request):
     if settings.api_key:
-        provided_key = request.headers.get("x-api-key") or ""
-        if not secrets.compare_digest(provided_key, settings.api_key):
-            raise HTTPException(status_code=403, detail="Invalid API key")
-    return True
+        provided_key = request.headers.get("X-API-KEY")
+        if not (provided_key and secrets.compare_digest(provided_key, settings.api_key)):
+            raise HTTPException(status_code=403, detail="Invalid or missing API key")

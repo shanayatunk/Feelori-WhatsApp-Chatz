@@ -92,6 +92,8 @@ grpcio==1.74.0
     #   opentelemetry-exporter-jaeger-proto-grpc
 grpcio-status==1.62.3
     # via google-api-core
+gunicorn==23.0.0
+    # via -r backend/requirements.in
 h11==0.16.0
     # via
     #   httpcore
@@ -197,6 +199,7 @@ opentelemetry-util-http==0.47b0
     #   opentelemetry-instrumentation-httpx
 packaging==25.0
     # via
+    #   gunicorn
     #   huggingface-hub
     #   limits
     #   pytest

@@ -1,62 +1,13 @@
-# This is the final, production-ready docker-compose file.
-# It should be run on your server.
-
 version: '3.8'
 
 services:
   backend:
     build:
       context: ./backend
-      # Ensures the production-ready Dockerfile is used
       dockerfile: Dockerfile
     container_name: feelori_backend
-    # The 'restart' policy ensures the container automatically restarts if it crashes
     restart: unless-stopped
-    ports:
-      - "8000:8000"
-    # This line tells Docker Compose to load environment variables from a .env file
     env_file:
       - .env
-    depends_on:
-      mongo:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-
-  mongo:
-    image: mongo:latest
-    container_name: feelori_mongo
-    restart: unless-stopped
     ports:
-      # Exposing the port is only necessary for running migration scripts from your local machine.
-      # For maximum security, you can comment this line out after the initial setup.
-      - "27017:27017"
-    volumes:
-      - mongo-data:/data/db
-    # Environment variables are set by Doppler in production
-    healthcheck:
-      test: echo 'db.runCommand("ping").ok' | mongosh --quiet
-      interval: 10s
-      timeout: 10s
-      retries: 5
-      start_period: 40s
-
-  redis:
-    image: redis:latest
-    container_name: feelori_redis
-    restart: unless-stopped
-    ports:
-      # Exposing the port is not required for the application to run.
-      # It's only needed for direct access or running the queue clearing script locally.
-      - "6380:6379"
-    volumes:
-      - redis-data:/data
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
-volumes:
-  mongo-data:
-  redis-data:
+      - "127.0.0.1:8000:8000"

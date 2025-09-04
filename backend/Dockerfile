@@ -18,5 +18,5 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy the rest of the application code
 COPY . .
 
-# Command to run the application with gunicorn and proxy headers support
-CMD ["gunicorn", "-w", "2", "-k", "uvicorn.workers.UvicornWorker", "app.main:app", "--bind", "0.0.0.0:8000", "--proxy-headers", "--forwarded-allow-ips=*"]
+# Command to run the application with the Gunicorn config file
+CMD ["gunicorn", "-c", "gunicorn_conf.py", "app.main:app"]

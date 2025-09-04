@@ -86,7 +86,7 @@ async def timeout_middleware(request: Request, call_next):
 app.include_router(public.router)
 app.include_router(auth.router, prefix=f"/api/{settings.api_version}")
 app.include_router(admin.router, prefix=f"/api/{settings.api_version}")
-app.include_router(webhooks.router, prefix=f"/api/{settings.api_version}")
+app.include_router(webhooks.router, prefix=f"/api/{settings.api_version}/webhooks")
 app.include_router(dashboard.router, prefix=f"/api/{settings.api_version}")
 
 # --- Main Entry Point for Uvicorn (for local development) ---

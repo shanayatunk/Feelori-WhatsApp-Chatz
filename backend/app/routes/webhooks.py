@@ -27,7 +27,7 @@ router = APIRouter(
 
 # --- WhatsApp Webhooks ---
 
-@router.get("/webhook")
+@router.get("/whatsapp")
 async def verify_whatsapp_webhook(
     hub_mode: str = Query(None, alias="hub.mode"),
     hub_verify_token: str = Query(None, alias="hub.verify_token"),
@@ -38,7 +38,7 @@ async def verify_whatsapp_webhook(
         return PlainTextResponse(hub_challenge)
     raise HTTPException(status_code=403, detail="Forbidden")
 
-@router.post("/webhook")
+@router.post("/whatsapp")
 @limiter.limit(f"{settings.rate_limit_per_minute}/minute")
 async def handle_whatsapp_webhook(
     request: Request,

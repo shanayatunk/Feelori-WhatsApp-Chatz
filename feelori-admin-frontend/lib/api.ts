@@ -33,6 +33,7 @@ export interface SecurityEvent {
   details: Record<string, unknown>;
 }
 
+// Base customer type used in lists
 export interface Customer {
   _id: string;
   phone_number: string;
@@ -40,9 +41,13 @@ export interface Customer {
   last_interaction: string;
 }
 
+// THIS IS THE CORRECTED TYPE for the detailed customer view
 export interface CustomerDetails extends Customer {
-    // Add other fields that might come from the getCustomerById endpoint
-    conversation: { sender: string; message: string; timestamp: string }[];
+    conversation_history: {
+        timestamp: string;
+        message: string;
+        response: string;
+    }[];
 }
 
 export interface Escalation {
@@ -118,6 +123,7 @@ export const apiService = {
     return result.data;
   },
 
+  // This function now correctly returns a promise of the corrected CustomerDetails type
   getCustomerById: async (id: string): Promise<{ customer: CustomerDetails }> => {
     const response = await makeRequest(`${API_BASE_URL}/admin/customers/${id}`);
     if (!response.ok) throw new Error('Failed to fetch customer details');

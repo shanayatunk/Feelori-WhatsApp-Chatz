@@ -1,5 +1,5 @@
 import React from 'react';
-import { apiService, StringResource } from '../../../lib/api';
+import { apiService } from '../../../lib/api';
 import { Button } from '../../components/ui/Button';
 import { Card, CardHeader, CardContent, CardTitle, CardDescription } from '../../components/ui/Card';
 import { Textarea } from '../../components/ui/Textarea';

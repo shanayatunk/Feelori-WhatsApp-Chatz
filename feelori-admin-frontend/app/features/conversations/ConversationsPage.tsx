@@ -1,10 +1,9 @@
 "use client";
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react'; // Import useCallback
 import { apiService } from '../../../lib/api';
 import { Card, CardHeader, CardContent, CardTitle, CardDescription } from '../../components/ui/Card';
 import { Button } from '../../components/ui/Button';
 
-// Define a type for our customer data for better type safety
 interface Customer {
   _id: string;
   phone_number: string;
@@ -12,14 +11,14 @@ interface Customer {
   last_interaction: string;
 }
 
-// The component now accepts an `onViewCustomer` function as a prop
 export const ConversationsPage = ({ onViewCustomer }: { onViewCustomer: (id: string) => void }) => {
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [pagination, setPagination] = useState({ page: 1, limit: 15, total: 0, pages: 1 });
 
-  const fetchCustomers = async (page = 1) => {
+  // CORRECTED: Wrap fetchCustomers in useCallback
+  const fetchCustomers = useCallback(async (page = 1) => {
     setLoading(true);
     setError(null);
     try {
@@ -28,25 +27,25 @@ export const ConversationsPage = ({ onViewCustomer }: { onViewCustomer: (id: str
       setPagination(response.pagination);
     } catch (err) {
       if (err instanceof Error) {
-        setError(err.message || 'Failed to fetch conversations.');
+          setError(err.message || 'Failed to fetch conversations.');
       } else {
-        setError('An unknown error occurred.');
+          setError('An unknown error occurred.');
       }
     } finally {
       setLoading(false);
     }
-  };
+  }, [pagination.limit]); // Add dependencies for useCallback
 
+  // CORRECTED: Add fetchCustomers to the dependency array
   useEffect(() => {
     fetchCustomers();
-  }, []);
+  }, [fetchCustomers]);
 
   const handlePageChange = (newPage: number) => {
     if (newPage > 0 && newPage <= pagination.pages) {
       fetchCustomers(newPage);
     }
   };
-
 
   if (loading) return <div className="text-center p-8">Loading conversations...</div>;
   if (error) return <div className="text-center p-8 text-red-600">Error: {error}</div>;

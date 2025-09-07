@@ -28,7 +28,8 @@ const StatCard = ({ title, value, icon, color = '#ff4d6d' }: { title: string; va
     </Card>
   );
 
-export const DashboardPage = ({ setPage, onViewCustomer }: { setPage: (page: string) => void; onViewCustomer: (customerId: string) => void; }) => {
+// The 'setPage' prop has been removed as it was unused.
+export const DashboardPage = ({ onViewCustomer }: { onViewCustomer: (customerId: string) => void; }) => {
   const [stats, setStats] = React.useState<DashboardStats | null>(null);
   const [escalations, setEscalations] = React.useState<Escalation[]>([]);
   const [loading, setLoading] = React.useState(true);
@@ -78,7 +79,8 @@ export const DashboardPage = ({ setPage, onViewCustomer }: { setPage: (page: str
         <Card>
             <CardHeader>
                 <CardTitle>Human Support Requests</CardTitle>
-                <CardDescription>Recent conversations that triggered the 'human_escalation' intent.</CardDescription>
+                {/* CORRECTED LINE: The apostrophes around 'human_escalation' are replaced with &apos; */}
+                <CardDescription>Recent conversations that triggered the &apos;human_escalation&apos; intent.</CardDescription>
             </CardHeader>
             <CardContent>
                 <div className="space-y-2 text-sm">

@@ -41,7 +41,8 @@ export const BroadcastPage = () => {
                     <Card>
                         <CardHeader>
                             <CardTitle>Compose Message</CardTitle>
-                            <CardDescription>Send a message to a group of customers. Use placeholders like `{{name}}`.</CardDescription>
+                            {/* THIS IS THE CORRECTED LINE */}
+                            <CardDescription>Send a message to a group of customers. Use placeholders like `{'{'}{'{'}name{'}'}{'}'}`.</CardDescription>
                         </CardHeader>
                         <CardContent className="space-y-4">
                             <Textarea

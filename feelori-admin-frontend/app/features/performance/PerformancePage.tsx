@@ -1,11 +1,14 @@
 import React from 'react';
 import { apiService } from '../../../lib/api';
-import { Button } from '../../components/ui/Button';
-import { Card, CardHeader, CardContent, CardTitle, CardDescription } from '../../components/ui/Card';
-import { Input } from '../../components/ui/Input';
+import { Card, CardHeader, CardContent, CardTitle } from '../../components/ui/Card';
+
+// Define an interface for the metrics data structure
+interface PackingMetrics {
+    status_counts: Record<string, number>;
+}
 
 export const PerformancePage = () => {
-    const [metrics, setMetrics] = React.useState<any>(null);
+    const [metrics, setMetrics] = React.useState<PackingMetrics | null>(null);
     const [loading, setLoading] = React.useState(true);
     const [error, setError] = React.useState<string | null>(null);
 
@@ -13,10 +16,14 @@ export const PerformancePage = () => {
         const fetchMetrics = async () => {
             try {
                 setLoading(true);
-                const data = await (apiService as any).getPackingMetrics();
+                const data = await apiService.getPackingMetrics();
                 setMetrics(data);
-            } catch (err: any) {
-                setError(err.message);
+            } catch (err) {
+                if (err instanceof Error) {
+                    setError(err.message);
+                } else {
+                    setError('An unknown error occurred.');
+                }
             } finally {
                 setLoading(false);
             }
@@ -33,13 +40,12 @@ export const PerformancePage = () => {
     return (
         <div className="space-y-6">
             <h1 className="text-3xl font-bold text-black">Packing Metrics</h1>
-            <Card>
+             <Card>
                 <CardHeader>
-                    <CardTitle>Current Order Status Counts</CardTitle>
-                    <CardDescription>A live count of orders in each stage of the packing process.</CardDescription>
+                    <CardTitle>Order Status Overview</CardTitle>
                 </CardHeader>
                 <CardContent>
-                    <div className="overflow-x-auto">
+                   <div className="overflow-x-auto">
                         <table className="w-full text-sm text-left text-gray-700">
                             <thead className="text-xs text-gray-700 uppercase bg-gray-50">
                                 <tr>
@@ -51,7 +57,7 @@ export const PerformancePage = () => {
                                 {Object.keys(statusCounts).length > 0 ? Object.entries(statusCounts).map(([status, count]) => (
                                     <tr key={status} className="bg-white border-b">
                                         <td className="px-6 py-4 font-medium text-gray-900">{status}</td>
-                                        <td className="px-6 py-4 font-bold text-[#ff4d6d]">{count as any}</td>
+                                        <td className="px-6 py-4 font-bold text-[#ff4d6d]">{count}</td>
                                     </tr>
                                 )) : (
                                     <tr>

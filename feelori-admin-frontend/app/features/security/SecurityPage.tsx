@@ -2,8 +2,17 @@ import React from 'react';
 import { apiService } from '../../../lib/api';
 import { Card, CardHeader, CardContent, CardTitle, CardDescription } from '../../components/ui/Card';
 
+// Define a type for the security event objects
+interface SecurityEvent {
+    _id: string;
+    event_type: string;
+    ip_address: string;
+    timestamp: string;
+    details: Record<string, unknown>; // Use a generic object type for details
+}
+
 export const SecurityPage = () => {
-    const [events, setEvents] = React.useState<any[]>([]);
+    const [events, setEvents] = React.useState<SecurityEvent[]>([]);
     const [loading, setLoading] = React.useState(true);
     const [error, setError] = React.useState<string | null>(null);
 
@@ -13,8 +22,12 @@ export const SecurityPage = () => {
                 setLoading(true);
                 const data = await apiService.getSecurityEvents();
                 setEvents(data);
-            } catch (err: any) {
-                setError(err.message);
+            } catch (err) {
+                if (err instanceof Error) {
+                    setError(err.message);
+                } else {
+                    setError('An unknown error occurred.');
+                }
             } finally {
                 setLoading(false);
             }
@@ -35,7 +48,7 @@ export const SecurityPage = () => {
                     <CardDescription>A log of important security-related activities.</CardDescription>
                 </CardHeader>
                 <CardContent>
-                    <div className="overflow-x-auto">
+                     <div className="overflow-x-auto">
                         <table className="w-full text-sm text-left text-gray-700">
                             <thead className="text-xs text-gray-700 uppercase bg-gray-50">
                                 <tr>

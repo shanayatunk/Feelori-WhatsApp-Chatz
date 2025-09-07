@@ -26,59 +26,58 @@ export const ConversationsPage = ({ onViewCustomer }: { onViewCustomer: (id: str
       const response = await apiService.getCustomers(page, pagination.limit);
       setCustomers(response.customers);
       setPagination(response.pagination);
-    } catch (err: any) {
-      setError(err.message || 'Failed to fetch conversations.');
+    } catch (err) {
+      if (err instanceof Error) {
+        setError(err.message || 'Failed to fetch conversations.');
+      } else {
+        setError('An unknown error occurred.');
+      }
     } finally {
       setLoading(false);
     }
   };
 
   useEffect(() => {
-    fetchCustomers(pagination.page);
-  }, [pagination.page]);
+    fetchCustomers();
+  }, []);
 
   const handlePageChange = (newPage: number) => {
     if (newPage > 0 && newPage <= pagination.pages) {
-      setPagination(prev => ({ ...prev, page: newPage }));
+      fetchCustomers(newPage);
     }
   };
-  
-  if (loading) {
-    return <div className="text-center p-10">Loading conversations...</div>;
-  }
 
-  if (error) {
-    return <div className="text-center p-10 text-red-500">{error}</div>;
-  }
+
+  if (loading) return <div className="text-center p-8">Loading conversations...</div>;
+  if (error) return <div className="text-center p-8 text-red-600">Error: {error}</div>;
 
   return (
     <div className="space-y-6">
-      <h1 className="text-3xl font-bold text-black">Customer Conversations</h1>
-      <Card>
+       <Card>
         <CardHeader>
-          <CardTitle>Recent Interactions</CardTitle>
+          <CardTitle>All Conversations</CardTitle>
           <CardDescription>
-            Showing {customers.length} customers on page {pagination.page} of {pagination.pages}
+            Showing {customers.length} of {pagination.total} conversations.
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <div className="border rounded-lg">
-            <table className="min-w-full divide-y">
+          <div className="overflow-x-auto">
+            <table className="min-w-full divide-y divide-gray-200">
               <thead className="bg-gray-50">
                 <tr>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Name</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Phone Number</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Last Interaction</th>
-                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
+                  <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Customer</th>
+                  <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Last Interaction</th>
+                  <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
                 </tr>
               </thead>
-              <tbody className="bg-white divide-y">
+              <tbody className="bg-white divide-y divide-gray-200">
                 {customers.map((customer) => (
                   <tr key={customer._id}>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">{customer.name}</td>
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">{customer.phone_number}</td>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <div className="text-sm font-medium text-gray-900">{customer.name}</div>
+                      <div className="text-sm text-gray-500">{customer.phone_number}</div>
+                    </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                      {/* FIX: Be more explicit with date and time formatting options for better browser compatibility */}
                       {new Date(customer.last_interaction).toLocaleString('en-IN', {
                         dateStyle: 'short',
                         timeStyle: 'medium',
@@ -86,7 +85,6 @@ export const ConversationsPage = ({ onViewCustomer }: { onViewCustomer: (id: str
                       })}
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
-                      {/* This button now calls the onViewCustomer function passed from the parent */}
                       <Button className="text-sm" onClick={() => onViewCustomer(customer._id)}>
                         View Chat
                       </Button>

@@ -30,8 +30,13 @@ const CustomerChatPage = ({ customerId, onBack }: { customerId: string; onBack: 
       try {
         const response = await apiService.getCustomerById(customerId);
         setCustomer(response.customer);
-      } catch (err: any) {
-        setError(err.message || 'Failed to fetch customer data.');
+      } catch (err) {
+        // This block has been corrected to handle errors without using `any`
+        if (err instanceof Error) {
+            setError(err.message || 'Failed to fetch customer data.');
+        } else {
+            setError('An unknown error occurred.');
+        }
       } finally {
         setLoading(false);
       }
@@ -70,8 +75,8 @@ const CustomerChatPage = ({ customerId, onBack }: { customerId: string; onBack: 
               </div>
               {entry.response && (
                 <div className="p-3 bg-gray-100 text-gray-900 rounded-lg max-w-xl mr-auto">
-                   <p className="text-sm">{entry.response}</p>
-                   <p className="text-xs text-left opacity-70 mt-1">{formatTimestamp(entry.timestamp)}</p>
+                   <p className="text-sm whitespace-pre-wrap">{entry.response}</p>
+                   <p className="text-xs text-right opacity-70 mt-1">{formatTimestamp(entry.timestamp)} (Automated)</p>
                 </div>
               )}
             </React.Fragment>

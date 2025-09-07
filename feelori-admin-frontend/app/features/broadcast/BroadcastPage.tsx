@@ -22,8 +22,12 @@ export const BroadcastPage = () => {
             setResult({ success: true, message: response.message });
             setMessage('');
             setImageUrl('');
-        } catch (err: any) {
-            setResult({ success: false, message: err.message });
+        } catch (err) {
+            if (err instanceof Error) {
+                setResult({ success: false, message: err.message });
+            } else {
+                setResult({ success: false, message: 'An unknown error occurred.'});
+            }
         } finally {
             setIsSending(false);
         }
@@ -36,29 +40,29 @@ export const BroadcastPage = () => {
                 <div className="md:col-span-2">
                     <Card>
                         <CardHeader>
-                            <CardTitle>Compose Broadcast</CardTitle>
-                            <CardDescription>Send a bulk message with optional media to a targeted group.</CardDescription>
+                            <CardTitle>Compose Message</CardTitle>
+                            <CardDescription>Send a message to a group of customers. Use placeholders like `{{name}}`.</CardDescription>
                         </CardHeader>
                         <CardContent className="space-y-4">
-                            <div>
-                                <label htmlFor="message" className="block text-sm font-medium text-gray-700 mb-1">Message</label>
-                                <Textarea id="message" rows={5} placeholder="Type your caption or message here..." value={message} onChange={(e) => setMessage(e.target.value)} />
-                                <p className="text-xs text-gray-700 mt-1">{message.length} / 1000 characters</p>
-                            </div>
-                            <div>
-                                <label htmlFor="imageUrl" className="block text-sm font-medium text-gray-700 mb-1">Image URL (Optional)</label>
-                                <Input id="imageUrl" type="text" placeholder="https://example.com/image.jpg" value={imageUrl} onChange={(e) => setImageUrl(e.target.value)} />
-                                {imageUrl && (
-                                    <div className="mt-2">
-                                        <img src={imageUrl} alt="Preview" className="w-48 h-48 object-cover rounded-md border" />
-                                    </div>
-                                )}
-                            </div>
-                            <div>
-                                <label className="block text-sm font-medium text-gray-700 mb-2">Target Audience</label>
-                                <div className="space-y-2">
-                                    {['active', 'recent', 'all'].map(t => (
-                                        <label key={t} className="flex items-center"><input type="radio" name="target" value={t} checked={target === t} onChange={() => setTarget(t)} className="h-4 w-4 text-[#ff4d6d] focus:ring-[#ff4d6d] border-gray-300"/><span className="ml-2 text-sm text-gray-900 capitalize">{t} Customers</span></label>
+                            <Textarea
+                                rows={6}
+                                placeholder="Your message here..."
+                                value={message}
+                                onChange={(e) => setMessage(e.target.value)}
+                            />
+                            <Input
+                                placeholder="Optional: Image URL (e.g., https://.../image.png)"
+                                value={imageUrl}
+                                onChange={(e) => setImageUrl(e.target.value)}
+                            />
+                             <div>
+                                <label className="text-sm font-medium text-gray-900">Target Audience</label>
+                                <div className="mt-2 space-y-2">
+                                    {['all', 'active', 'inactive'].map((t) => (
+                                        <label key={t} className="flex items-center">
+                                            <input type="radio" value={t} checked={target === t} onChange={() => setTarget(t)} className="h-4 w-4 text-[#ff4d6d] focus:ring-[#ff4d6d] border-gray-300"/>
+                                            <span className="ml-2 text-sm text-gray-900 capitalize">{t} Customers</span>
+                                        </label>
                                     ))}
                                 </div>
                             </div>

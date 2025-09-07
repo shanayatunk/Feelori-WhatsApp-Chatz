@@ -2,8 +2,16 @@ import React from 'react';
 import { apiService } from '../../../lib/api';
 import { Card, CardHeader, CardContent, CardTitle, CardDescription } from '../../components/ui/Card';
 
+// Define a type for your health status data
+interface HealthStatus {
+  status: string;
+  services: {
+    [key: string]: string; // e.g., 'database': 'connected'
+  };
+}
+
 export const HealthPage = () => {
-    const [health, setHealth] = React.useState<any>(null);
+    const [health, setHealth] = React.useState<HealthStatus | null>(null);
     const [loading, setLoading] = React.useState(true);
     const [error, setError] = React.useState<string | null>(null);
 
@@ -13,8 +21,12 @@ export const HealthPage = () => {
                 setLoading(true);
                 const data = await apiService.getHealth();
                 setHealth(data);
-            } catch (err: any) {
-                setError(err.message);
+            } catch (err) {
+                if (err instanceof Error) {
+                    setError(err.message);
+                } else {
+                    setError('An unknown error occurred.');
+                }
             } finally {
                 setLoading(false);
             }
@@ -33,15 +45,21 @@ export const HealthPage = () => {
         );
     };
 
-    if (loading) return <div className="text-center p-10 text-gray-900">Loading system health...</div>;
-    if (error) return <div className="text-center p-10 text-red-500">Error: {error}</div>;
+    if (loading) return <div className="text-center p-8">Checking system health...</div>;
+    if (error) return <div className="text-center p-8 text-red-600">Error: {error}</div>;
 
     return (
         <div className="space-y-6">
-            <h1 className="text-3xl font-bold text-black">System Health</h1>
+            <div className="flex justify-between items-center">
+                <h1 className="text-3xl font-bold text-black">System Health</h1>
+                <div className={`flex items-center gap-2 px-3 py-1 rounded-full text-sm font-semibold ${health?.status === 'ok' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>
+                    <span className={`h-2.5 w-2.5 rounded-full ${health?.status === 'ok' ? 'bg-green-500' : 'bg-red-500'}`}></span>
+                    {health?.status === 'ok' ? 'All Systems Operational' : 'System Degraded'}
+                </div>
+            </div>
             <Card>
                 <CardHeader>
-                    <CardTitle>Live Service Status</CardTitle>
+                    <CardTitle>Service Status</CardTitle>
                     <CardDescription>Real-time status of all critical services.</CardDescription>
                 </CardHeader>
                 <CardContent>

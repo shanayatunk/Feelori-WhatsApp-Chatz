@@ -7,12 +7,12 @@ export const Sidebar = ({ activePage, setActivePage }: { activePage: string; set
     { id: 'dashboard', label: 'Dashboard', icon: <HomeIcon className="h-5 w-5" /> },
     { id: 'conversations', label: 'Conversations', icon: <MessageSquareIcon className="h-5 w-5" /> },
     { id: 'performance', label: 'Packer Performance', icon: <UsersIcon className="h-5 w-5" /> },
-    { type: 'divider' },
+    { type: 'divider' as const },
     { type: 'header', label: 'Administration' },
     { id: 'health', label: 'System Health', icon: <HeartPulseIcon className="h-5 w-5" /> },
     { id: 'security', label: 'Security', icon: <ShieldCheckIcon className="h-5 w-5" /> },
     { id: 'broadcast', label: 'Broadcast', icon: <SendIcon className="h-5 w-5" /> },
-    { type: 'divider' },
+    { type: 'divider' as const },
     { type: 'header', label: 'Configuration' },
     { id: 'rules', label: 'Rules Engine', icon: <SettingsIcon className="h-5 w-5" /> },
     { id: 'strings', label: 'Strings Manager', icon: <FileTextIcon className="h-5 w-5" /> },
@@ -28,25 +28,27 @@ export const Sidebar = ({ activePage, setActivePage }: { activePage: string; set
       <nav className="flex-1 overflow-auto py-4">
         <ul className="grid items-start px-4 text-sm font-medium">
           {navItems.map((item, index) => {
-            if (item.type === 'header') {
+            if ('type' in item && item.type === 'header') {
                 return <li key={index} className="px-3 py-2 text-xs font-semibold text-gray-500 uppercase tracking-wider">{item.label}</li>
             }
-            if (item.type === 'divider') {
+            if ('type' in item && item.type === 'divider') {
                 return <li key={index}><hr className="my-2 border-gray-200" /></li>
             }
+            // The item must be a clickable link if it's not a header or divider
+            const linkItem = item as { id: string; label: string; icon: React.ReactNode; };
             return (
-            <li key={item.id}>
+            <li key={linkItem.id}>
               <a
                 href="#"
-                onClick={(e) => { e.preventDefault(); setActivePage(item.id); }}
-                className={`flex items-center gap-3 rounded-lg px-3 py-2 transition-all ${activePage === item.id ? 'bg-[#ff4d6d] text-white' : 'text-gray-700 hover:bg-gray-100 hover:text-gray-900'}`}
+                onClick={(e) => { e.preventDefault(); setActivePage(linkItem.id); }}
+                className={`flex items-center gap-3 rounded-lg px-3 py-2 transition-all ${activePage === linkItem.id ? 'bg-[#ff4d6d] text-white' : 'text-gray-700 hover:bg-gray-100'}`}
               >
-                {item.icon}
-                {item.label}
+                {linkItem.icon}
+                {linkItem.label}
               </a>
             </li>
-            );
-        })}
+            )
+          })}
         </ul>
       </nav>
     </aside>

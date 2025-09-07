@@ -43,13 +43,10 @@ export default function App() {
     setViewingCustomerId(null);
   };
 
-  // FIX: This new function handles all sidebar navigation clicks.
-  // It ensures that if you're viewing a customer, you're taken out of that view first.
   const handleSetActivePage = (page: string) => {
-    setViewingCustomerId(null); // Exit customer view
-    setActivePage(page);      // Switch to the new page
+    setViewingCustomerId(null); 
+    setActivePage(page);
   };
-
 
   if (!isAuthenticated) {
     return <LoginPage onLogin={handleLogin} />;
@@ -62,7 +59,8 @@ export default function App() {
 
     switch (activePage) {
       case 'dashboard':
-        return <DashboardPage setPage={setActivePage} onViewCustomer={handleViewCustomer} />;
+        // CORRECTED: Removed the unused `setPage` prop
+        return <DashboardPage onViewCustomer={handleViewCustomer} />;
       case 'conversations':
         return <ConversationsPage onViewCustomer={handleViewCustomer} />;
       case 'performance':
@@ -78,7 +76,8 @@ export default function App() {
       case 'strings':
         return <StringsManagerPage />;
       default:
-        return <DashboardPage setPage={setActivePage} onViewCustomer={handleViewCustomer} />;
+        // CORRECTED: Removed the unused `setPage` prop
+        return <DashboardPage onViewCustomer={handleViewCustomer} />;
     }
   };
 
@@ -88,3 +87,4 @@ export default function App() {
     </DashboardLayout>
   );
 }
+

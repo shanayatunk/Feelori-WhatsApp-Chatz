@@ -4,7 +4,7 @@ import os
 import time
 import uvicorn
 import asyncio
-from fastapi import FastAPI, Request, HTTPException
+from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
@@ -35,7 +35,6 @@ app = FastAPI(
 # --- Static Files ---
 basedir = os.path.abspath(os.path.dirname(__file__))
 static_dir_path = os.path.join(basedir, "static")
-# Ensure the directory exists, especially in container environments
 os.makedirs(static_dir_path, exist_ok=True)
 app.mount("/static", StaticFiles(directory=static_dir_path), name="static")
 
@@ -45,8 +44,6 @@ app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 # --- Middleware ---
-
-# Origins for CORS
 cors_origins = []
 if settings.cors_allowed_origins:
     cors_origins.extend([origin.strip() for origin in settings.cors_allowed_origins.split(",")])
@@ -104,3 +101,4 @@ if __name__ == "__main__":
         reload=True if settings.environment == "development" else False,
         workers=settings.workers if settings.environment == "production" else 1
     )
+

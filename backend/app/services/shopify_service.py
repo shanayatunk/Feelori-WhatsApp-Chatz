@@ -149,6 +149,44 @@ class ShopifyService:
             logger.error(f"get_product_variants_error for {product_id}: {e}")
             return []
 
+    async def get_all_products(self) -> List[Product]:
+        """
+        Fetches all published products from Shopify, handling pagination.
+        """
+        products = []
+        url = f"https://{self.store_url}/admin/api/2024-01/products.json?status=active&limit=250"
+        
+        logger.info("Starting to fetch all products from Shopify...")
+        
+        while url:
+            try:
+                headers = {"X-Shopify-Access-Token": self.access_token}
+                response = await self.http_client.get(url, headers=headers)
+                response.raise_for_status()
+                
+                data = response.json()
+                for product_data in data.get("products", []):
+                    # --- THIS IS THE CLEANUP ---
+                    # Use the new class method to create a Product instance
+                    product = Product.from_shopify_api(product_data)
+                    if product:
+                        products.append(product)
+                
+                link_header = response.headers.get("link")
+                if link_header:
+                    links = link_header.split(", ")
+                    next_link = next((link for link in links if 'rel="next"' in link), None)
+                    url = next_link[next_link.find("<")+1:next_link.find(">")] if next_link else None
+                else:
+                    url = None
+
+            except Exception as e:
+                logger.error(f"An unexpected error occurred fetching Shopify products: {e}", exc_info=True)
+                break
+        
+        logger.info(f"Successfully fetched a total of {len(products)} products.")
+        return products
+
     # --- Cart and Checkout ---
     
     async def create_cart(self) -> Optional[str]:

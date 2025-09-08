@@ -1,6 +1,13 @@
 version: '3.8'
 
+# This file defines the multi-container application setup.
+# It includes the main web application (backend), a dedicated ML worker for heavy tasks,
+# and a Redis instance for caching and message queuing between the services.
+
 services:
+  # 1. The main web application service
+  # Handles all incoming API requests and user chats.
+  # Runs multiple workers for high responsiveness.
   backend:
     build:
       context: ./backend
@@ -8,6 +15,56 @@ services:
     container_name: feelori_backend
     restart: unless-stopped
     env_file:
-      - .env
+      - ./backend/.env
     ports:
       - "127.0.0.1:8000:8000"
+    # This command now safely runs 2 workers. The large AI model is no longer
+    # loaded here, so memory usage is low.
+    command: gunicorn -w 2 -k uvicorn.workers.UvicornWorker -b 0.0.0.0:8000 app.main:app
+    depends_on:
+      - redis
+    networks:
+      - feelori-net
+
+  # 2. The new dedicated ML worker service
+  # Its only job is to run the heavy visual search model.
+  # It loads the model once and processes jobs from the Redis queue.
+  ml_worker:
+    build:
+      context: ./backend  # Uses the same codebase and Docker image
+    container_name: feelori_ml_worker
+    restart: unless-stopped
+    env_file:
+      - ./backend/.env
+    # The command is different: it runs our new worker script.
+    command: python ml_worker.py
+    depends_on:
+      - redis
+    networks:
+      - feelori-net
+    # Recommended: Give the ML worker a dedicated memory limit if your host machine allows.
+    # This prevents it from impacting other services.
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+
+  # 3. The Redis service for caching and job queuing
+  redis:
+    image: "redis:7-alpine"
+    container_name: feelori_redis
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:6379:6379"
+    volumes:
+      - redis-data:/data
+    networks:
+      - feelori-net
+
+# Define a volume to persist Redis data across container restarts
+volumes:
+  redis-data:
+
+# Define a shared network for all services to communicate
+networks:
+  feelori-net:

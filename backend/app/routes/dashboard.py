@@ -1,6 +1,8 @@
 # /app/routes/dashboard.py
 
 from fastapi import APIRouter, Depends
+# FIX 1: Import the settings to get the API version
+from app.config.settings import settings
 from app.services.db_service import db_service
 from app.utils.dependencies import verify_jwt_token
 from app.models.api import APIResponse
@@ -15,21 +17,21 @@ router = APIRouter(
 @router.get("/stats", response_model=APIResponse)
 async def get_dashboard_stats(current_user: dict = Depends(verify_jwt_token)):
     """Provides key metrics for the main admin dashboard."""
-    # FIX: Called the correct function name from db_service.py
     stats = await db_service.get_system_stats()
-    return APIResponse(success=True, message="Stats retrieved successfully.", data=stats)
+    # FIX 2: Add the required 'version' field to the response
+    return APIResponse(success=True, message="Stats retrieved successfully.", data=stats, version=settings.api_version)
 
 @router.get("/escalations", response_model=APIResponse)
 async def get_human_escalations(current_user: dict = Depends(verify_jwt_token)):
     """Retrieves conversations that have been flagged for human review."""
-    # FIX: Called the correct function name from db_service.py
     escalations = await db_service.get_human_escalation_requests()
-    return APIResponse(success=True, message="Escalations retrieved successfully.", data=escalations)
+    # FIX 3: Add the required 'version' field to the response
+    return APIResponse(success=True, message="Escalations retrieved successfully.", data=escalations, version=settings.api_version)
 
 @router.get("/packing-metrics", response_model=APIResponse)
 async def get_react_packing_metrics(current_user: dict = Depends(verify_jwt_token)):
     """Provides packing metrics for the React admin dashboard's performance page."""
-    # FIX: Called the correct function name from db_service.py
     metrics = await db_service.get_packing_dashboard_metrics()
-    return APIResponse(success=True, message="Packing metrics retrieved successfully.", data=metrics)
+    # FIX 4: Add the required 'version' field to the response
+    return APIResponse(success=True, message="Packing metrics retrieved successfully.", data=metrics, version=settings.api_version)
 

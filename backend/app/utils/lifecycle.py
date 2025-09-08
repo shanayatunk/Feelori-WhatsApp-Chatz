@@ -3,23 +3,25 @@
 import logging
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from app.utils.logging import setup_logging
 from app.utils.alerting import alerting_service
 from app.utils.queue import message_queue
 from app.services.db_service import db_service
-from app.services.order_service import scheduler
 from app.services import security_service
 from app.services.string_service import string_service
 from app.services.rule_service import rule_service
 from app.config.settings import settings
+from app.utils.tasks import refresh_visual_search_index
 
 # This file manages the application's lifespan, handling startup tasks like
 # initializing services and shutdown tasks like cleaning up connections.
 
 logger = logging.getLogger(__name__)
+scheduler = AsyncIOScheduler()
 
-# This global variable will hold the hashed password and be imported by the auth route.
+# This global variable will hold the hashed password.
 ADMIN_PASSWORD_HASH: str | None = None
 
 def setup_sentry():
@@ -46,7 +48,6 @@ async def lifespan(app: FastAPI):
             ADMIN_PASSWORD_HASH = security_service.EnhancedSecurityService.hash_password(settings.admin_password)
             logger.info("Admin password hash created successfully")
         
-        # Debug logging to verify hash creation
         logger.info(f"ADMIN_PASSWORD_HASH type: {type(ADMIN_PASSWORD_HASH)}")
         logger.info(f"ADMIN_PASSWORD_HASH length: {len(ADMIN_PASSWORD_HASH) if ADMIN_PASSWORD_HASH else 'None'}")
         
@@ -56,22 +57,26 @@ async def lifespan(app: FastAPI):
         ADMIN_PASSWORD_HASH = None
 
     await db_service.create_indexes()
-    # Load dynamic configurations from the database into memory
     await string_service.load_strings()
     await rule_service.load_rules()
     
     await message_queue.start_workers()
-    scheduler.start()
     
+    # Add the re-indexing job and start the scheduler
+    scheduler.add_job(refresh_visual_search_index, 'interval', hours=24, id="rebuild_index_job")
+    scheduler.start()
+    logger.info("Scheduler started with a daily job to refresh the visual search index.")
+
     logger.info("Application startup complete. Ready to accept requests.")
     
-    yield  # Application is running
+    yield  # Application is now running
     
     logger.info("Application shutting down...")
-    scheduler.shutdown()
+    if scheduler.running:
+        scheduler.shutdown()
+        logger.info("Scheduler shut down.")
+        
     await message_queue.stop_workers()
     await alerting_service.cleanup()
     if db_service.client:
         db_service.client.close()
-    
-    logger.info("Application shutdown complete.")

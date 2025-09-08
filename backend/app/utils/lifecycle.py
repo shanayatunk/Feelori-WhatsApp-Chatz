@@ -13,7 +13,8 @@ from app.services import security_service
 from app.services.string_service import string_service
 from app.services.rule_service import rule_service
 from app.config.settings import settings
-from app.utils.tasks import refresh_visual_search_index
+# Import both tasks from your tasks file
+from app.utils.tasks import refresh_visual_search_index, update_escalation_analytics
 
 # This file manages the application's lifespan, handling startup tasks like
 # initializing services and shutdown tasks like cleaning up connections.
@@ -63,7 +64,16 @@ async def lifespan(app: FastAPI):
     await message_queue.start_workers()
     
     # --- Corrected Scheduler Logic ---
-    # The scheduler will only start if the visual search feature is enabled in the settings.
+    
+    # 1. Add the new job to pre-calculate escalation stats every 5 minutes.
+    scheduler.add_job(
+        update_escalation_analytics,
+        'interval',
+        minutes=5,
+        id="update_escalation_analytics_job"
+    )
+    
+    # 2. Conditionally schedule the visual search job based on the feature flag.
     if settings.VISUAL_SEARCH_ENABLED:
         scheduler.add_job(
             refresh_visual_search_index, 
@@ -72,10 +82,13 @@ async def lifespan(app: FastAPI):
             minute=0, 
             id="daily_rebuild_index_job"
         )
-        scheduler.start()
-        logger.info("Scheduler started. Visual search index will refresh daily at 3:00 AM IST.")
+        logger.info("Visual search is enabled. Daily index refresh is scheduled.")
     else:
-        logger.info("Visual search is disabled. Scheduler will not be started.")
+        logger.info("Visual search is disabled. Daily index refresh is NOT scheduled.")
+
+    # 3. Start the scheduler after all jobs have been added.
+    scheduler.start()
+    logger.info("Scheduler started.")
     # --- End of Correction ---
 
     logger.info("Application startup complete. Ready to accept requests.")

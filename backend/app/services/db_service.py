@@ -146,34 +146,20 @@ class DatabaseService:
 
     # --- THIS IS THE FIX ---
     async def get_human_escalation_requests(self, limit: int = 5) -> List:
-        """Finds the most recent human escalation request for each unique customer."""
-        pipeline = [
-            {"$unwind": "$conversation_history"},
-            {"$match": {"conversation_history.response": strings.HUMAN_ESCALATION}},
-            {"$sort": {"conversation_history.timestamp": -1}},
-            {
-                "$group": {
-                    "_id": "$_id",
-                    "name": {"$first": "$name"},
-                    "phone_number": {"$first": "$phone_number"},
-                    "latest_escalation_time": {"$first": "$conversation_history.timestamp"}
-                }
-            },
-            {"$sort": {"latest_escalation_time": -1}},
-            {"$limit": limit},
-            {
-                "$project": {
-                    "_id": 1,
-                    "name": 1,
-                    "phone_number": 1,
-                    "timestamp": "$latest_escalation_time"
-                }
-            }
-        ]
-        requests = await self.db.customers.aggregate(pipeline).to_list(length=limit)
-        for req in requests:
-            req["_id"] = str(req["_id"])
-        return requests
+        """
+        Finds the most recent human escalation requests from the pre-aggregated
+        analytics collection for fast dashboard performance.
+        """
+        try:
+            # This is now a simple, fast find() query on the new collection
+            cursor = self.db.human_escalation_analytics.find().sort("timestamp", -1).limit(limit)
+            requests = await cursor.to_list(length=limit)
+            for req in requests:
+                req["_id"] = str(req["_id"])
+            return requests
+        except Exception:
+            # If the analytics collection doesn't exist yet, return an empty list gracefully
+            return []
     # --- END OF FIX ---
 
     # --- Rules Engine ---

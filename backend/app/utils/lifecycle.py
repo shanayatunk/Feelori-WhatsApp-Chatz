@@ -64,8 +64,8 @@ async def lifespan(app: FastAPI):
     
     # --- MODIFIED SCHEDULER LOGIC ---
     # 1. Run the indexing job immediately on startup.
-    logger.info("Running initial visual search index refresh on startup...")
-    await refresh_visual_search_index()
+    # logger.info("Running initial visual search index refresh on startup...")
+    # await refresh_visual_search_index()
     
     # 2. Schedule all future jobs to run at 3:00 AM IST daily.
     scheduler.add_job(

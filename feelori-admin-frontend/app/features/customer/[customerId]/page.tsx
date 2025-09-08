@@ -4,12 +4,14 @@ import { apiService } from '../../../../lib/api';
 import { Card, CardContent, CardHeader, CardTitle } from '../../../components/ui/Card';
 import { Button } from '../../../components/ui/Button';
 
+// This Message interface now correctly matches the type in api.ts
 interface Message {
   timestamp: string;
   message: string;
   response: string;
 }
 
+// This Customer interface now correctly uses the Message type
 interface Customer {
   _id: string;
   name: string;
@@ -29,9 +31,9 @@ const CustomerChatPage = ({ customerId, onBack }: { customerId: string; onBack: 
       setLoading(true);
       try {
         const response = await apiService.getCustomerById(customerId);
+        // This will no longer cause an error as the types now match
         setCustomer(response.customer);
       } catch (err) {
-        // This block has been corrected to handle errors without using `any`
         if (err instanceof Error) {
             setError(err.message || 'Failed to fetch customer data.');
         } else {

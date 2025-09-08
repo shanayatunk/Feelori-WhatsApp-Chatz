@@ -40,8 +40,15 @@ export interface Customer {
   last_interaction: string;
 }
 
+// --- THIS IS THE CORRECTED TYPE ---
+// It now includes the 'response' field in the conversation history, which matches
+// what the CustomerChatPage component expects.
 export interface CustomerDetails extends Customer {
-    conversation_history: { sender: string; message: string; timestamp: string }[];
+    conversation_history: {
+        timestamp: string;
+        message: string;
+        response: string;
+    }[];
 }
 
 export interface Escalation {
@@ -165,3 +172,4 @@ export const apiService = {
     });
   },
 };
+

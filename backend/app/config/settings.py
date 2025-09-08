@@ -20,6 +20,7 @@ class Settings(BaseSettings):
     whatsapp_app_secret: str
     whatsapp_catalog_id: str | None = None
     whatsapp_business_account_id: str | None = None
+    whatsapp_webhook_secret: str | None = None
 
     # Shopify
     shopify_store_url: str = "feelori.myshopify.com"
@@ -31,6 +32,13 @@ class Settings(BaseSettings):
     # AI APIs
     gemini_api_key: str | None = None
     openai_api_key: str | None = None
+
+    # Doppler and Webhook Secrets
+    doppler_config: str | None = None
+    doppler_environment: str | None = None
+    doppler_project: str | None = None
+    next_public_api_url: str | None = None
+
 
     # App Behavior
     packing_dept_whatsapp_number: str | None = None

@@ -56,13 +56,19 @@ export const HealthPage = () => {
                 </CardHeader>
                 <CardContent>
                     <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-                        {/* THIS IS THE FIX: Only render if health and health.services exist */}
-                        {health && health.services && Object.entries(health.services).map(([service, status]) => (
+                        {/* Updated FIX: Handle null/undefined services with fallback empty object */}
+                        {health && Object.entries(health.services || {}).map(([service, status]) => (
                             <div key={service} className="p-4 bg-gray-50 rounded-lg border">
                                 <h4 className="font-semibold capitalize text-gray-700">{service}</h4>
                                 <StatusIndicator status={status} />
                             </div>
                         ))}
+                        {/* Optional: Show message if no services */}
+                        {health && !health.services && (
+                            <div className="col-span-full p-4 text-center text-gray-500">
+                                No services configured or available at this time.
+                            </div>
+                        )}
                     </div>
                 </CardContent>
             </Card>
@@ -79,3 +85,4 @@ export const HealthPage = () => {
         </div>
     );
 };
+

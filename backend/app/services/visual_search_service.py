@@ -9,10 +9,14 @@ import numpy as np
 import torch
 import os
 import json
+import asyncio
 from PIL import Image
 from transformers import AutoProcessor, AutoModel
 from sklearn.metrics.pairwise import cosine_similarity
 from typing import List, Dict, Optional
+
+# We need to import the shopify_service to fetch products
+from app.services.shopify_service import shopify_service
 
 # This service handles the complex task of visual product matching. It can index
 # product images into a database of embeddings and find visually similar items.
@@ -53,6 +57,13 @@ class VisualProductMatcher:
         """Loads all product embeddings from the SQLite DB into the in-memory index."""
         logger.info(f"Loading visual search index from {self.db_path}...")
         try:
+            # Check if the database file exists and is not empty
+            if not os.path.exists(self.db_path) or os.path.getsize(self.db_path) == 0:
+                logger.warning(f"Database file not found or is empty at {self.db_path}. Index will be empty.")
+                self.index = {}
+                self._last_db_mod_time = 0.0
+                return
+
             with sqlite3.connect(self.db_path) as conn:
                 cursor = conn.cursor()
                 cursor.execute("SELECT product_handle, embedding, product_title, tags FROM product_embeddings")
@@ -84,15 +95,60 @@ class VisualProductMatcher:
                 await self._load_index_from_db()
         except Exception as e:
             logger.error(f"Error checking or reloading the visual index: {e}", exc_info=True)
-
+    
+    # --- THIS IS THE CORRECTED AND COMPLETE FUNCTION ---
     async def index_all_products(self):
         """Fetches all products from Shopify and (re)builds the embedding database."""
-        # This function should contain the full logic from your original build_index.py
-        # For brevity, assuming it fetches products and then saves them.
-        # The key is to call _load_index_from_db() at the end.
         logger.info("Starting full product re-indexing...")
-        # (Your existing logic to fetch products and save embeddings to the DB goes here)
+        if not self.model:
+            await self._initialize_vision_model()
+
+        products = await shopify_service.get_all_products()
+        if not products:
+            logger.warning("No products returned from Shopify. Cannot build index.")
+            return
+
+        logger.info(f"Fetched {len(products)} products from Shopify. Starting image processing.")
+        count = 0
         
+        async with httpx.AsyncClient() as client, sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            # Clear the table for a fresh start
+            cursor.execute("DELETE FROM product_embeddings")
+            conn.commit()
+
+            for product in products:
+                if not product.image_url:
+                    continue
+                try:
+                    response = await client.get(product.image_url, timeout=20.0)
+                    response.raise_for_status()
+                    image_bytes = response.content
+                    
+                    embedding = await self.generate_image_embedding(image_bytes)
+                    if embedding is None:
+                        continue
+
+                    cursor.execute(
+                        "INSERT OR REPLACE INTO product_embeddings (product_id, product_handle, product_title, image_url, tags, embedding) VALUES (?, ?, ?, ?, ?, ?)",
+                        (
+                            str(product.id), product.handle, product.title, product.image_url,
+                            json.dumps(product.tags), pickle.dumps(embedding)
+                        )
+                    )
+                    count += 1
+                    if count % 50 == 0:
+                        logger.info(f"Processed {count}/{len(products)} products...")
+                        conn.commit()
+
+                except httpx.RequestError as e:
+                    logger.error(f"Failed to download image for product {product.handle}: {e}")
+                except Exception as e:
+                    logger.error(f"An error occurred processing product {product.handle}: {e}")
+            
+            conn.commit()
+
+        logger.info(f"Successfully indexed {count} products.")
         # After the database file is updated, immediately reload it into memory.
         await self._load_index_from_db()
         logger.info("Full product re-indexing complete.")
@@ -137,15 +193,7 @@ class VisualProductMatcher:
         for i in top_k_indices:
             handle = handles[i]
             product_info = self.index[handle]
-            # Ensure tags are a list, defaulting to empty if None
-            tags_list = product_info.get('tags')
-            if isinstance(tags_list, str):
-                try:
-                    tags_list = json.loads(tags_list)
-                except json.JSONDecodeError:
-                    tags_list = []
-            elif tags_list is None:
-                tags_list = []
+            tags_list = product_info.get('tags', [])
                 
             results.append({
                 'handle': handle,

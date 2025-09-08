@@ -1,17 +1,9 @@
 import React from 'react';
-import { apiService } from '../../../lib/api';
+import { apiService, HealthData } from '../../../lib/api';
 import { Card, CardHeader, CardContent, CardTitle, CardDescription } from '../../components/ui/Card';
 
-// Define a type for your health status data
-interface HealthStatus {
-  status: string;
-  services: {
-    [key: string]: string; // e.g., 'database': 'connected'
-  };
-}
-
 export const HealthPage = () => {
-    const [health, setHealth] = React.useState<HealthStatus | null>(null);
+    const [health, setHealth] = React.useState<HealthData | null>(null);
     const [loading, setLoading] = React.useState(true);
     const [error, setError] = React.useState<string | null>(null);
 
@@ -36,11 +28,11 @@ export const HealthPage = () => {
     }, []);
 
     const StatusIndicator = ({ status }: { status: string }) => {
-        const isOk = status === 'connected' || status === 'configured';
+        const isOk = status === 'connected' || status === 'configured' || status === 'healthy';
         return (
             <div className={`flex items-center gap-2 text-sm font-medium ${isOk ? 'text-green-600' : 'text-red-600'}`}>
                 <span className={`h-2.5 w-2.5 rounded-full ${isOk ? 'bg-green-500' : 'bg-red-500'}`}></span>
-                {status.replace('_', ' ')}
+                {status.replace(/_/g, ' ')}
             </div>
         );
     };
@@ -52,9 +44,9 @@ export const HealthPage = () => {
         <div className="space-y-6">
             <div className="flex justify-between items-center">
                 <h1 className="text-3xl font-bold text-black">System Health</h1>
-                <div className={`flex items-center gap-2 px-3 py-1 rounded-full text-sm font-semibold ${health?.status === 'ok' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>
-                    <span className={`h-2.5 w-2.5 rounded-full ${health?.status === 'ok' ? 'bg-green-500' : 'bg-red-500'}`}></span>
-                    {health?.status === 'ok' ? 'All Systems Operational' : 'System Degraded'}
+                <div className={`flex items-center gap-2 px-3 py-1 rounded-full text-sm font-semibold ${health?.status === 'healthy' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>
+                    <span className={`h-2.5 w-2.5 rounded-full ${health?.status === 'healthy' ? 'bg-green-500' : 'bg-red-500'}`}></span>
+                    {health?.status === 'healthy' ? 'All Systems Operational' : 'System Degraded'}
                 </div>
             </div>
             <Card>
@@ -64,10 +56,11 @@ export const HealthPage = () => {
                 </CardHeader>
                 <CardContent>
                     <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-                        {health && Object.entries(health.services).map(([service, status]) => (
+                        {/* THIS IS THE FIX: Only render if health and health.services exist */}
+                        {health && health.services && Object.entries(health.services).map(([service, status]) => (
                             <div key={service} className="p-4 bg-gray-50 rounded-lg border">
                                 <h4 className="font-semibold capitalize text-gray-700">{service}</h4>
-                                <StatusIndicator status={status as string} />
+                                <StatusIndicator status={status} />
                             </div>
                         ))}
                     </div>

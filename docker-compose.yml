@@ -20,7 +20,7 @@ services:
       - "127.0.0.1:8000:8000"
     # This command now safely runs 2 workers. The large AI model is no longer
     # loaded here, so memory usage is low.
-    command: gunicorn -w 2 -k uvicorn.workers.UvicornWorker -b 0.0.0.0:8000 app.main:app
+    command: gunicorn -w 2 -k uvicorn.workers.UvicornWorker -b 0.0.0.0:8000 app.main:app -t 120 app.main:app
     depends_on:
       - redis
     networks:

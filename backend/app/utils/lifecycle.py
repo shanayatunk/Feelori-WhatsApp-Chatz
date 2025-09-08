@@ -19,7 +19,7 @@ from app.utils.tasks import refresh_visual_search_index
 # initializing services and shutdown tasks like cleaning up connections.
 
 logger = logging.getLogger(__name__)
-scheduler = AsyncIOScheduler()
+scheduler = AsyncIOScheduler(timezone="Asia/Kolkata") # Set the timezone for the scheduler
 
 # This global variable will hold the hashed password.
 ADMIN_PASSWORD_HASH: str | None = None
@@ -62,10 +62,22 @@ async def lifespan(app: FastAPI):
     
     await message_queue.start_workers()
     
-    # Add the re-indexing job and start the scheduler
-    scheduler.add_job(refresh_visual_search_index, 'interval', hours=24, id="rebuild_index_job")
+    # --- MODIFIED SCHEDULER LOGIC ---
+    # 1. Run the indexing job immediately on startup.
+    logger.info("Running initial visual search index refresh on startup...")
+    await refresh_visual_search_index()
+    
+    # 2. Schedule all future jobs to run at 3:00 AM IST daily.
+    scheduler.add_job(
+        refresh_visual_search_index, 
+        'cron', 
+        hour=3, 
+        minute=0, 
+        id="daily_rebuild_index_job"
+    )
     scheduler.start()
-    logger.info("Scheduler started with a daily job to refresh the visual search index.")
+    logger.info("Scheduler started. Visual search index will refresh daily at 3:00 AM IST.")
+    # --- END OF MODIFICATION ---
 
     logger.info("Application startup complete. Ready to accept requests.")
     

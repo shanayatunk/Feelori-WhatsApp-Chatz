@@ -33,7 +33,6 @@ export interface SecurityEvent {
   details: Record<string, unknown>;
 }
 
-// Base customer type used in lists
 export interface Customer {
   _id: string;
   phone_number: string;
@@ -41,13 +40,8 @@ export interface Customer {
   last_interaction: string;
 }
 
-// THIS IS THE CORRECTED TYPE for the detailed customer view
 export interface CustomerDetails extends Customer {
-    conversation_history: {
-        timestamp: string;
-        message: string;
-        response: string;
-    }[];
+    conversation_history: { sender: string; message: string; timestamp: string }[];
 }
 
 export interface Escalation {
@@ -78,139 +72,96 @@ const makeRequest = async (url: string, options: RequestInit = {}) => {
     ...(token && { Authorization: `Bearer ${token}` }),
   };
 
-  return fetch(url, { ...options, headers });
+  const response = await fetch(url, { ...options, headers });
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ detail: 'An unknown error occurred' }));
+    throw new Error(error.detail || `Request failed with status ${response.status}`);
+  }
+  return response.json();
 };
 
 
 export const apiService = {
   login: async (password: string): Promise<{ access_token: string }> => {
-    const response = await makeRequest(`${API_BASE_URL}/auth/login`, {
+    return makeRequest(`${API_BASE_URL}/auth/login`, {
       method: 'POST',
       body: JSON.stringify({ password }),
     });
-
-    if (!response.ok) {
-      const error = await response.json().catch(() => ({ detail: 'Login failed' }));
-      throw new Error(error.detail || 'Login failed');
-    }
-    return response.json();
   },
 
   getDashboardStats: async (): Promise<StatsData> => {
-      const response = await makeRequest(`${API_BASE_URL}/dashboard/stats`);
-      if (!response.ok) throw new Error('Failed to fetch stats');
-      const result = await response.json();
-      return result.data;
+      const result = await makeRequest(`${API_BASE_URL}/dashboard/stats`);
+      return result.data.stats;
   },
 
   getHealth: async (): Promise<HealthData> => {
-    const response = await makeRequest(`${API_BASE_URL}/admin/health`);
-    if (!response.ok) throw new Error('Failed to fetch health status');
-    return response.json();
+    const result = await makeRequest(`${API_BASE_URL}/admin/health`);
+    return result.data;
   },
 
   getSecurityEvents: async (): Promise<SecurityEvent[]> => {
-    const response = await makeRequest(`${API_BASE_URL}/admin/security-events`);
-    if (!response.ok) throw new Error('Failed to fetch security events');
-    const result = await response.json();
+    const result = await makeRequest(`${API_BASE_URL}/admin/security-events`);
     return result.data.events;
   },
 
   getCustomers: async (page: number, limit: number): Promise<{ customers: Customer[], pagination: Pagination }> => {
-    const response = await makeRequest(`${API_BASE_URL}/admin/customers?page=${page}&limit=${limit}`);
-    if (!response.ok) throw new Error('Failed to fetch customers');
-    const result = await response.json();
+    const result = await makeRequest(`${API_BASE_URL}/admin/customers?page=${page}&limit=${limit}`);
     return result.data;
   },
 
-  // This function now correctly returns a promise of the corrected CustomerDetails type
   getCustomerById: async (id: string): Promise<{ customer: CustomerDetails }> => {
-    const response = await makeRequest(`${API_BASE_URL}/admin/customers/${id}`);
-    if (!response.ok) throw new Error('Failed to fetch customer details');
-    const result = await response.json();
+    const result = await makeRequest(`${API_BASE_URL}/admin/customers/${id}`);
     return result.data;
   },
 
   getEscalations: async (): Promise<Escalation[]> => {
-    const response = await makeRequest(`${API_BASE_URL}/dashboard/escalations`);
-    if (!response.ok) throw new Error('Failed to fetch escalations');
-    const result = await response.json();
-    return result.data;
+    const result = await makeRequest(`${API_BASE_URL}/dashboard/escalations`);
+    return result.data.escalations;
   },
 
   broadcast: async (message: string, target: string, imageUrl?: string): Promise<{ message: string }> => {
-    const response = await makeRequest(`${API_BASE_URL}/admin/broadcast`, {
+    return makeRequest(`${API_BASE_URL}/admin/broadcast`, {
       method: 'POST',
       body: JSON.stringify({ message, target, image_url: imageUrl }),
     });
-    if (!response.ok) {
-        const error = await response.json().catch(() => ({ detail: 'Broadcast failed' }));
-        throw new Error(error.detail || 'Broadcast failed');
-    }
-    return response.json();
   },
 
   getPackingMetrics: async (): Promise<PackingMetrics> => {
-      const response = await makeRequest(`${API_BASE_URL}/dashboard/packing-metrics`);
-      if (!response.ok) throw new Error('Failed to fetch packing metrics');
-      const result = await response.json();
-      return result.data;
+      const result = await makeRequest(`${API_BASE_URL}/dashboard/packing-metrics`);
+      return result.data.metrics;
   },
 
   getRules: async (): Promise<Rule[]> => {
-    const response = await makeRequest(`${API_BASE_URL}/admin/rules`);
-    if (!response.ok) throw new Error('Failed to fetch rules');
-    const result = await response.json();
+    const result = await makeRequest(`${API_BASE_URL}/admin/rules`);
     return result.data.rules;
   },
 
   createRule: async (rule: Rule): Promise<Rule> => {
-    const response = await makeRequest(`${API_BASE_URL}/admin/rules`, {
+    const result = await makeRequest(`${API_BASE_URL}/admin/rules`, {
       method: 'POST',
       body: JSON.stringify(rule),
     });
-    
-    if (!response.ok) {
-      const error = await response.json().catch(() => ({ detail: 'Failed to create rule' }));
-      throw new Error(error.detail || 'Failed to create rule');
-    }
-    
-    const result = await response.json();
     return result.data.rule;
   },
 
   updateRule: async (ruleId: string, rule: Rule): Promise<Rule> => {
-    const response = await makeRequest(`${API_BASE_URL}/admin/rules/${ruleId}`, {
+    const result = await makeRequest(`${API_BASE_URL}/admin/rules/${ruleId}`, {
       method: 'PUT',
       body: JSON.stringify(rule),
     });
-    
-    if (!response.ok) {
-      const error = await response.json().catch(() => ({ detail: 'Failed to update rule' }));
-      throw new Error(error.detail || 'Failed to update rule');
-    }
-    
-    const result = await response.json();
     return result.data.rule;
   },
 
   getStrings: async (): Promise<StringResource[]> => {
-    const response = await makeRequest(`${API_BASE_URL}/admin/strings`);
-    if (!response.ok) {
-      throw new Error(`Failed to fetch strings: ${response.status} ${response.statusText}`);
-    }
-    const result = await response.json();
+    const result = await makeRequest(`${API_BASE_URL}/admin/strings`);
     return result.data.strings;
   },
 
-  updateStrings: async (strings: StringResource[]): Promise<void> => {
-    const response = await makeRequest(`${API_BASE_URL}/admin/strings`, {
+  updateStrings: async (strings: StringResource[]): Promise<{ message: string }> => {
+    return makeRequest(`${API_BASE_URL}/admin/strings`, {
       method: 'PUT',
       body: JSON.stringify({ strings }),
     });
-    if (!response.ok) {
-      const error = await response.json().catch(() => ({ detail: 'Failed to update strings' }));
-      throw new Error(error.detail || 'Failed to update strings');
-    }
   },
 };

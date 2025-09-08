@@ -62,22 +62,21 @@ async def lifespan(app: FastAPI):
     
     await message_queue.start_workers()
     
-    # --- MODIFIED SCHEDULER LOGIC ---
-    # 1. Run the indexing job immediately on startup.
-    # logger.info("Running initial visual search index refresh on startup...")
-    # await refresh_visual_search_index()
-    
-    # 2. Schedule all future jobs to run at 3:00 AM IST daily.
-    scheduler.add_job(
-        refresh_visual_search_index, 
-        'cron', 
-        hour=3, 
-        minute=0, 
-        id="daily_rebuild_index_job"
-    )
-    scheduler.start()
-    logger.info("Scheduler started. Visual search index will refresh daily at 3:00 AM IST.")
-    # --- END OF MODIFICATION ---
+    # --- Corrected Scheduler Logic ---
+    # The scheduler will only start if the visual search feature is enabled in the settings.
+    if settings.VISUAL_SEARCH_ENABLED:
+        scheduler.add_job(
+            refresh_visual_search_index, 
+            'cron', 
+            hour=3, 
+            minute=0, 
+            id="daily_rebuild_index_job"
+        )
+        scheduler.start()
+        logger.info("Scheduler started. Visual search index will refresh daily at 3:00 AM IST.")
+    else:
+        logger.info("Visual search is disabled. Scheduler will not be started.")
+    # --- End of Correction ---
 
     logger.info("Application startup complete. Ready to accept requests.")
     

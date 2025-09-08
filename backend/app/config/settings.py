@@ -44,6 +44,7 @@ class Settings(BaseSettings):
     packing_dept_whatsapp_number: str | None = None
     packing_executive_names: str = "Swathi,Dharam,Pushpa,Deepika"
     dashboard_url: str = "https://example.com/static/dashboard.html"
+    VISUAL_SEARCH_ENABLED: bool = False
 
     # Security
     jwt_secret_key: str

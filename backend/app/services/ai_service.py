@@ -127,6 +127,9 @@ class AIService:
 
     async def find_exact_product_by_image(self, image_bytes: bytes, mime_type: str) -> dict:
         """Orchestrates a hybrid visual search with re-ranking."""
+        # ADD THIS CHECK AT THE TOP
+        if not settings.VISUAL_SEARCH_ENABLED:
+            return {'success': False, 'message': 'Visual search is temporarily unavailable.'}
         try:
             visual_candidates_task = visual_matcher.find_matching_products_offloaded(image_bytes)
             keyword_task = self.get_keywords_from_image_for_reranking(image_bytes, mime_type)

@@ -3,6 +3,7 @@
 import asyncio
 import logging
 import json
+import sys
 import redis.asyncio as aioredis
 from app.services.visual_search_service import visual_matcher
 from app.config.settings import settings
@@ -21,6 +22,11 @@ async def main():
     The main event loop for the ML worker.
     Initializes the model and continuously processes jobs from the Redis queue.
     """
+    # This is the corrected placement for the feature flag check.
+    if not settings.VISUAL_SEARCH_ENABLED:
+        logger.warning("Visual search is disabled in settings. ML worker will not start.")
+        sys.exit(0) # Exit cleanly
+
     logger.info("--- Starting ML Worker ---")
     
     # Initialize the visual search model once, a significant memory saving.
@@ -35,7 +41,8 @@ async def main():
     try:
         while True:
             # BRPop is a blocking call that waits for an item on the queue
-            job_data = await redis.brpop(INKOMING_QUEUE, timeout=POLLING_TIMEOUT)
+            # Note: A typo in the original file 'INKOMING_QUEUE' was corrected to 'INCOMING_QUEUE'
+            job_data = await redis.brpop(INCOMING_QUEUE, timeout=POLLING_TIMEOUT)
 
             if not job_data:
                 await asyncio.sleep(0.1) # Small sleep to prevent a tight loop if Redis is empty

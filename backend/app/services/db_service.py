@@ -13,6 +13,7 @@ from app.utils.metrics import database_operations_counter
 from app.services.cache_service import cache_service
 from app.services import security_service, shopify_service
 from app.config import strings # Make sure this import is present
+from app.services.order_service import send_packing_alert_background
 
 # This service manages all interactions with the MongoDB database, including
 # creating indexes, CRUD operations, and complex aggregation queries for stats.
@@ -335,7 +336,7 @@ class DatabaseService:
         }
         await self.db.orders.update_one({"id": order_id}, {"$set": order_doc}, upsert=True)
         # Assuming send_packing_alert_background is defined in another service (e.g., order_service)
-        from app.services.order_service import send_packing_alert_background
+        
         await send_packing_alert_background(payload)
         
     async def process_updated_order_webhook(self, payload: dict):

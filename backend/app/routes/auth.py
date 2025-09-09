@@ -1,5 +1,4 @@
 # /app/routes/auth.py
-# Fixed version with proper JWT service usage
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 
@@ -10,7 +9,7 @@ from app.utils.request_utils import get_remote_address
 from app.services import security_service, jwt_service
 from app.services.db_service import db_service
 from app.utils.rate_limiter import limiter
-from app.utils.lifecycle import ADMIN_PASSWORD_HASH
+# Note: The import for ADMIN_PASSWORD_HASH has been removed.
 
 router = APIRouter(
     prefix="/auth",
@@ -29,19 +28,11 @@ async def login(request: Request, login_data: LoginRequest):
             detail="Too many failed attempts. Please try again later."
         )
     
-    # Password validation with fallback
-    password_valid = False
-    
-    if ADMIN_PASSWORD_HASH:
-        password_valid = security_service.EnhancedSecurityService.verify_password(
-            login_data.password, ADMIN_PASSWORD_HASH
-        )
-    else:
-        # Fallback to direct comparison (for debugging only)
-        print(f"WARNING: Using direct password comparison. Hash not initialized.")
-        print(f"Expected: {settings.admin_password}")
-        print(f"Received: {login_data.password}")
-        password_valid = (login_data.password == settings.admin_password)
+    # --- CORRECTED PASSWORD VALIDATION ---
+    # This is now a single, secure check against the hashed password from your .env file.
+    password_valid = security_service.EnhancedSecurityService.verify_password(
+        login_data.password, settings.admin_password
+    )
     
     if not password_valid:
         await security_service.login_tracker.record_attempt(client_ip)

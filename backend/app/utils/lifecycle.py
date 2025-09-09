@@ -12,16 +12,12 @@ from app.services import security_service
 from app.services.string_service import string_service
 from app.services.rule_service import rule_service
 from app.config.settings import settings
-# Note: The task and scheduler imports have been removed.
 
 # This file manages the application's lifespan, handling startup tasks like
 # initializing services and shutdown tasks like cleaning up connections.
 
 logger = logging.getLogger(__name__)
-# Note: The global scheduler variable has been removed.
-
-# This global variable will hold the hashed password.
-ADMIN_PASSWORD_HASH: str | None = None
+# Note: The global ADMIN_PASSWORD_HASH variable has been removed.
 
 def setup_sentry():
     # Sentry initialization logic can be added here if needed
@@ -30,30 +26,12 @@ def setup_sentry():
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan manager for startup and shutdown events."""
-    global ADMIN_PASSWORD_HASH
-
     setup_logging()
     setup_sentry()
     
     logger.info("Application starting up...")
     
-    # Hash the admin password securely on startup
-    try:
-        if settings.environment == "test":
-            test_password = "a_secure_test_password_123"
-            ADMIN_PASSWORD_HASH = security_service.EnhancedSecurityService.hash_password(test_password)
-            logger.info("Using test password hash")
-        else:
-            ADMIN_PASSWORD_HASH = security_service.EnhancedSecurityService.hash_password(settings.admin_password)
-            logger.info("Admin password hash created successfully")
-        
-        logger.info(f"ADMIN_PASSWORD_HASH type: {type(ADMIN_PASSWORD_HASH)}")
-        logger.info(f"ADMIN_PASSWORD_HASH length: {len(ADMIN_PASSWORD_HASH) if ADMIN_PASSWORD_HASH else 'None'}")
-        
-    except Exception as e:
-        logger.error(f"Failed to create password hash: {e}")
-        logger.warning("Password hashing failed - authentication will use direct comparison (not secure for production)")
-        ADMIN_PASSWORD_HASH = None
+    # --- The password hashing block has been completely removed ---
 
     await db_service.create_indexes()
     await string_service.load_strings()
@@ -61,15 +39,11 @@ async def lifespan(app: FastAPI):
     
     await message_queue.start_workers()
     
-    # --- All scheduler logic has been removed from this file ---
-
     logger.info("Application startup complete. Ready to accept requests.")
     
     yield  # Application is now running
     
     logger.info("Application shutting down...")
-    
-    # --- The scheduler shutdown logic has also been removed ---
         
     await message_queue.stop_workers()
     await alerting_service.cleanup()

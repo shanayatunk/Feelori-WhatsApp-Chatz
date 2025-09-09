@@ -81,7 +81,7 @@ async def handle_whatsapp_webhook(
 
 # --- Shopify Webhooks ---
 
-@router.post("/webhooks/shopify/orders/create")
+@router.post("/shopify/orders/create")
 async def shopify_orders_create_webhook(request: Request, verified_body: bytes = Depends(verify_shopify_signature)):
     """Handles new order creation from Shopify."""
     payload = json.loads(verified_body.decode("utf-8"))
@@ -89,7 +89,7 @@ async def shopify_orders_create_webhook(request: Request, verified_body: bytes =
     return JSONResponse({"status": "ok"})
 
 
-@router.post("/webhooks/shopify/orders/updated")
+@router.post("/shopify/orders/updated")
 async def shopify_orders_updated_webhook(request: Request, verified_body: bytes = Depends(verify_shopify_signature)):
     """Handles order updates from Shopify."""
     payload = json.loads(verified_body.decode("utf-8"))
@@ -97,7 +97,7 @@ async def shopify_orders_updated_webhook(request: Request, verified_body: bytes 
     return JSONResponse({"status": "ok"})
 
 
-@router.post("/webhooks/shopify/fulfillments/create")
+@router.post("/shopify/fulfillments/create")
 async def shopify_fulfillments_create_webhook(request: Request, verified_body: bytes = Depends(verify_shopify_signature)):
     """Handles new fulfillment events from Shopify."""
     payload = json.loads(verified_body.decode("utf-8"))
@@ -105,9 +105,9 @@ async def shopify_fulfillments_create_webhook(request: Request, verified_body: b
     return JSONResponse({"status": "ok"})
 
 
-@router.post("/webhooks/shopify/checkouts/update")
+@router.post("/shopify/checkouts/update")
 async def shopify_checkouts_update_webhook(request: Request, verified_body: bytes = Depends(verify_shopify_signature)):
     """Handles abandoned checkout events from Shopify."""
     payload = json.loads(verified_body.decode("utf-8"))
-    await order_service.handle_abandoned_checkout(payload)
+    asyncio.create_task(order_service.handle_abandoned_checkout(payload))
     return JSONResponse({"status": "scheduled"})

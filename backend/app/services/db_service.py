@@ -11,7 +11,8 @@ from app.models.api import Rule, StringResource
 from app.utils.circuit_breaker import CircuitBreaker, RedisCircuitBreaker
 from app.utils.metrics import database_operations_counter
 from app.services.cache_service import cache_service
-from app.services import security_service, shopify_service
+from app.services import security_service
+from app.services.shopify_service import shopify_service
 from app.config import strings # Make sure this import is present
 
 # This service manages all interactions with the MongoDB database, including

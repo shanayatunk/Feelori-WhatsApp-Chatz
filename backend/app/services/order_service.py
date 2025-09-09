@@ -25,11 +25,11 @@ from app.services.string_service import string_service
 from app.services.rule_service import rule_service
 from app.utils.queue import message_queue
 from app.utils.metrics import message_counter, active_customers_gauge
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
+# from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 
 logger = logging.getLogger(__name__)
-scheduler = AsyncIOScheduler()
+# scheduler = AsyncIOScheduler()
 
 @dataclass
 class SearchConfig:
@@ -752,26 +752,17 @@ async def handle_status_update(status_data: Dict):
         logger.error(f"Error handling status update: {e}", exc_info=True)
 
 async def handle_abandoned_checkout(payload: dict):
-    """Schedules a reminder for an abandoned checkout."""
-    if payload.get("completed_at"): return
-    phone_number = payload.get("phone") or (payload.get("shipping_address") or {}).get("phone")
-    checkout_url = payload.get("abandoned_checkout_url")
-    if not phone_number or not checkout_url: return
-
-    clean_phone = security_service.EnhancedSecurityService.sanitize_phone_number(phone_number)
-    customer = await get_or_create_customer(clean_phone)
-    customer_name = customer.get("name", "there")
-    message = f"Hi {customer_name}! 👋\nIt looks like you left some beautiful items in your cart. ✨\nComplete your purchase here:\n{checkout_url}"
+    """
+    Receives an abandoned checkout webhook and saves it to the database.
+    The central scheduler will handle sending the reminder later.
+    """
+    checkout_id = payload.get("id")
+    if not checkout_id:
+        return # Ignore if there is no ID
     
-    if not scheduler.running: scheduler.start()
-    
-    run_time = datetime.now() + timedelta(hours=1)
-    scheduler.add_job(
-        whatsapp_service.send_message, 'date', run_date=run_time,
-        args=[clean_phone, message], id=f"abandoned_checkout_{payload.get('id')}",
-        replace_existing=True
-    )
-    logger.info(f"Abandoned checkout reminder scheduled for {clean_phone} at {run_time}")
+    # Just save the data. The scheduler will do the rest.
+    await db_service.save_abandoned_checkout(payload)
+    logger.info(f"Saved abandoned checkout {checkout_id} to database for future processing.")
 
 async def send_packing_alert_background(order_payload: Dict):
     """Sends a notification to the packing department about a new order."""

@@ -49,7 +49,44 @@ class DatabaseService:
             logger.info("Database indexes created successfully.")
         except Exception as e:
             logger.error(f"Failed to create database indexes: {e}")
-            
+
+
+
+
+    # Scheduler
+
+   
+    async def save_abandoned_checkout(self, checkout_data: dict):
+        """Saves or updates an abandoned checkout record."""
+        checkout_id = checkout_data.get("id")
+        # Use upsert=True to create a new record or update an existing one
+        await self.db.abandoned_checkouts.update_one(
+            {"id": checkout_id},
+            {"$set": checkout_data, "$setOnInsert": {"reminder_sent": False}},
+            upsert=True
+        )
+
+  
+    async def get_pending_abandoned_checkouts(self) -> List[dict]:
+        """Finds checkouts that are ready for a reminder."""
+        one_hour_ago = datetime.utcnow() - timedelta(hours=1)
+        two_hours_ago = datetime.utcnow() - timedelta(hours=2)
+        
+        # Find checkouts updated between 1 and 2 hours ago that haven't had a reminder sent
+        cursor = self.db.abandoned_checkouts.find({
+            "updated_at": {"$gte": two_hours_ago, "$lt": one_hour_ago},
+            "reminder_sent": False,
+            "completed_at": None  # Ensure it wasn't completed
+        })
+        return await cursor.to_list(length=100)
+
+
+    async def mark_reminder_as_sent(self, checkout_id: int):
+        """Marks an abandoned checkout reminder as sent to prevent duplicates."""
+        await self.db.abandoned_checkouts.update_one(
+            {"id": checkout_id},
+            {"$set": {"reminder_sent": True, "reminder_sent_at": datetime.utcnow()}}
+        )            
     # --- Customer Operations ---
     async def get_customer(self, phone_number: str):
         return await self.circuit_breaker.call(self.db.customers.find_one, {"phone_number": phone_number})

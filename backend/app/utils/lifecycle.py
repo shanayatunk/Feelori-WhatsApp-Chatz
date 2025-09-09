@@ -3,7 +3,6 @@
 import logging
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from app.utils.logging import setup_logging
 from app.utils.alerting import alerting_service
@@ -13,14 +12,13 @@ from app.services import security_service
 from app.services.string_service import string_service
 from app.services.rule_service import rule_service
 from app.config.settings import settings
-# Import both tasks from your tasks file
-from app.utils.tasks import refresh_visual_search_index, update_escalation_analytics
+# Note: The task and scheduler imports have been removed.
 
 # This file manages the application's lifespan, handling startup tasks like
 # initializing services and shutdown tasks like cleaning up connections.
 
 logger = logging.getLogger(__name__)
-scheduler = AsyncIOScheduler(timezone="Asia/Kolkata") # Set the timezone for the scheduler
+# Note: The global scheduler variable has been removed.
 
 # This global variable will hold the hashed password.
 ADMIN_PASSWORD_HASH: str | None = None
@@ -63,42 +61,15 @@ async def lifespan(app: FastAPI):
     
     await message_queue.start_workers()
     
-    # --- Corrected Scheduler Logic ---
-    
-    # 1. Add the new job to pre-calculate escalation stats every 5 minutes.
-    scheduler.add_job(
-        update_escalation_analytics,
-        'interval',
-        minutes=5,
-        id="update_escalation_analytics_job"
-    )
-    
-    # 2. Conditionally schedule the visual search job based on the feature flag.
-    if settings.VISUAL_SEARCH_ENABLED:
-        scheduler.add_job(
-            refresh_visual_search_index, 
-            'cron', 
-            hour=3, 
-            minute=0, 
-            id="daily_rebuild_index_job"
-        )
-        logger.info("Visual search is enabled. Daily index refresh is scheduled.")
-    else:
-        logger.info("Visual search is disabled. Daily index refresh is NOT scheduled.")
-
-    # 3. Start the scheduler after all jobs have been added.
-    scheduler.start()
-    logger.info("Scheduler started.")
-    # --- End of Correction ---
+    # --- All scheduler logic has been removed from this file ---
 
     logger.info("Application startup complete. Ready to accept requests.")
     
     yield  # Application is now running
     
     logger.info("Application shutting down...")
-    if scheduler.running:
-        scheduler.shutdown()
-        logger.info("Scheduler shut down.")
+    
+    # --- The scheduler shutdown logic has also been removed ---
         
     await message_queue.stop_workers()
     await alerting_service.cleanup()

@@ -1,13 +1,10 @@
 version: '3.8'
 
 # This file defines the multi-container application setup.
-# It includes the main web application (backend) and a Redis instance for caching.
-# The memory-intensive ML worker has been disabled by commenting it out.
+# It now includes the backend, a dedicated scheduler for background jobs, and Redis.
 
 services:
   # 1. The main web application service
-  # Handles all incoming API requests and user chats.
-  # Runs multiple workers for high responsiveness.
   backend:
     build:
       context: ./backend
@@ -18,23 +15,37 @@ services:
       - ./backend/.env
     ports:
       - "127.0.0.1:8000:8000"
-    # Command includes an increased timeout (-t 120) for better stability.
     command: gunicorn -w 2 -k uvicorn.workers.UvicornWorker -b 0.0.0.0:8000 -t 120 app.main:app
     depends_on:
       - redis
     networks:
       - feelori-net
 
-  # 2. The dedicated ML worker is disabled to save memory.
+  # 2. The new dedicated scheduler service
+  # This service runs all background and periodic tasks (e.g., analytics, reminders).
+  scheduler:
+    build:
+      context: ./backend
+    container_name: feelori_scheduler
+    restart: unless-stopped
+    env_file:
+      - ./backend/.env
+    # This command runs our new scheduler script.
+    command: python scheduler.py
+    depends_on:
+      - redis
+    networks:
+      - feelori-net
+
+  # 3. The dedicated ML worker is disabled to save memory.
   # To re-enable it in the future, simply uncomment the lines below.
   # ml_worker:
   #   build:
-  #     context: ./backend  # Uses the same codebase and Docker image
+  #     context: ./backend
   #   container_name: feelori_ml_worker
   #   restart: unless-stopped
   #   env_file:
   #     - ./backend/.env
-  #   # The command is different: it runs our new worker script.
   #   command: python ml_worker.py
   #   depends_on:
   #     - redis
@@ -45,7 +56,7 @@ services:
   #       limits:
   #         memory: 4G
 
-  # 3. The Redis service for caching
+  # 4. The Redis service for caching and queuing
   redis:
     image: "redis:7-alpine"
     container_name: feelori_redis

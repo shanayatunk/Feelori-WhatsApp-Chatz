@@ -13,9 +13,6 @@ from app.services.cache_service import cache_service
 from app.models.domain import Product
 from app.utils.alerting import alerting_service
 
-# This service handles all outbound communication with the WhatsApp Business API,
-# including sending text messages, interactive messages, and media.
-
 logger = logging.getLogger(__name__)
 
 class WhatsAppService:
@@ -35,54 +32,84 @@ class WhatsAppService:
         before_sleep=tenacity.before_sleep_log(logger, logging.WARNING)
     )
     async def resilient_api_call(self, func, *args, **kwargs):
-        """Wrapper for API calls to add retry logic."""
         return await self.circuit_breaker.call(func, *args, **kwargs)
 
-    async def send_message(self, to_phone: str, message: str, image_url: Optional[str] = None) -> Optional[str]:
-        """Sends a text or image message via WhatsApp Business API and returns the message ID (wamid)."""
+    async def send_whatsapp_request(self, payload: dict) -> Optional[str]:
+        """Generic method to send a request to the WhatsApp messages API."""
         try:
-            url = f"{self.base_url}/{self.phone_id}/messages"
+            to_phone = payload.get("to")
             if not to_phone:
-                logger.error(f"send_message_invalid_phone: {to_phone}")
+                logger.error(f"send_whatsapp_request_invalid_phone: {to_phone}")
                 return None
 
-            clean_phone = re.sub(r"[^\d+]", "", to_phone)
-            if not clean_phone.startswith("+"):
-                clean_phone = "+" + clean_phone.lstrip("+")
-
-            payload = {
-                "messaging_product": "whatsapp",
-                "recipient_type": "individual",
-                "to": clean_phone,
-            }
-
-            if image_url:
-                payload["type"] = "image"
-                payload["image"] = {"link": image_url, "caption": message[:1024]}
-            else:
-                payload["type"] = "text"
-                payload["text"] = {"body": message[:4096]}
-
+            url = f"{self.base_url}/{self.phone_id}/messages"
             headers = {"Authorization": f"Bearer {self.access_token}", "Content-Type": "application/json"}
-
             response = await self.resilient_api_call(self.http_client.post, url, json=payload, headers=headers)
 
             if response.status_code == 200:
                 response_data = response.json()
                 message_id = response_data.get("messages", [{}])[0].get("id")
-                logger.info(f"WhatsApp message sent to {clean_phone}, wamid: {message_id}")
+                logger.info(f"WhatsApp message sent to {to_phone}, wamid: {message_id}")
                 return message_id
             else:
                 error_data = response.json()
                 error_message = (error_data.get("error") or {}).get("message", "Unknown error")
-                logger.error(f"whatsapp_send_failed to {clean_phone}: {response.status_code} - {error_message}")
+                logger.error(f"whatsapp_send_failed to {to_phone}: {response.status_code} - {error_message}")
                 if response.status_code == 401:
                     await alerting_service.send_critical_alert("WhatsApp authentication failed", {"error": "Invalid access token"})
                 return None
         except Exception as e:
+            to_phone = payload.get("to", "unknown")
             logger.error(f"whatsapp_send_error to {to_phone}: {e}", exc_info=True)
             await alerting_service.send_critical_alert("WhatsApp send message unexpected error", {"phone": to_phone, "error": str(e)})
             return None
+
+    async def send_message(self, to_phone: str, message: str):
+        """Sends a simple text message."""
+        clean_phone = re.sub(r"[^\d+]", "", to_phone)
+        if not clean_phone.startswith("+"):
+            clean_phone = "+" + clean_phone.lstrip("+")
+            
+        payload = {
+            "messaging_product": "whatsapp",
+            "recipient_type": "individual",
+            "to": clean_phone,
+            "type": "text",
+            "text": {"body": message[:4096]}
+        }
+        await self.send_whatsapp_request(payload)
+
+    async def send_template_message(self, to: str, template_name: str, body_params: list, button_url_param: str = None):
+        """Sends a pre-approved WhatsApp message template with optional button parameters."""
+        clean_phone = re.sub(r"[^\d+]", "", to)
+        if not clean_phone.startswith("+"):
+            clean_phone = "+" + clean_phone.lstrip("+")
+
+        components = [{
+            "type": "body",
+            "parameters": [{"type": "text", "text": str(p)} for p in body_params]
+        }]
+        
+        if button_url_param:
+            components.append({
+                "type": "button",
+                "sub_type": "url",
+                "index": "0",
+                "parameters": [{"type": "text", "text": button_url_param}]
+            })
+
+        payload = {
+            "messaging_product": "whatsapp",
+            "to": clean_phone,
+            "type": "template",
+            "template": {
+                "name": template_name,
+                "language": {"code": "en_US"},
+                "components": components
+            }
+        }
+        await self.send_whatsapp_request(payload)
+
 
     async def get_catalog_id(self) -> Optional[str]:
         """Fetches and caches the WhatsApp Business catalog ID."""

@@ -7,21 +7,20 @@ from pydantic import BaseModel, Field
 from typing import Optional, List, Dict, Any
 from datetime import datetime
 
-# This file defines the core Pydantic models used throughout the application's
-# business logic. These models ensure data consistency and provide validation.
-
 logger = logging.getLogger(__name__)
 
 class Product(BaseModel):
     id: str
     title: str
-    handle: str
-    description: Optional[str] = None
+    description: str
     price: float
     variant_id: str
+    sku: Optional[str] = None
+    currency: str = "INR"
     image_url: Optional[str] = None
-    availability: str
+    availability: str = "in_stock"
     tags: List[str] = []
+    handle: str = ""
 
     @classmethod
     def from_shopify_api(cls, product_data: Dict[str, Any]) -> Optional["Product"]:
@@ -30,27 +29,22 @@ class Product(BaseModel):
         This acts as a translator, handling the complex structure of the API response.
         """
         try:
-            # Shopify's description is in 'body_html', so we clean it by removing HTML tags.
             raw_description = product_data.get("body_html", "") or ""
             clean_description = html.unescape(re.sub("<[^<]+?>", "", raw_description)).strip()
 
-            # Price and variant info are in a nested list.
             variants = product_data.get("variants", [])
             if not variants:
                 logger.warning(f"Product ID {product_data.get('id')} has no variants. Skipping.")
-                return None # Cannot create a product without a variant
+                return None
 
             first_variant = variants[0]
             
-            # Image URL is also nested.
             images = product_data.get("images", [])
             image_url = images[0].get("src") if images else None
             
-            # Determine availability from inventory quantity.
             inventory = first_variant.get("inventory_quantity")
             availability = "in_stock" if inventory and inventory > 0 else "out_of_stock"
 
-            # Tags are a single string in the REST API, so we split it.
             tags_str = product_data.get("tags", "")
             tags_list = [tag.strip() for tag in tags_str.split(",")] if tags_str else []
 
@@ -61,13 +55,12 @@ class Product(BaseModel):
                 description=clean_description,
                 price=float(first_variant.get("price", 0.0)),
                 variant_id=str(first_variant.get("id")),
+                sku=first_variant.get("sku"), # Added SKU
                 image_url=image_url,
                 availability=availability,
                 tags=tags_list,
             )
         except (KeyError, IndexError, TypeError) as e:
-            # If the product data is malformed for any reason, log it and return None
-            # so it doesn't crash the entire indexing process.
             logger.error(f"Could not parse product with ID {product_data.get('id')}: {e}")
             return None
 

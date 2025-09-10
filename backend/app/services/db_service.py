@@ -27,8 +27,8 @@ class DatabaseService:
                 mongo_uri,
                 maxPoolSize=settings.max_pool_size,
                 minPoolSize=settings.min_pool_size,
-                tls=True,                          # enforce TLS
-                tlsAllowInvalidCertificates=False  # required for Atlas
+                tls=True,
+                tlsAllowInvalidCertificates=False
             )
             self.db = self.client.get_default_database()
             self.circuit_breaker = RedisCircuitBreaker(cache_service.redis, "database")
@@ -350,6 +350,8 @@ class DatabaseService:
         fulfillment = payload.get("fulfillment") or payload
         order_id = fulfillment.get("order_id")
         if not order_id: return
+        
+        # 1. Update your internal database
         tracking_numbers = fulfillment.get("tracking_numbers", [])
         await self.db.orders.update_one(
             {"id": order_id},
@@ -357,6 +359,42 @@ class DatabaseService:
              "$set": {"fulfillment_status": fulfillment.get("status", "fulfilled"), "last_fulfillment": fulfillment}},
             upsert=True
         )
+
+        # 2. Send the WhatsApp shipping notification to the customer
+        try:
+            order_doc = await self.db.orders.find_one({"id": order_id})
+            if not order_doc:
+                logger.warning(f"Could not find order {order_id} to send shipping update.")
+                return
+
+            customer_phone = (order_doc.get("raw", {}).get("customer") or {}).get("phone")
+            if not customer_phone:
+                return
+
+            customer_name = (order_doc.get("raw", {}).get("customer") or {}).get("first_name", "there")
+            order_number = order_doc.get("order_number")
+            tracking_url = (fulfillment.get("tracking_urls") or [""])[0]
+
+            if not tracking_url:
+                logger.warning(f"No tracking URL found for order {order_id}, cannot send update.")
+                return
+
+            # Parameters for the template body: {{1}} name, {{2}} order number
+            body_params = [customer_name, order_number]
+            # The parameter for the button is the unique part of the URL
+            button_param = tracking_url.split('/')[-1] if tracking_url else ""
+            
+            from app.services.whatsapp_service import whatsapp_service
+            await whatsapp_service.send_template_message(
+                to=customer_phone,
+                template_name="shipping_update_v1",
+                body_params=body_params,
+                button_url_param=button_param  # Pass the URL slug to the button
+            )
+            logger.info(f"Sent WhatsApp shipping update for order {order_id} to {customer_phone}")
+
+        except Exception as e:
+            logger.error(f"Failed to send shipping update for order {order_id}", exc_info=True)
 
 
 # Globally accessible instance

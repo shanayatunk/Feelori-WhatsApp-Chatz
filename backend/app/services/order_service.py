@@ -694,6 +694,8 @@ async def process_webhook_message(message: Dict[str, Any], webhook_data: Dict[st
 
         clean_phone = security_service.EnhancedSecurityService.sanitize_phone_number(from_number)
 
+        # This duplicate check can be simplified now with a dedicated message log
+        # but we'll leave it for now for extra safety.
         if await message_queue.is_duplicate_message(wamid, clean_phone):
             logger.info(f"Duplicate message {wamid} from {clean_phone} received, ignoring.")
             return
@@ -715,6 +717,23 @@ async def process_webhook_message(message: Dict[str, Any], webhook_data: Dict[st
         if not message_text:
             logger.info(f"Ignoring empty message from {clean_phone}")
             return
+            
+        # --- THIS IS THE NEW LOGIC ---
+        # Log the inbound message to the dedicated database collection
+        from app.services.db_service import db_service
+        from datetime import datetime
+
+        log_data = {
+            "wamid": wamid,
+            "phone": clean_phone,
+            "direction": "inbound",
+            "message_type": message_type,
+            "content": message_text,
+            "status": "received", # The initial status is 'received'
+            "timestamp": datetime.utcnow()
+        }
+        await db_service.log_message(log_data)
+        # --- END OF NEW LOGIC ---
 
         message_data = {
             "from_number": clean_phone,
@@ -724,7 +743,6 @@ async def process_webhook_message(message: Dict[str, Any], webhook_data: Dict[st
             "profile_name": profile_name,
             "quoted_wamid": quoted_wamid
         }
-
         await message_queue.add_message(message_data)
 
     except Exception as e:
@@ -732,25 +750,35 @@ async def process_webhook_message(message: Dict[str, Any], webhook_data: Dict[st
 
 
 async def handle_status_update(status_data: Dict):
-    """Processes a message status update from WhatsApp with retries."""
+    """Processes a message status update from WhatsApp using the message_logs collection."""
     try:
-        wamid, status, recipient_raw = status_data.get("id"), status_data.get("status"), status_data.get("recipient_id")
-        if not all([wamid, status, recipient_raw]): return
+        wamid, status = status_data.get("id"), status_data.get("status")
+        if not wamid or not status: return
         
-        recipient_phone = security_service.EnhancedSecurityService.sanitize_phone_number(recipient_raw)
-        for attempt in range(3):
-            result = await db_service.db.customers.update_one(
-                {"phone_number": recipient_phone, "conversation_history.wamid": wamid},
-                {"$set": {"conversation_history.$.status": status}}
+        from app.services.db_service import db_service
+        
+        # Now we look in the fast, dedicated collection
+        result = await db_service.db.message_logs.update_one(
+            {"wamid": wamid},
+            {"$set": {"status": status}}
+        )
+
+        if result.modified_count > 0:
+            logger.info(f"Message status updated for {wamid} to {status}")
+        else:
+            # It can take a moment for the sent message to be logged, so we retry once.
+            await asyncio.sleep(2)
+            result = await db_service.db.message_logs.update_one(
+                {"wamid": wamid},
+                {"$set": {"status": status}}
             )
             if result.modified_count > 0:
-                logger.info(f"Message status updated for {wamid} to {status}")
-                return
-            await asyncio.sleep(1.0)
-        logger.warning(f"Could not find message {wamid} to update status.")
+                logger.info(f"Message status updated for {wamid} to {status} after retry.")
+            else:
+                logger.warning(f"Could not find message {wamid} to update status in message_logs.")
+            
     except Exception as e:
         logger.error(f"Error handling status update: {e}", exc_info=True)
-
 async def handle_abandoned_checkout(payload: dict):
     """
     Receives an abandoned checkout webhook and saves it to the database.

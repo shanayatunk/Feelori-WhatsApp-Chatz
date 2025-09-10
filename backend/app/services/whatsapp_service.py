@@ -50,6 +50,32 @@ class WhatsAppService:
                 response_data = response.json()
                 message_id = response_data.get("messages", [{}])[0].get("id")
                 logger.info(f"WhatsApp message sent to {to_phone}, wamid: {message_id}")
+
+                # --- THIS IS THE NEW LOGIC ---
+                # Log the outbound message to the dedicated database collection
+                from app.services.db_service import db_service
+                from datetime import datetime
+                
+                # Determine content based on message type
+                content_payload = {}
+                if payload.get("type") == "text":
+                    content_payload = payload.get("text", {})
+                elif payload.get("type") == "template":
+                    content_payload = payload.get("template", {})
+                
+                log_data = {
+                    "wamid": message_id,
+                    "phone": to_phone,
+                    "direction": "outbound",
+                    "message_type": payload.get("type"),
+                    "content": json.dumps(content_payload),
+                    "status": "sent",
+                    "timestamp": datetime.utcnow()
+                }
+                # Use a background task to avoid slowing down the response
+                asyncio.create_task(db_service.log_message(log_data))
+                # --- END OF NEW LOGIC ---
+                
                 return message_id
             else:
                 error_data = response.json()
@@ -63,6 +89,7 @@ class WhatsAppService:
             logger.error(f"whatsapp_send_error to {to_phone}: {e}", exc_info=True)
             await alerting_service.send_critical_alert("WhatsApp send message unexpected error", {"phone": to_phone, "error": str(e)})
             return None
+
 
     # --- THIS FUNCTION IS NOW CORRECTED ---
     async def send_message(self, to_phone: str, message: str) -> Optional[str]:

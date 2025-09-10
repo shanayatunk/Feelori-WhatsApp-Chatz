@@ -47,6 +47,7 @@ class DatabaseService:
             await self.db.security_events.create_index([("timestamp", -1)])
             await self.db.rules.create_index("name", unique=True)
             await self.db.strings.create_index("key", unique=True)
+            await self.db.message_logs.create_index([("wamid", 1)], unique=True)
             logger.info("Database indexes created successfully.")
         except Exception as e:
             logger.error(f"Failed to create database indexes: {e}")
@@ -303,6 +304,12 @@ class DatabaseService:
         results = await self.db.orders.aggregate(pipeline).to_list(None)
         status_counts = {item['_id']: item['count'] for item in results}
         return {"status_counts": status_counts}
+
+# Log Messages
+
+    async def log_message(self, message_data: dict):
+        """Logs an inbound or outbound message to its own collection."""
+        await self.db.message_logs.insert_one(message_data)
 
     # --- Webhook Processing ---
     async def process_new_order_webhook(self, payload: dict):

@@ -64,7 +64,8 @@ class WhatsAppService:
             await alerting_service.send_critical_alert("WhatsApp send message unexpected error", {"phone": to_phone, "error": str(e)})
             return None
 
-    async def send_message(self, to_phone: str, message: str):
+    # --- THIS FUNCTION IS NOW CORRECTED ---
+    async def send_message(self, to_phone: str, message: str) -> Optional[str]:
         """Sends a simple text message."""
         clean_phone = re.sub(r"[^\d+]", "", to_phone)
         if not clean_phone.startswith("+"):
@@ -77,9 +78,10 @@ class WhatsAppService:
             "type": "text",
             "text": {"body": message[:4096]}
         }
-        await self.send_whatsapp_request(payload)
+        return await self.send_whatsapp_request(payload)
 
-    async def send_template_message(self, to: str, template_name: str, body_params: list, button_url_param: str = None):
+    # --- THIS FUNCTION IS NOW CORRECTED ---
+    async def send_template_message(self, to: str, template_name: str, body_params: list, button_url_param: str = None) -> Optional[str]:
         """Sends a pre-approved WhatsApp message template with optional button parameters."""
         clean_phone = re.sub(r"[^\d+]", "", to)
         if not clean_phone.startswith("+"):
@@ -108,8 +110,7 @@ class WhatsAppService:
                 "components": components
             }
         }
-        await self.send_whatsapp_request(payload)
-
+        return await self.send_whatsapp_request(payload)
 
     async def get_catalog_id(self) -> Optional[str]:
         """Fetches and caches the WhatsApp Business catalog ID."""

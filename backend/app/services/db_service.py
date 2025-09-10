@@ -335,16 +335,46 @@ class DatabaseService:
             "fulfillment_status_internal": initial_status, "last_synced": datetime.utcnow()
         }
         await self.db.orders.update_one({"id": order_id}, {"$set": order_doc}, upsert=True)
-        # Assuming send_packing_alert_background is defined in another service (e.g., order_service)
+        
+        # 1. Send an alert to the packing team
         from app.services.order_service import send_packing_alert_background
         await send_packing_alert_background(payload)
+        
+        # 2. Send an order confirmation template to the customer
+        customer_phone = (payload.get("customer") or {}).get("phone")
+        if customer_phone:
+            try:
+                customer_name = (payload.get("customer") or {}).get("first_name", "there")
+                order_number = payload.get("order_number")
+                order_url = payload.get("order_status_url")
+
+                body_params = [customer_name, order_number]
+                button_param = order_url.split('/')[-1] if order_url else ""
+                
+                from app.services.whatsapp_service import whatsapp_service
+                wamid = await whatsapp_service.send_template_message(
+                    to=customer_phone,
+                    template_name="order_confirmation_v1",
+                    body_params=body_params,
+                    button_url_param=button_param
+                )
+                
+                # Save the wamid to the conversation history
+                if wamid:
+                    await self.update_conversation_history(
+                        phone_number=customer_phone,
+                        message="[Auto-reply: Order Confirmation]",
+                        response="Order confirmation template sent.",
+                        wamid=wamid
+                    )
+            except Exception as e:
+                logger.error("Failed to send customer order confirmation", exc_info=True)
         
     async def process_updated_order_webhook(self, payload: dict):
         order_id = payload.get("id")
         if not order_id: return
         patch = {"raw": payload, "last_synced": datetime.utcnow()}
-        # Add fields to patch as needed
-        await self.db.orders.update_one({"id": order_id}, {"$set": patch}, upsert=True)
+        await self.db.orders.update_one({"id": order_id}, {"$set": patch})
         
     async def process_fulfillment_webhook(self, payload: dict):
         fulfillment = payload.get("fulfillment") or payload
@@ -379,18 +409,25 @@ class DatabaseService:
                 logger.warning(f"No tracking URL found for order {order_id}, cannot send update.")
                 return
 
-            # Parameters for the template body: {{1}} name, {{2}} order number
             body_params = [customer_name, order_number]
-            # The parameter for the button is the unique part of the URL
             button_param = tracking_url.split('/')[-1] if tracking_url else ""
             
             from app.services.whatsapp_service import whatsapp_service
-            await whatsapp_service.send_template_message(
+            wamid = await whatsapp_service.send_template_message(
                 to=customer_phone,
                 template_name="shipping_update_v1",
                 body_params=body_params,
-                button_url_param=button_param  # Pass the URL slug to the button
+                button_url_param=button_param
             )
+
+            # Save the wamid to the conversation history
+            if wamid:
+                await self.update_conversation_history(
+                    phone_number=customer_phone,
+                    message="[Auto-reply: Shipping Update]",
+                    response="Shipping update template sent.",
+                    wamid=wamid
+                )
             logger.info(f"Sent WhatsApp shipping update for order {order_id} to {customer_phone}")
 
         except Exception as e:

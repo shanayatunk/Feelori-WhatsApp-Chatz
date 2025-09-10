@@ -82,21 +82,32 @@ class ShopifyService:
             for edge in edges:
                 node = edge.get("node", {})
                 variants_edge = node.get("variants", {}).get("edges", [])
-                if not variants_edge: continue
+                if not variants_edge:
+                    continue
+
                 variant_node = variants_edge[0].get("node", {})
                 price_info = variant_node.get("priceV2", {})
 
+                # This is the new logic to determine availability
+                inventory = variant_node.get("inventoryQuantity")
+                availability = "in_stock" if inventory is not None and inventory > 0 else "out_of_stock"
+
                 products.append(Product(
-                    id=node.get("id"), title=node.get("title"),
+                    id=node.get("id"),
+                    title=node.get("title"),
                     description=node.get("description", "No description available."),
                     price=float(price_info.get("amount", 0.0)),
-                    variant_id=variant_node.get("id"), sku=variant_node.get("sku"),
+                    variant_id=variant_node.get("id"),
+                    sku=variant_node.get("sku"),
                     currency=price_info.get("currencyCode", "INR"),
                     image_url=node.get("featuredImage", {}).get("url"),
-                    handle=node.get("handle", ""), tags=node.get("tags", [])
+                    handle=node.get("handle", ""),
+                    tags=node.get("tags", []),
+                    availability=availability  # Pass the calculated availability
                 ))
-            
+
             unfiltered_count = len(products)
+            # ... (rest of the function is correct) ...
             if filters and "price" in filters and products:
                 price_condition = filters["price"]
                 if "lessThan" in price_condition:
@@ -108,6 +119,7 @@ class ShopifyService:
         except Exception as e:
             logger.error(f"shopify_get_products_error: {e}", exc_info=True)
             return [], 0
+
 
     async def get_product_by_id(self, product_id: str) -> Optional[Product]:
         """Gets a single product by its GraphQL GID."""
@@ -299,7 +311,7 @@ class ShopifyService:
             query ($query: String!, $limit: Int!, $sortKey: ProductSortKeys!) {
               products(first: $limit, query: $query, sortKey: $sortKey) {
                 edges { node { id title handle description tags featuredImage { url }
-                    variants(first: 1) { edges { node { id sku priceV2 { amount currencyCode } } } }
+                    variants(first: 1) { edges { node { id sku priceV2 { amount currencyCode } inventoryQuantity } } }
                 }}
               }
             }""", "variables": {"query": query, "limit": limit, "sortKey": sort_key}

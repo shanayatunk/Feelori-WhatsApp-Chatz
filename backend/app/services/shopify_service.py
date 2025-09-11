@@ -230,9 +230,7 @@ class ShopifyService:
         rest_url = f"https://{self.store_url}/admin/api/2025-07/orders.json"
         headers = {"X-Shopify-Access-Token": self.access_token}
 
-        # --- THIS IS THE FIX ---
-        # Fetch the 50 most recent orders regardless of phone number.
-        # We will filter them ourselves because the 'phone' parameter is unreliable.
+        # Fetch the 50 most recent orders regardless of phone number
         params = {
             "status": "any",
             "limit": max_fetch,
@@ -246,30 +244,42 @@ class ShopifyService:
             resp.raise_for_status()
             orders = resp.json().get("orders", []) or []
 
-            # --- Your existing security filtering logic (which is correct) ---
+            # --- DEBUG LOGGING ---
+            logger.info(f"DEBUG: Input phone_number: '{phone_number}'")
+            logger.info(f"DEBUG: Sanitized user phone: '{sanitized_user_phone}'")
+            logger.info(f"DEBUG: Total orders fetched: {len(orders)}")
+
+            for i, o in enumerate(orders):
+                order_name = o.get("name", "Unknown")
+                raw_phone = o.get("phone", "")
+                shipping_phone = (o.get("shipping_address") or {}).get("phone", "")
+                billing_phone = (o.get("billing_address") or {}).get("phone", "")
+                
+                logger.info(f"DEBUG Order {i+1} ({order_name}):")
+                logger.info(f"  - Raw phone: '{raw_phone}'")
+                logger.info(f"  - Shipping phone: '{shipping_phone}'") 
+                logger.info(f"  - Billing phone: '{billing_phone}'")
+                
+                for field_name, phone_value in [("phone", raw_phone), ("shipping", shipping_phone), ("billing", billing_phone)]:
+                    if phone_value:
+                        sanitized = EnhancedSecurityService.sanitize_phone_number(phone_value)
+                        matches = sanitized.endswith(sanitized_user_phone)
+                        logger.info(f"  - {field_name}: '{phone_value}' -> '{sanitized}' -> matches: {matches}")
+
+            # --- Security filtering logic ---
             filtered_orders = []
             for o in orders:
                 order_phone = (
                     o.get("phone")
-                    or (o.get("shipping_address") or {}).get("phone")  # Also check shipping_address
+                    or (o.get("shipping_address") or {}).get("phone")
                     or (o.get("billing_address") or {}).get("phone")
                     or ""
                 )
                 sanitized_order_phone = EnhancedSecurityService.sanitize_phone_number(order_phone)
-                # Use endswith to account for differences like "+91" vs "91"
                 if sanitized_order_phone and sanitized_order_phone.endswith(sanitized_user_phone):
-                    filtered_orders.append(o)
+                    filtered_orders.appen_
 
-            await cache_service.set(
-                cache_key, json.dumps(filtered_orders, default=str), ttl=120
-            )
-            logger.info(
-                f"Shopify orders found for {phone_number}: {len(filtered_orders)}"
-            )
-            return filtered_orders
-        except Exception as e:
-            logger.error(f"Shopify search_orders_by_phone error: {e}", exc_info=True)
-            return []
+    
 
     async def get_order_by_name(self, order_name: str) -> Optional[Dict]:
         """

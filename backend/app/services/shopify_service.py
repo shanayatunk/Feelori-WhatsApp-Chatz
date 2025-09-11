@@ -277,7 +277,18 @@ class ShopifyService:
                 )
                 sanitized_order_phone = EnhancedSecurityService.sanitize_phone_number(order_phone)
                 if sanitized_order_phone and sanitized_order_phone.endswith(sanitized_user_phone):
-                    filtered_orders.appen_
+                    filtered_orders.append(o)
+
+            await cache_service.set(
+                cache_key, json.dumps(filtered_orders, default=str), ttl=120
+            )
+            logger.info(f"Shopify orders found for {phone_number}: {len(filtered_orders)}")
+            return filtered_orders
+
+        except Exception as e:
+            logger.error(f"Shopify search_orders_by_phone error: {e}", exc_info=True)
+            return []
+
 
     
 

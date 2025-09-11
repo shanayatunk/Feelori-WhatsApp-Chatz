@@ -78,3 +78,11 @@ INTERACTIVE_PREFIXES = {
     "option_": "interactive_button_reply",
     "product_": "product_detail"
 }
+
+# Categories we currently do NOT sell, for pre-search blocking
+UNAVAILABLE_CATEGORIES = {
+    "bracelet",
+    "bangle",
+    "ring",
+    "hair extension"
+}

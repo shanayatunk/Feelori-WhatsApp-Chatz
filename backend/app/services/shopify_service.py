@@ -215,35 +215,55 @@ class ShopifyService:
     # --- Order Management ---
     
     async def search_orders_by_phone(self, phone_number: str, max_fetch: int = 10) -> List[Dict]:
-        """Search for recent orders using a customer's phone number via the REST API."""
+        """Search for recent orders using a customer's phone number via the REST API.
+        Ensures strict filtering to prevent leaking other customers' orders.
+        """
         cache_key = f"shopify:orders_by_phone:{phone_number}"
         cached = await cache_service.get(cache_key)
         if cached:
             return json.loads(cached)
 
         rest_url = f"https://{self.store_url}/admin/api/2025-07/orders.json"
-
-        # --- THIS IS THE FIX ---
-        # We now pass the phone number directly to the Shopify API for an efficient search.
-        params = {
-            "status": "any",
-            "phone": phone_number,
-            "limit": max_fetch
-        }
-        # --- END OF FIX ---
-
         headers = {"X-Shopify-Access-Token": self.access_token}
 
+        params = {
+            "status": "any",
+            "limit": max_fetch,
+            # Shopify may or may not respect "phone" reliably — we filter ourselves too
+            "phone": phone_number,
+        }
+
         try:
-            resp = await self.resilient_api_call(self.http_client.get, rest_url, params=params, headers=headers)
+            resp = await self.resilient_api_call(
+                self.http_client.get, rest_url, params=params, headers=headers
+            )
             resp.raise_for_status()
             orders = resp.json().get("orders", []) or []
 
-            await cache_service.set(cache_key, json.dumps(orders, default=str), ttl=120)
-            logger.info(f"Shopify orders found for {phone_number}: {len(orders)}")
-            return orders
+            # --- SECURITY FIX ---
+            # Normalize phone numbers and strictly filter to guarantee ownership
+            sanitized_user_phone = EnhancedSecurityService.sanitize_phone_number(phone_number)
+            filtered_orders = []
+            for o in orders:
+                order_phone = (
+                    o.get("phone")
+                    or (o.get("billing_address") or {}).get("phone")
+                    or ""
+                )
+                sanitized_order_phone = EnhancedSecurityService.sanitize_phone_number(order_phone)
+                # Use endswith to account for differences like "+91" vs "91"
+                if sanitized_order_phone.endswith(sanitized_user_phone):
+                    filtered_orders.append(o)
+
+            await cache_service.set(
+                cache_key, json.dumps(filtered_orders, default=str), ttl=120
+            )
+            logger.info(
+                f"Shopify orders found for {phone_number}: {len(filtered_orders)}"
+            )
+            return filtered_orders
         except Exception as e:
-            logger.error(f"Shopify search_orders_by_phone error: {e}")
+            logger.error(f"Shopify search_orders_by_phone error: {e}", exc_info=True)
             return []
 
 

@@ -117,7 +117,8 @@ class QueryBuilder:
                 message_for_text_search = message_for_text_search.replace(word, "")
         keywords = self._extract_keywords(message_for_text_search)
         text_query = self._build_prioritized_query(keywords)
-        return self._apply_exclusions(text_query, keywords), price_filter
+        return text_query, price_filter
+        #return self._apply_exclusions(text_query, keywords), price_filter
 
 class QuestionDetector:
     """Detects if a message is a question."""
@@ -210,6 +211,8 @@ def _analyze_interactive_intent(message: str) -> str:
 
 def analyze_text_intent(message_lower: str) -> str:
     """Analyzes intent for text messages using rules from the database."""
+    if re.fullmatch(r'#?\d{4,}', message_lower.strip()):
+        return "order_detail_inquiry"
     message_words = set(default_rules.WORD_RE.findall(message_lower))
     
     # Use the dynamic rules from the service
@@ -263,6 +266,7 @@ async def route_message(intent: str, phone_number: str, message: str, customer: 
         "more_results": handle_more_results,
         "human_escalation": handle_human_escalation,
         "order_inquiry": handle_order_inquiry,
+        "order_detail_inquiry": handle_order_detail_inquiry,
         "support": handle_support_request,
         "shipping_inquiry": handle_shipping_inquiry,
         "contact_inquiry": handle_contact_inquiry,
@@ -287,6 +291,19 @@ async def handle_product_search(message: str, customer: Dict, **kwargs) -> Optio
     try:
         config = SearchConfig()
         query_builder = QueryBuilder(config, customer=customer)
+        
+        # --- THIS IS THE NEW LOGIC ---
+        # First, extract keywords to check for unavailable items.
+        keywords = query_builder._extract_keywords(message)
+        
+        # Check if any keyword is in our unavailable list.
+        for keyword in keywords:
+            if keyword in default_rules.UNAVAILABLE_CATEGORIES:
+                # If it is, call the specific handler for unavailable products.
+                return await _handle_no_results(customer, message)
+        # --- END OF NEW LOGIC ---
+
+        # If the category is available, proceed with building the query and searching.
         text_query, price_filter = query_builder.build_query_parts(message)
         
         if not text_query and not price_filter:
@@ -311,6 +328,35 @@ async def handle_product_search(message: str, customer: Dict, **kwargs) -> Optio
     except Exception as e:
         logger.error(f"Error in product search: {e}", exc_info=True)
         return await _handle_error(customer)
+
+async def handle_order_detail_inquiry(message: str, customer: Dict, **kwargs) -> Optional[str]:
+    """
+    Handles a request for details about a specific order number.
+    """
+    order_number_match = re.search(r'#?(\d{4,})', message)
+    if not order_number_match:
+        return await handle_general_inquiry(message, customer) # Fallback if no number is found
+
+    order_number = order_number_match.group(1)
+    
+    # First, try to find the full order details from the cached list
+    phone_number = customer["phone_number"]
+    orders_cache_key = f"shopify:orders_by_phone:{phone_number}"
+    cached_orders_raw = await cache_service.get(orders_cache_key)
+    
+    order_to_display = None
+    if cached_orders_raw:
+        cached_orders = json.loads(cached_orders_raw)
+        order_to_display = next((o for o in cached_orders if str(o.get("order_number")) == order_number), None)
+
+    # If not in cache, fetch directly from Shopify (optional but recommended)
+    if not order_to_display:
+        # Note: This requires a new function in shopify_service to get an order by number.
+        # For now, we'll rely on the cache. If it's not found, we inform the user.
+        return "I couldn't find the details for that specific order right now. Please try asking for your orders again first."
+
+    # Format and return the detailed response
+    return _format_single_order(order_to_display)
 
 async def handle_show_unfiltered_products(customer: Dict, **kwargs) -> Optional[str]:
     """Shows products from the last search, ignoring any price filters."""

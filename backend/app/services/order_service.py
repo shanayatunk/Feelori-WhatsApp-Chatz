@@ -78,17 +78,20 @@ class QueryBuilder:
         normalized = [default_rules.PLURAL_MAPPINGS.get(w, w) for w in words]
         return list(dict.fromkeys(self._fuzzy_correct_keywords(normalized)))
 
+    # --- THIS IS THE CORRECTED FUNCTION ---
     def _build_prioritized_query(self, keywords: List[str]) -> str:
-        if not keywords: return ""
-        field_clauses = [f"(title:{kw}* OR tag:{kw} OR product_type:{kw})" for kw in keywords]
-        return " OR ".join(field_clauses)
+        """Builds a simple AND-based search query."""
+        if not keywords:
+            return ""
+        # This creates a simpler, more effective query like "ruby AND necklace"
+        return " AND ".join(keywords)
 
     def _apply_exclusions(self, query: str, keywords: List[str]) -> str:
         if not query or not keywords: return query
         primary_category = keywords[0]
         exclusions = self.config.CATEGORY_EXCLUSIONS.get(primary_category, [])
         if exclusions:
-            exclusion_query = ' AND NOT ' + ' AND NOT '.join([f"(title:{ex} OR tag:{ex} OR product_type:{ex})" for ex in exclusions])
+            exclusion_query = ' AND NOT ' + ' AND NOT '.join(exclusions)
             query += exclusion_query
             logger.info(f"Applied query exclusions for '{primary_category}': {exclusions}")
         return query

@@ -214,11 +214,15 @@ class ShopifyService:
 
     # --- Order Management ---
     
-    async def search_orders_by_phone(self, phone_number: str, max_fetch: int = 10) -> List[Dict]:
+# In /app/services/shopify_service.py
+
+    async def search_orders_by_phone(self, phone_number: str, max_fetch: int = 50) -> List[Dict]:
         """Search for recent orders using a customer's phone number via the REST API.
         Ensures strict filtering to prevent leaking other customers' orders.
         """
-        cache_key = f"shopify:orders_by_phone:{phone_number}"
+        # Using a sanitized phone number for the cache key is more consistent.
+        sanitized_user_phone = EnhancedSecurityService.sanitize_phone_number(phone_number)
+        cache_key = f"shopify:orders_by_phone:{sanitized_user_phone}"
         cached = await cache_service.get(cache_key)
         if cached:
             return json.loads(cached)
@@ -226,11 +230,13 @@ class ShopifyService:
         rest_url = f"https://{self.store_url}/admin/api/2025-07/orders.json"
         headers = {"X-Shopify-Access-Token": self.access_token}
 
+        # --- THIS IS THE FIX ---
+        # Fetch the 50 most recent orders regardless of phone number.
+        # We will filter them ourselves because the 'phone' parameter is unreliable.
         params = {
             "status": "any",
             "limit": max_fetch,
-            # Shopify may or may not respect "phone" reliably — we filter ourselves too
-            "phone": phone_number,
+            "order": "processed_at desc"  # Fetch the most recent first
         }
 
         try:
@@ -240,19 +246,18 @@ class ShopifyService:
             resp.raise_for_status()
             orders = resp.json().get("orders", []) or []
 
-            # --- SECURITY FIX ---
-            # Normalize phone numbers and strictly filter to guarantee ownership
-            sanitized_user_phone = EnhancedSecurityService.sanitize_phone_number(phone_number)
+            # --- Your existing security filtering logic (which is correct) ---
             filtered_orders = []
             for o in orders:
                 order_phone = (
                     o.get("phone")
+                    or (o.get("shipping_address") or {}).get("phone")  # Also check shipping_address
                     or (o.get("billing_address") or {}).get("phone")
                     or ""
                 )
                 sanitized_order_phone = EnhancedSecurityService.sanitize_phone_number(order_phone)
                 # Use endswith to account for differences like "+91" vs "91"
-                if sanitized_order_phone.endswith(sanitized_user_phone):
+                if sanitized_order_phone and sanitized_order_phone.endswith(sanitized_user_phone):
                     filtered_orders.append(o)
 
             await cache_service.set(
@@ -266,6 +271,48 @@ class ShopifyService:
             logger.error(f"Shopify search_orders_by_phone error: {e}", exc_info=True)
             return []
 
+    async def get_order_by_name(self, order_name: str) -> Optional[Dict]:
+        """
+        Gets a single order by its name (e.g., "#1037").
+        The name format should include the '#'.
+        """
+        # Ensure correct format
+        if not order_name.startswith('#'):
+            order_name = f"#{order_name}"
+
+        cache_key = f"shopify:order_by_name:{order_name}"
+        cached = await cache_service.get(cache_key)
+        if cached:
+            return json.loads(cached)
+
+        rest_url = f"https://{self.store_url}/admin/api/2025-07/orders.json"
+        headers = {"X-Shopify-Access-Token": self.access_token}
+
+        params = {
+            "name": order_name,
+            "status": "any"
+        }
+
+        try:
+            resp = await self.resilient_api_call(
+                self.http_client.get, rest_url, params=params, headers=headers
+            )
+            resp.raise_for_status()
+            orders = resp.json().get("orders", [])
+            
+            if orders:
+                order = orders[0]
+                await cache_service.set(
+                    cache_key, json.dumps(order, default=str), ttl=300
+                )  # cache for 5 minutes
+                logger.info(f"Found order {order_name} via API.")
+                return order
+
+            logger.warning(f"Could not find order with name {order_name}.")
+            return None
+        except Exception as e:
+            logger.error(f"Shopify get_order_by_name error for {order_name}: {e}", exc_info=True)
+            return None
 
     async def fulfill_order(self, order_id: int, tracking_number: str, packer_name: str, carrier: str = "India Post") -> Tuple[bool, Optional[int]]:
         """Fulfills an order using the Fulfillment Orders API."""

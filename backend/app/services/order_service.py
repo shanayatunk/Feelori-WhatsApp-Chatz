@@ -336,34 +336,119 @@ async def handle_product_search(message: str, customer: Dict, **kwargs) -> Optio
         logger.error(f"Error in product search: {e}", exc_info=True)
         return await _handle_error(customer)
 
+def _format_single_order(order: Dict, detailed: bool = False) -> str:
+    """
+    Formats order details into a user-friendly message.
+
+    Args:
+        order: Shopify order dictionary
+        detailed: If True, returns a full detailed breakdown.
+                  If False, returns a concise summary (for lists).
+    """
+    order_name = order.get("name") or f"#{order.get('order_number', 'N/A')}"
+    
+    # --- Date Formatting ---
+    try:
+        created_at = order.get("created_at") or order.get("processed_at")
+        order_date = datetime.fromisoformat(created_at.replace("Z", "+00:00")).strftime("%d %b %Y")
+    except Exception:
+        order_date = "N/A"
+
+    # --- Statuses ---
+    fulfillment_status = (order.get("fulfillment_status") or "unfulfilled").replace("_", " ").title()
+    financial_status = (order.get("financial_status") or "pending").replace("_", " ").title()
+
+    # --- Price ---
+    total_price = (
+        f"{order.get('current_total_price_set', {}).get('shop_money', {}).get('amount', order.get('current_total_price', 'N/A'))} "
+        f"{order.get('currency', '')}"
+    )
+
+    # --- Tracking Info ---
+    tracking_info = ""
+    if order.get("fulfillments"):
+        ff = order["fulfillments"][0]
+        tracking_info = f"\n🚚 Tracking: {ff.get('tracking_number')} via {ff.get('tracking_company')}"
+
+    if not detailed:
+        # --- Concise summary (for multiple orders) ---
+        return (
+            f"🛍️ Order {order_name}\n"
+            f"📅 Placed: {order_date}\n"
+            f"💰 Total: {total_price}\n"
+            f"📋 Status: *{fulfillment_status}*{tracking_info}\n"
+        )
+
+    # --- Detailed breakdown (for single order view) ---
+    line_items = [f"- {item['name']} (x{item['quantity']})" for item in order.get("line_items", [])]
+    items_str = "\n".join(line_items) if line_items else "No items listed"
+
+    return (
+        f"Order *{order_name}* Details:\n\n"
+        f"🗓️ Placed on: {order_date}\n"
+        f"💰 Payment: {financial_status}\n"
+        f"🚚 Fulfillment: {fulfillment_status}\n"
+        f"🛍️ Items:\n{items_str}\n\n"
+        f"Total: *{total_price}*{tracking_info}"
+    )
+
+
 async def handle_order_detail_inquiry(message: str, customer: Dict, **kwargs) -> Optional[str]:
     """
     Handles a request for details about a specific order number.
+    It checks for an order number, verifies ownership, and formats a detailed response.
     """
     order_number_match = re.search(r'#?(\d{4,})', message)
     if not order_number_match:
-        return await handle_general_inquiry(message, customer) # Fallback if no number is found
+        # Fallback to the general order inquiry if no specific number is found.
+        return await handle_order_inquiry(customer["phone_number"], customer)
 
     order_number = order_number_match.group(1)
-    
-    # First, try to find the full order details from the cached list
     phone_number = customer["phone_number"]
+    order_to_display = None
+
+    # 1. First, try cache
     orders_cache_key = f"shopify:orders_by_phone:{phone_number}"
     cached_orders_raw = await cache_service.get(orders_cache_key)
-    
-    order_to_display = None
     if cached_orders_raw:
         cached_orders = json.loads(cached_orders_raw)
-        order_to_display = next((o for o in cached_orders if str(o.get("order_number")) == order_number), None)
+        order_to_display = next(
+            (o for o in cached_orders if str(o.get("order_number")) == order_number),
+            None
+        )
 
-    # If not in cache, fetch directly from Shopify (optional but recommended)
+    # 2. If not cached, fetch from Shopify
     if not order_to_display:
-        # Note: This requires a new function in shopify_service to get an order by number.
-        # For now, we'll rely on the cache. If it's not found, we inform the user.
-        return "I couldn't find the details for that specific order right now. Please try asking for your orders again first."
+        try:
+            order_to_display = await shopify_service.get_order_by_name(f"#{order_number}")
+        except Exception as e:
+            logger.error(f"Error fetching order #{order_number} by name: {e}", exc_info=True)
+            return await string_service.get_string("ORDER_API_ERROR")
 
-    # Format and return the detailed response
-    return _format_single_order(order_to_display)
+    if not order_to_display:
+        return await string_service.get_string("ORDER_NOT_FOUND_BY_ID", order_number=order_number)
+
+    # 3. 🚨 SECURITY CHECK: Verify ownership
+    order_phone = (
+        order_to_display.get("phone")
+        or (order_to_display.get("shipping_address") or {}).get("phone")
+        or (order_to_display.get("billing_address") or {}).get("phone")
+        or ""
+    )
+    
+    # --- THIS IS THE FIX ---
+    # Sanitize both numbers and compare them directly.
+    sanitized_order_phone = EnhancedSecurityService.sanitize_phone_number(order_phone)
+    sanitized_customer_phone = EnhancedSecurityService.sanitize_phone_number(phone_number)
+
+    if not sanitized_order_phone.endswith(sanitized_customer_phone):
+        logger.warning(f"SECURITY: Phone mismatch for order #{order_number}. Requester: {phone_number}")
+        return await string_service.get_string("ORDER_PHONE_MISMATCH", order_number=order_number)
+    # --- END OF FIX ---
+
+    # 4. Return formatted details
+    return _format_single_order(order_to_display, detailed=True)
+
 
 async def handle_show_unfiltered_products(customer: Dict, **kwargs) -> Optional[str]:
     """Shows products from the last search, ignoring any price filters."""
@@ -713,17 +798,6 @@ def _perform_security_check(phone_number: str, customer: Dict) -> Optional[str]:
         if not re.sub(r'\D', '', number).endswith(sanitized_sender_phone):
             return "For your security, I can only check the order status for the phone number you're currently using."
     return None
-
-def _format_single_order(order: Dict) -> str:
-    """Formats a single order into a readable string."""
-    order_date = datetime.fromisoformat(order["created_at"].replace("Z", "+00:00")).strftime("%d %b %Y") if order.get("created_at") else "N/A"
-    status = (order.get("fulfillment_status") or "unfulfilled").replace("_", " ").title()
-    total = f"{order.get('current_total_price')} {order.get('currency')}"
-    tracking_info = ""
-    if order.get("fulfillments"):
-        ff = order["fulfillments"][0]
-        tracking_info = f"\n🚚 Tracking: {ff.get('tracking_number')} via {ff.get('tracking_company')}"
-    return f"🛍️ Order #{order.get('order_number')}\n📅 Placed: {order_date}\n💰 Total: {total}\n📋 Status: *{status}*{tracking_info}\n"
 
 def _format_orders_response(orders: List[Dict]) -> str:
     """Formats a list of orders into a single response string."""

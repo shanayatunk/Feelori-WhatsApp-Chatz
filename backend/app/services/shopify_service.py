@@ -214,44 +214,38 @@ class ShopifyService:
 
     # --- Order Management ---
     
-    async def search_orders_by_phone(self, phone_number: str, max_fetch: int = 250) -> List[Dict]:
+    async def search_orders_by_phone(self, phone_number: str, max_fetch: int = 10) -> List[Dict]:
         """Search for recent orders using a customer's phone number via the REST API."""
         cache_key = f"shopify:orders_by_phone:{phone_number}"
         cached = await cache_service.get(cache_key)
-        if cached: return json.loads(cached)
-
-        def digits_of(s: Optional[str]) -> str:
-            return re.sub(r'\D', '', s) if s else ""
-
-        user_digits = digits_of(phone_number)
-        last10 = user_digits[-10:] if len(user_digits) >= 10 else user_digits
+        if cached:
+            return json.loads(cached)
 
         rest_url = f"https://{self.store_url}/admin/api/2025-07/orders.json"
-        params = {"status": "any", "limit": min(max_fetch, 250)}
+
+        # --- THIS IS THE FIX ---
+        # We now pass the phone number directly to the Shopify API for an efficient search.
+        params = {
+            "status": "any",
+            "phone": phone_number,
+            "limit": max_fetch
+        }
+        # --- END OF FIX ---
+
         headers = {"X-Shopify-Access-Token": self.access_token}
 
         try:
             resp = await self.resilient_api_call(self.http_client.get, rest_url, params=params, headers=headers)
             resp.raise_for_status()
-            all_orders = resp.json().get("orders", []) or []
-            matching = []
+            orders = resp.json().get("orders", []) or []
 
-            for order in all_orders:
-                customer_phone = (order.get("customer") or {}).get("phone")
-                shipping_phone = (order.get("shipping_address") or {}).get("phone")
-                matched = False
-                for candidate in (customer_phone, shipping_phone):
-                    if candidate and last10 and digits_of(candidate).endswith(last10):
-                        matched = True; break
-                if matched:
-                    matching.append(order)
-            
-            await cache_service.set(cache_key, json.dumps(matching, default=str), ttl=120)
-            logger.info(f"Shopify orders found for {phone_number}: {len(matching)}")
-            return matching
+            await cache_service.set(cache_key, json.dumps(orders, default=str), ttl=120)
+            logger.info(f"Shopify orders found for {phone_number}: {len(orders)}")
+            return orders
         except Exception as e:
             logger.error(f"Shopify search_orders_by_phone error: {e}")
             return []
+
 
     async def fulfill_order(self, order_id: int, tracking_number: str, packer_name: str, carrier: str = "India Post") -> Tuple[bool, Optional[int]]:
         """Fulfills an order using the Fulfillment Orders API."""

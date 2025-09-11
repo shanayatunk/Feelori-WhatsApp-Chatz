@@ -50,7 +50,18 @@ async def start_packing(order_id: str, request: Request, current_user: dict = De
 async def hold_order(order_id: str, hold_data: HoldOrderRequest, request: Request, current_user: dict = Depends(verify_jwt_token)):
     """Marks an order as 'on_hold' with a reason."""
     security_service.EnhancedSecurityService.validate_admin_session(request, current_user)
-    await db_service.update_order_packing_status(order_id, "on_hold", {"hold_reason": hold_data.reason})
+    
+    # --- THIS IS THE FIX ---
+    # Call the correct db_service.hold_order function with the right parameters.
+    # We also convert the order_id from a string to an integer here.
+    await db_service.hold_order(
+        order_id=int(order_id), 
+        reason=hold_data.reason, 
+        notes=hold_data.notes, 
+        skus=hold_data.problem_item_skus
+    )
+    # --- END OF FIX ---
+    
     return APIResponse(success=True, message="Order put on hold.", version="v1")
 
 # API endpoint to fulfill an order

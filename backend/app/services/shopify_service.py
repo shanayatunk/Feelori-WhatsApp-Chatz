@@ -85,7 +85,7 @@ class ShopifyService:
                 variant_node = variants_edge[0].get("node", {})
                 price_info = variant_node.get("priceV2", {})
 
-                # --- CORRECTED THIS LINE ---
+                # Use `quantityAvailable` for Storefront API results
                 inventory = variant_node.get("quantityAvailable")
                 availability = "in_stock" if inventory is not None and inventory > 0 else "out_of_stock"
 
@@ -118,15 +118,14 @@ class ShopifyService:
 
 
     async def get_product_by_id(self, product_id: str) -> Optional[Product]:
-        """Gets a single product by its GraphQL GID."""
-        # --- CORRECTED THIS QUERY ---
+        """Gets a single product by its GraphQL GID using the Admin API."""
         gql_query = """
         query($id: ID!) {
           node(id: $id) { ... on Product { ...productFields } }
         }
         fragment productFields on Product { 
             id title handle bodyHtml productType tags 
-            variants(first: 1){edges{node{id price quantityAvailable}}} 
+            variants(first: 1){edges{node{id price inventoryQuantity}}} 
             images(first: 1){edges{node{originalSrc}}}
         }
         """
@@ -140,13 +139,12 @@ class ShopifyService:
             return None
 
     async def get_product_variants(self, product_id: str) -> List[Dict]:
-        """Gets all variants (e.g., sizes, colors) for a given product ID."""
-        # --- CORRECTED THIS QUERY ---
+        """Gets all variants for a given product ID using the Admin API."""
         gql_query = """
         query($id: ID!) {
           node(id: $id) {
             ... on Product {
-              variants(first: 10) { edges { node { id title price quantityAvailable } } }
+              variants(first: 10) { edges { node { id title price inventoryQuantity } } }
             }
           }
         }
@@ -300,7 +298,6 @@ class ShopifyService:
     async def _shopify_search(self, query: str, limit: int, sort_key: str, filters: Optional[Dict]) -> List[Dict]:
         """Executes a GraphQL query against the Shopify Storefront API."""
         if not self.storefront_token: return []
-        # --- CORRECTED THIS QUERY ---
         graphql_payload = {
             "query": """
             query ($query: String!, $limit: Int!, $sortKey: ProductSortKeys!) {
@@ -317,8 +314,6 @@ class ShopifyService:
             resp = await self.http_client.post(url, headers=headers, json=graphql_payload)
             resp.raise_for_status()
             response_data = resp.json()
-            # You can remove this logging line now that the bug is fixed
-            # logger.info(f"Full Shopify GraphQL Response: {json.dumps(response_data)}")
             return response_data.get("data", {}).get("products", {}).get("edges", [])
         except Exception as e:
             logger.error(f"Shopify _shopify_search error: {e}")
@@ -342,7 +337,7 @@ class ShopifyService:
         return resp.json().get("data", {})
 
     def _parse_products(self, product_edges: List[Dict]) -> List[Product]:
-        """Parses GraphQL product edges into Pydantic Product models."""
+        """Parses GraphQL product edges from the Admin API into Pydantic Product models."""
         products = []
         for edge in product_edges:
             node = edge.get("node", {})
@@ -351,8 +346,8 @@ class ShopifyService:
             if not variant_edge: continue
             
             image_edge = node.get("images", {}).get("edges", [])
-            # --- CORRECTED THIS LINE ---
-            inventory = variant_edge[0]["node"].get("quantityAvailable")
+            # Use `inventoryQuantity` for Admin API results
+            inventory = variant_edge[0]["node"].get("inventoryQuantity")
             clean_description = html.unescape(re.sub("<[^<]+?>", "", node.get("bodyHtml", "")))
 
             products.append(Product(

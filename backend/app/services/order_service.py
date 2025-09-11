@@ -646,16 +646,19 @@ async def handle_visual_search(message: str, customer: Dict, **kwargs) -> Option
         return "Something went wrong during the visual search. Please try again. 😔"
 
 async def handle_order_inquiry(phone_number: str, customer: Dict, **kwargs) -> str:
-    """Handles order status inquiries."""
+    """Handles general order status inquiries by asking the user for their order number."""
     message_lower = (customer.get("conversation_history", [{}])[-1] or {}).get("message", "").lower()
+
+    # This part helps users who ask *how* to find their order number
     if any(k in message_lower for k in {"where", "find", "how"}) and "order number" in message_lower:
         return string_service.get_string("ORDER_NUMBER_HELP", strings.ORDER_NUMBER_HELP)
     
-    security_message = _perform_security_check(phone_number, customer)
-    if security_message: return security_message
-    
-    orders = await shopify_service.search_orders_by_phone(phone_number)
-    return _format_orders_response(orders) if orders else string_service.get_string("NO_ORDERS_FOUND", strings.NO_ORDERS_FOUND)
+    # Instead of searching, we now prompt the user for the order number.
+    prompt_message = string_service.get_string(
+        "ORDER_INQUIRY_PROMPT",
+        "I can help with that! Please reply with your order number (e.g., #FO1039), and I'll look it up for you. You can find it in your order confirmation email. 📧"
+    )
+    return prompt_message
 
 async def handle_support_request(message: str, customer: Dict, **kwargs) -> str:
     """Handles support requests for damaged items, returns, etc."""

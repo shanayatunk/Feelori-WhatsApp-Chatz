@@ -305,6 +305,18 @@ class DatabaseService:
         status_counts = {item['_id']: item['count'] for item in results}
         return {"status_counts": status_counts}
 
+    async def update_order_packing_status(self, order_id: int, new_status: str, details: dict):
+        """Updates the status and details of an order from the packing dashboard."""
+        update_doc = {
+            "fulfillment_status_internal": new_status,
+            **details  # This will add fields like hold_reason, notes, etc.
+        }
+        await self.db.orders.update_one(
+            {"id": order_id},
+            {"$set": update_doc}
+        )
+    
+
 # Log Messages
 
     async def log_message(self, message_data: dict):

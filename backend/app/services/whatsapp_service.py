@@ -5,6 +5,7 @@ import logging
 import re
 import asyncio
 import tenacity
+import json
 from typing import Optional, List, Dict, Tuple
 
 from app.config.settings import settings
@@ -140,9 +141,14 @@ class WhatsAppService:
         return await self.send_whatsapp_request(payload)
 
     async def get_catalog_id(self) -> Optional[str]:
-        """Fetches and caches the WhatsApp Business catalog ID."""
+        """Fetches and caches the WhatsApp Business catalog ID, prioritizing env settings."""
+        if settings.whatsapp_catalog_id:
+            logger.info(f"Using WhatsApp Catalog ID from settings: {settings.whatsapp_catalog_id}")
+            return settings.whatsapp_catalog_id
+
         if self._catalog_id_cache:
             return self._catalog_id_cache
+        
         if not self.business_account_id:
             logger.error("whatsapp_business_account_id_not_set")
             return None

@@ -423,10 +423,12 @@ async def handle_order_detail_inquiry(message: str, customer: Dict, **kwargs) ->
             order_to_display = await shopify_service.get_order_by_name(f"#{order_number}")
         except Exception as e:
             logger.error(f"Error fetching order #{order_number} by name: {e}", exc_info=True)
-            return await string_service.get_string("ORDER_API_ERROR")
+            return string_service.get_string("ORDER_API_ERROR")
 
     if not order_to_display:
-        return await string_service.get_string("ORDER_NOT_FOUND_BY_ID", order_number=order_number)
+        # FIX: Use string formatting instead of passing keyword arguments
+        base_string = string_service.get_string("ORDER_NOT_FOUND_BY_ID")
+        return base_string.format(order_number=order_number) if "{order_number}" in base_string else f"Order #{order_number} not found."
 
     # 3. 🚨 SECURITY CHECK: Verify ownership
     order_phone = (
@@ -436,15 +438,15 @@ async def handle_order_detail_inquiry(message: str, customer: Dict, **kwargs) ->
         or ""
     )
     
-    # --- THIS IS THE FIX ---
     # Sanitize both numbers and compare them directly.
     sanitized_order_phone = EnhancedSecurityService.sanitize_phone_number(order_phone)
     sanitized_customer_phone = EnhancedSecurityService.sanitize_phone_number(phone_number)
 
     if not sanitized_order_phone.endswith(sanitized_customer_phone):
         logger.warning(f"SECURITY: Phone mismatch for order #{order_number}. Requester: {phone_number}")
-        return await string_service.get_string("ORDER_PHONE_MISMATCH", order_number=order_number)
-    # --- END OF FIX ---
+        # Get the string and use f-string formatting or fallback to simple message
+        mismatch_msg = string_service.get_string("ORDER_PHONE_MISMATCH", "Sorry, I can only show order details for your registered phone number.")
+        return mismatch_msg.format(order_number=order_number) if "{order_number}" in mismatch_msg else f"Sorry, I can only show details for order #{order_number} to the phone number associated with that order."
 
     # 4. Return formatted details
     return _format_single_order(order_to_display, detailed=True)

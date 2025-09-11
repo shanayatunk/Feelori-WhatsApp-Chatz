@@ -211,8 +211,15 @@ def _analyze_interactive_intent(message: str) -> str:
 
 def analyze_text_intent(message_lower: str) -> str:
     """Analyzes intent for text messages using rules from the database."""
+
+    # First: check if the whole message is just an order number (with or without #)
     if re.fullmatch(r'#?\d{4,}', message_lower.strip()):
         return "order_detail_inquiry"
+
+    # Next: check if an order number appears anywhere in the message
+    if re.search(r'#\d{4,}', message_lower):
+        return "order_detail_inquiry"
+
     message_words = set(default_rules.WORD_RE.findall(message_lower))
     
     # Use the dynamic rules from the service

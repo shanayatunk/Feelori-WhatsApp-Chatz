@@ -46,10 +46,25 @@ class SecurityService:
 class EnhancedSecurityService(SecurityService):
     @staticmethod
     def sanitize_phone_number(phone: str) -> str:
-        if not phone or len(phone) > 20: raise ValueError("Invalid phone number length")
-        clean_phone = re.sub(r'[^\d+]', '', phone.strip())
-        if not clean_phone.startswith('+'): clean_phone = '+' + clean_phone.lstrip('+')
-        if not re.match(r'^\+\d{10,15}$', clean_phone): raise ValueError("Invalid phone number format")
+        """
+        Sanitizes a phone number.
+        - Returns a normalized E.164-style string (e.g., +919876543210) if valid.
+        - Returns an empty string for invalid or empty inputs (instead of raising).
+        """
+        if not phone or not isinstance(phone, str):
+            return ""
+
+        # Remove all characters except digits and leading +
+        clean_phone = re.sub(r"[^\d+]", "", phone.strip())
+
+        # Ensure it starts with +
+        if not clean_phone.startswith("+"):
+            clean_phone = "+" + clean_phone.lstrip("+")
+
+        # Require 10–15 digits after +
+        if not re.match(r"^\+\d{10,15}$", clean_phone):
+            return ""
+
         return clean_phone
 
     @staticmethod

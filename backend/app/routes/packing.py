@@ -40,42 +40,64 @@ async def get_packing_orders(request: Request, current_user: dict = Depends(veri
 # API endpoint to start packing an order
 @router.post("/orders/{order_id}/start", response_model=APIResponse)
 async def start_packing(order_id: str, request: Request, current_user: dict = Depends(verify_jwt_token)):
-    """Marks an order as 'packing_in_progress'."""
+    """Marks an order as 'In Progress'."""
     security_service.EnhancedSecurityService.validate_admin_session(request, current_user)
-    await db_service.update_order_packing_status(order_id, "packing_in_progress")
+    
+    # --- FIX ---
+    # The 'details' argument was missing. We provide an empty dictionary.
+    # We also convert order_id to an integer.
+    await db_service.update_order_packing_status(int(order_id), "In Progress", {})
+    # --- END OF FIX ---
+    
     return APIResponse(success=True, message="Order packing started.", version="v1")
 
 # API endpoint to put an order on hold
 @router.post("/orders/{order_id}/hold", response_model=APIResponse)
 async def hold_order(order_id: str, hold_data: HoldOrderRequest, request: Request, current_user: dict = Depends(verify_jwt_token)):
-    """Marks an order as 'on_hold' with a reason."""
+    """Marks an order as 'On Hold' with a reason."""
     security_service.EnhancedSecurityService.validate_admin_session(request, current_user)
-    
-    # --- THIS IS THE FIX ---
-    # Call the correct db_service.hold_order function with the right parameters.
-    # We also convert the order_id from a string to an integer here.
     await db_service.hold_order(
-        order_id=int(order_id), 
-        reason=hold_data.reason, 
-        notes=hold_data.notes, 
+        order_id=int(order_id),
+        reason=hold_data.reason,
+        notes=hold_data.notes,
         skus=hold_data.problem_item_skus
     )
-    # --- END OF FIX ---
-    
     return APIResponse(success=True, message="Order put on hold.", version="v1")
 
 # API endpoint to fulfill an order
 @router.post("/orders/{order_id}/fulfill", response_model=APIResponse)
 async def fulfill_order(order_id: str, fulfill_data: FulfillOrderRequest, request: Request, current_user: dict = Depends(verify_jwt_token)):
-    """Marks an order as 'fulfilled' and triggers customer notification."""
+    """
+    Marks an order as 'fulfilled' in Shopify, updates the local database, 
+    and triggers customer notification.
+    """
     security_service.EnhancedSecurityService.validate_admin_session(request, current_user)
-    await db_service.update_order_packing_status(order_id, "fulfilled", fulfill_data.model_dump())
-    
-    # Send notification to customer
-    order_doc = await db_service.orders_collection.find_one({"_id": order_id})
+
+    # --- THIS IS THE FIX ---
+    # 1. Call the Shopify service to create the fulfillment in Shopify first.
+    success, fulfillment_id = await shopify_service.fulfill_order(
+        order_id=int(order_id),
+        packer_name=fulfill_data.packer_name,
+        tracking_number=fulfill_data.tracking_number,
+        carrier=fulfill_data.carrier
+    )
+
+    if not success:
+        raise HTTPException(status_code=400, detail="Failed to create fulfillment in Shopify. Please check the order status in Shopify admin.")
+
+    # 2. Update our internal database with the new status and the fulfillment ID from Shopify.
+    await db_service.complete_order_fulfillment(
+        order_id=int(order_id),
+        packer_name=fulfill_data.packer_name,
+        fulfillment_id=fulfillment_id
+    )
+    # --- END OF FIX ---
+
+    # 3. Send notification to customer
+    order_doc = await db_service.get_order_by_id(int(order_id))
     if order_doc and order_doc.get("phone_numbers"):
         customer_phone = order_doc["phone_numbers"][0]
-        customer_name = order_doc.get("raw", {}).get("customer", {}).get("first_name", "")
+        customer_name = order_doc.get("raw", {}).get("customer", {}).get("first_name", "there")
         
         notification_message = (
             f"Great news, {customer_name}! 🥳 Your FeelOri order #{order_doc.get('order_number')} has been packed and is on its way!\n\n"
@@ -85,7 +107,22 @@ async def fulfill_order(order_id: str, fulfill_data: FulfillOrderRequest, reques
         )
         asyncio.create_task(whatsapp_service.send_message(customer_phone, notification_message))
 
-    return APIResponse(success=True, message="Order fulfilled and customer notified.", version="v1")
+    return APIResponse(success=True, message="Order fulfilled in Shopify and customer notified.", version="v1")
+
+# --- NEW FUNCTION ---
+# API endpoint to move a held order back to the pending queue
+@router.post("/orders/{order_id}/requeue", response_model=APIResponse)
+async def requeue_order(order_id: str, request: Request, current_user: dict = Depends(verify_jwt_token)):
+    """Moves an order from 'On Hold' back to the 'Pending' queue."""
+    security_service.EnhancedSecurityService.validate_admin_session(request, current_user)
+    success = await db_service.requeue_held_order(order_id=int(order_id))
+    if not success:
+        raise HTTPException(
+            status_code=404,
+            detail="Order not found or was not on hold."
+        )
+    return APIResponse(success=True, message="Order moved back to pending.", version="v1")
+# --- END OF NEW FUNCTION ---
 
 # API endpoint for packing metrics
 @router.get("/metrics", response_model=APIResponse)

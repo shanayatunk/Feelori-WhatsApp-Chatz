@@ -212,13 +212,15 @@ def _analyze_interactive_intent(message: str) -> str:
 def analyze_text_intent(message_lower: str) -> str:
     """Analyzes intent for text messages using rules from the database."""
 
-    # First: check if the whole message is just an order number (with or without #)
-    if re.fullmatch(r'#?\d{4,}', message_lower.strip()):
+    # --- THIS IS THE FIX ---
+    # The regex now accepts optional letters (A-Z) between the '#' and the numbers.
+    if re.fullmatch(r'#?[a-zA-Z]*\d{4,}', message_lower.strip()):
         return "order_detail_inquiry"
 
-    # Next: check if an order number appears anywhere in the message
-    if re.search(r'#\d{4,}', message_lower):
+    # We apply the same fix to the search regex.
+    if re.search(r'#[a-zA-Z]*\d{4,}', message_lower):
         return "order_detail_inquiry"
+    # --- END OF FIX ---
 
     message_words = set(default_rules.WORD_RE.findall(message_lower))
     

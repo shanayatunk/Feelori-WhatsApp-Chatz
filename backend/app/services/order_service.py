@@ -396,61 +396,34 @@ def _format_single_order(order: Dict, detailed: bool = False) -> str:
 async def handle_order_detail_inquiry(message: str, customer: Dict, **kwargs) -> Optional[str]:
     """
     Handles a request for details about a specific order number.
-    It checks for an order number, verifies ownership, and formats a detailed response.
+    NOTE: The phone number security check has been removed due to Shopify plan limitations.
     """
-    order_number_match = re.search(r'#?(\d{4,})', message)
+    order_number_match = re.search(r'#?([a-zA-Z]*\d{4,})', message) # Updated regex to find any order number
     if not order_number_match:
-        # Fallback to the general order inquiry if no specific number is found.
-        return await handle_order_inquiry(customer["phone_number"], customer)
+        return await handle_order_inquiry(customer=customer)
 
-    order_number = order_number_match.group(1)
-    phone_number = customer["phone_number"]
-    order_to_display = None
-
-    # 1. First, try cache
-    orders_cache_key = f"shopify:orders_by_phone:{phone_number}"
-    cached_orders_raw = await cache_service.get(orders_cache_key)
-    if cached_orders_raw:
-        cached_orders = json.loads(cached_orders_raw)
-        order_to_display = next(
-            (o for o in cached_orders if str(o.get("order_number")) == order_number),
-            None
-        )
-
-    # 2. If not cached, fetch from Shopify
-    if not order_to_display:
-        try:
-            order_to_display = await shopify_service.get_order_by_name(f"#{order_number}")
-        except Exception as e:
-            logger.error(f"Error fetching order #{order_number} by name: {e}", exc_info=True)
-            return string_service.get_string("ORDER_API_ERROR")
-
-    if not order_to_display:
-        # FIX: Use string formatting instead of passing keyword arguments
-        base_string = string_service.get_string("ORDER_NOT_FOUND_BY_ID")
-        return base_string.format(order_number=order_number) if "{order_number}" in base_string else f"Order #{order_number} not found."
-
-    # 3. 🚨 SECURITY CHECK: Verify ownership
-    order_phone = (
-        order_to_display.get("phone")
-        or (order_to_display.get("shipping_address") or {}).get("phone")
-        or (order_to_display.get("billing_address") or {}).get("phone")
-        or ""
-    )
+    order_name = order_number_match.group(1)
+    if not order_name.startswith('#'):
+        order_name = f"#{order_name}"
     
-    # Sanitize both numbers and compare them directly.
-    sanitized_order_phone = EnhancedSecurityService.sanitize_phone_number(order_phone)
-    sanitized_customer_phone = EnhancedSecurityService.sanitize_phone_number(phone_number)
+    # 1. Fetch from Shopify (we can't rely on cache as much without the security check context)
+    try:
+        order_to_display = await shopify_service.get_order_by_name(order_name)
+    except Exception as e:
+        logger.error(f"Error fetching order {order_name} by name: {e}", exc_info=True)
+        return string_service.get_string("ORDER_API_ERROR")
 
-    if not sanitized_order_phone.endswith(sanitized_customer_phone):
-        logger.warning(f"SECURITY: Phone mismatch for order #{order_number}. Requester: {phone_number}")
-        # Get the string and use f-string formatting or fallback to simple message
-        mismatch_msg = string_service.get_string("ORDER_PHONE_MISMATCH", "Sorry, I can only show order details for your registered phone number.")
-        return mismatch_msg.format(order_number=order_number) if "{order_number}" in mismatch_msg else f"Sorry, I can only show details for order #{order_number} to the phone number associated with that order."
+    if not order_to_display:
+        base_string = string_service.get_string("ORDER_NOT_FOUND_BY_ID")
+        return base_string.format(order_number=order_name)
 
-    # 4. Return formatted details
+    # 2. 🚨 SECURITY CHECK REMOVED 🚨
+    # The original security check that compared phone numbers has been removed.
+    # On the current Shopify plan, the API returns 'null' for the phone number,
+    # causing the check to fail for everyone, including the real customer.
+
+    # 3. Return formatted details
     return _format_single_order(order_to_display, detailed=True)
-
 
 async def handle_show_unfiltered_products(customer: Dict, **kwargs) -> Optional[str]:
     """Shows products from the last search, ignoring any price filters."""

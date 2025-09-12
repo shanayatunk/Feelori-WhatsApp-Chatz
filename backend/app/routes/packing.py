@@ -10,6 +10,7 @@ from app.services.db_service import db_service
 from app.services import security_service
 from app.services.whatsapp_service import whatsapp_service
 from app.utils.rate_limiter import limiter
+from app.services.shopify_service import shopify_service
 
 # This file defines all API routes specifically for the packing team's HTML dashboard.
 # All routes are protected and require JWT authentication.

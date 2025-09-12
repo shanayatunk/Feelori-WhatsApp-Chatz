@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from typing import Optional, List
 
 from app.config.settings import settings
-from app.models.api import APIResponse, BroadcastRequest, Rule, StringResource
+from app.models.api import APIResponse, BroadcastRequest, Rule, StringResource, StringUpdateRequest
 from app.utils.dependencies import verify_jwt_token, get_remote_address
 from app.services import security_service, shopify_service, cache_service
 from app.services.db_service import db_service
@@ -232,13 +232,13 @@ async def get_strings(request: Request, current_user: dict = Depends(verify_jwt_
     return APIResponse(success=True, message="Strings retrieved successfully", data={"strings": strings}, version=settings.api_version)
 
 @router.put("/strings", response_model=APIResponse)
-async def update_strings(strings: List[StringResource], request: Request, current_user: dict = Depends(verify_jwt_token)):
+async def update_strings(update_data: StringUpdateRequest, request: Request, current_user: dict = Depends(verify_jwt_token)):
     """Update all string resources."""
     security_service.EnhancedSecurityService.validate_admin_session(request, current_user)
-    await db_service.update_strings(strings)
-    # FIX: Reload the strings into the cache after updating the database
-    await string_service.load_strings()
-    return APIResponse(success=True, message="Strings updated successfully", version=settings.api_version)
+    # Use the 'strings' attribute from the new model
+    await db_service.update_strings(update_data.strings)
+    await string_service.load_strings() # Reload the cache
+    return APIResponse(success=True, message="Strings updated successfully", version=settings.api.version)
 
 @router.get("/escalations", response_model=APIResponse)
 @limiter.limit("10/minute")
@@ -260,4 +260,20 @@ async def create_rule(rule: Rule, request: Request, current_user: dict = Depends
     new_rule = await db_service.create_rule(rule)
     await rule_service.load_rules()  # Reload rules after creating
     return APIResponse(success=True, message="Rule created successfully", data={"rule": new_rule}, version=settings.api_version)
+
+@router.get("/packer-performance", response_model=APIResponse)
+@limiter.limit("10/minute")
+async def get_packer_performance(
+    request: Request, 
+    current_user: dict = Depends(verify_jwt_token),
+    days: int = 7 # Default to a 7-day period
+):
+    """Provides advanced analytics for the packer performance dashboard."""
+    security_service.EnhancedSecurityService.validate_admin_session(request, current_user)
+    metrics = await db_service.get_packer_performance_metrics(days=days)
+    return APIResponse(
+        success=True,
+        message="Packer performance metrics retrieved successfully.",
+        data=metrics
+    )
 

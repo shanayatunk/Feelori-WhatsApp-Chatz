@@ -68,6 +68,29 @@ export interface Pagination {
     pages: number;
 }
 
+export interface PackerPerformanceData {
+  kpis: {
+    total_orders: number;
+    completed_orders: number;
+    on_hold_orders: number;
+    avg_time_to_pack_minutes: number;
+    hold_rate: number;
+  };
+  packer_leaderboard: {
+    _id: string; // Packer name
+    orders_packed: number;
+  }[];
+  hold_analysis: {
+    by_reason: {
+      _id: string; // Reason
+      count: number;
+    }[];
+    top_problem_skus: {
+      _id: string; // SKU
+      count: number;
+    }[];
+  };
+}
 
 // --- API Service ---
 const makeRequest = async (url: string, options: RequestInit = {}) => {
@@ -106,6 +129,12 @@ export const apiService = {
     const result = await makeRequest(`${API_BASE_URL}/admin/health`);
     return result.data;
   },
+
+  getPackerPerformance: async (days: number): Promise<PackerPerformanceData> => {
+    const result = await makeRequest(`${API_BASE_URL}/admin/packer-performance?days=${days}`);
+    return result.data;
+  },
+
 
   getSecurityEvents: async (): Promise<SecurityEvent[]> => {
     const result = await makeRequest(`${API_BASE_URL}/admin/security-events`);

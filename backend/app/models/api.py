@@ -59,3 +59,6 @@ class OrderHold(BaseModel):
     problem_item_skus: Optional[List[str]] = None
 
 # --- FIX END ---
+
+class StringUpdateRequest(BaseModel):
+    strings: List[StringResource]

@@ -274,6 +274,6 @@ async def get_packer_performance(
     return APIResponse(
         success=True,
         message="Packer performance metrics retrieved successfully.",
-        data=metrics
+        data=metrics,
+        version=settings.api_version # <-- THIS LINE IS THE FIX
     )
-

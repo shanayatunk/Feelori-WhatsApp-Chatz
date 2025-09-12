@@ -179,9 +179,16 @@ class DatabaseService:
         
         query = {}
         now = datetime.utcnow()
-        if target_type == "active": query["last_interaction"] = {"$gte": now - timedelta(hours=24)}
-        elif target_type == "recent": query["last_interaction"] = {"$gte": now - timedelta(days=7)}
+        if target_type == "active":
+            query["last_interaction"] = {"$gte": now - timedelta(hours=24)}
+        elif target_type == "recent": # 'recent' was not in the frontend but is supported here
+            query["last_interaction"] = {"$gte": now - timedelta(days=7)}
+        elif target_type == "inactive": # --- ADDED THIS LOGIC ---
+            query["last_interaction"] = {"$lt": now - timedelta(days=30)}
+        
+        # if target_type is 'all', the query remains {} which correctly gets all customers.
         return await self.db.customers.find(query, {"phone_number": 1}).to_list(length=None)
+
 
     # --- THIS IS THE FIX ---
     async def get_human_escalation_requests(self, limit: int = 5) -> List:

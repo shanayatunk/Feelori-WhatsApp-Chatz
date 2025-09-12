@@ -90,7 +90,7 @@ async def get_customer_details(customer_id: str, request: Request, current_user:
     )
 
 
-@router.get("/security/events", response_model=APIResponse)
+@router.get("/security-events", response_model=APIResponse)
 @limiter.limit("5/minute")
 async def get_security_events(
     request: Request,
@@ -213,12 +213,7 @@ async def get_rules(request: Request, current_user: dict = Depends(verify_jwt_to
     rules = await db_service.get_all_rules()
     return APIResponse(success=True, message="Rules retrieved successfully", data={"rules": rules}, version=settings.api_version)
 
-@router.post("/rules", response_model=APIResponse)
-async def create_rule(rule: Rule, request: Request, current_user: dict = Depends(verify_jwt_token)):
-    """Create a new rule in the rules engine."""
-    security_service.EnhancedSecurityService.validate_admin_session(request, current_user)
-    new_rule = await db_service.create_rule(rule)
-    return APIResponse(success=True, message="Rule created successfully", data={"rule": new_rule}, version=settings.api_version)
+
 
 @router.put("/rules/{rule_id}", response_model=APIResponse)
 async def update_rule(rule_id: str, rule: Rule, request: Request, current_user: dict = Depends(verify_jwt_token)):
@@ -266,12 +261,3 @@ async def create_rule(rule: Rule, request: Request, current_user: dict = Depends
     await rule_service.load_rules()  # Reload rules after creating
     return APIResponse(success=True, message="Rule created successfully", data={"rule": new_rule}, version=settings.api_version)
 
-@router.put("/rules/{rule_id}", response_model=APIResponse)
-async def update_rule(rule_id: str, rule: Rule, request: Request, current_user: dict = Depends(verify_jwt_token)):
-    """Update an existing rule in the rules engine."""
-    security_service.EnhancedSecurityService.validate_admin_session(request, current_user)
-    updated_rule = await db_service.update_rule(rule_id, rule)
-    if not updated_rule:
-        raise HTTPException(status_code=404, detail="Rule not found")
-    await rule_service.load_rules()  # Reload rules after updating
-    return APIResponse(success=True, message="Rule updated successfully", data={"rule": updated_rule}, version=settings.api_version)

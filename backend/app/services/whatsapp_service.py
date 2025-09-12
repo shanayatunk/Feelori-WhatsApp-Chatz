@@ -93,8 +93,11 @@ class WhatsAppService:
 
 
     # --- THIS FUNCTION IS NOW CORRECTED ---
-    async def send_message(self, to_phone: str, message: str) -> Optional[str]:
-        """Sends a simple text message."""
+    async def send_message(self, to_phone: str, message: str, image_url: Optional[str] = None) -> Optional[str]:
+        """
+        Sends a message. If image_url is provided, sends an image with the message as a caption.
+        Otherwise, sends a simple text message.
+        """
         clean_phone = re.sub(r"[^\d+]", "", to_phone)
         if not clean_phone.startswith("+"):
             clean_phone = "+" + clean_phone.lstrip("+")
@@ -103,9 +106,15 @@ class WhatsAppService:
             "messaging_product": "whatsapp",
             "recipient_type": "individual",
             "to": clean_phone,
-            "type": "text",
-            "text": {"body": message[:4096]}
         }
+
+        if image_url:
+            payload["type"] = "image"
+            payload["image"] = {"link": image_url, "caption": message[:1024]}
+        else:
+            payload["type"] = "text"
+            payload["text"] = {"body": message[:4096]}
+        
         return await self.send_whatsapp_request(payload)
 
     # --- THIS FUNCTION IS NOW CORRECTED ---

@@ -53,7 +53,7 @@ export const BroadcastHistoryPage = ({ onSelectBroadcast }: { onSelectBroadcast:
                                 <td className="px-4 py-3 capitalize">{job.target_type}</td>
                                 <td className="px-4 py-3 capitalize">{job.status}</td>
                                 <td className="px-4 py-3 text-right">
-                                    <Button variant="secondary" size="sm" onClick={() => onSelectBroadcast(job._id)}>
+                                    <Button variant="secondary" onClick={() => onSelectBroadcast(job._id)}>
                                         View Report
                                     </Button>
                                 </td>

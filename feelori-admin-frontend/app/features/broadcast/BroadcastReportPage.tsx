@@ -39,7 +39,7 @@ export const BroadcastReportPage = ({ jobId, onBack }: { jobId: string; onBack: 
 
     return (
         <div className="space-y-6">
-            <Button onClick={onBack} variant="outline">← Back to History</Button>
+            <Button onClick={onBack} variant="secondary">← Back to History</Button>
             <Card>
                 <CardHeader>
                     <CardTitle>Broadcast Report</CardTitle>

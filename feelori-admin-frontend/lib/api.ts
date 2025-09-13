@@ -93,6 +93,26 @@ export interface PackerPerformanceData {
   };
 }
 
+
+export interface BroadcastJob {
+  _id: string;
+  created_at: string;
+  message: string;
+  target_type: string;
+  status: string;
+  stats: {
+    total_recipients: number;
+    sent: number;
+    delivered: number;
+    read: number;
+    failed: number;
+  };
+}
+
+export interface BroadcastDetails extends BroadcastJob {
+  image_url?: string;
+}
+
 // --- API Service ---
 const makeRequest = async (url: string, options: RequestInit = {}) => {
   const token = typeof window !== 'undefined' ? localStorage.getItem('feelori_admin_token') : null;
@@ -130,6 +150,17 @@ export const apiService = {
     const result = await makeRequest(`${API_BASE_URL}/admin/health`);
     return result.data;
   },
+
+  getBroadcasts: async (page: number, limit: number): Promise<{ broadcasts: BroadcastJob[], pagination: Pagination }> => {
+    const result = await makeRequest(`${API_BASE_URL}/admin/broadcasts?page=${page}&limit=${limit}`);
+    return result.data;
+  },
+
+  getBroadcastDetails: async (jobId: string): Promise<BroadcastDetails> => {
+    const result = await makeRequest(`${API_BASE_URL}/admin/broadcasts/${jobId}`);
+    return result.data.details;
+  },
+
 
   getPackerPerformance: async (days: number): Promise<PackerPerformanceData> => {
     const result = await makeRequest(`${API_BASE_URL}/admin/packer-performance?days=${days}`);

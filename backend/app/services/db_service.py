@@ -210,6 +210,59 @@ class DatabaseService:
         # if target_type is 'all', the query remains {} which correctly gets all customers.
         return await self.db.customers.find(query, {"phone_number": 1}).to_list(length=None)
 
+    async def create_broadcast_job(self, message: str, image_url: str | None, target_type: str, total_recipients: int) -> str:
+        """Creates a new record for a broadcast job."""
+        job_doc = {
+            "created_at": datetime.utcnow(),
+            "message": message,
+            "image_url": image_url,
+            "target_type": target_type,
+            "status": "pending",
+            "stats": {
+                "total_recipients": total_recipients,
+                "sent": 0,
+                "delivered": 0,
+                "read": 0,
+                "failed": 0,
+            }
+        }
+        result = await self.db.broadcasts.insert_one(job_doc)
+        return str(result.inserted_id)
+
+    async def get_broadcast_jobs(self, page: int = 1, limit: int = 20) -> tuple[list, dict]:
+        """Gets a paginated list of all broadcast jobs."""
+        skip = (page - 1) * limit
+        cursor = self.db.broadcasts.find({}).sort("created_at", -1).skip(skip).limit(limit)
+        jobs = await cursor.to_list(length=limit)
+        total_count = await self.db.broadcasts.count_documents({})
+        for job in jobs:
+            job["_id"] = str(job["_id"])
+        pagination = {"page": page, "limit": limit, "total": total_count, "pages": (total_count + limit - 1) // limit}
+        return jobs, pagination
+
+    async def get_broadcast_job_details(self, job_id: str) -> dict:
+        """Gets details and aggregated message statuses for a single broadcast job."""
+        pipeline = [
+            {"$match": {"metadata.broadcast_id": job_id}},
+            {"$group": {"_id": "$status", "count": {"$sum": 1}}}
+        ]
+        status_results = await self.db.message_logs.aggregate(pipeline).to_list(length=10)
+        
+        # Convert list of {'_id': 'failed', 'count': 5} to a dict {'failed': 5}
+        stats = {res["_id"]: res["count"] for res in status_results if res.get("_id")}
+        
+        job_doc = await self.db.broadcasts.find_one({"_id": ObjectId(job_id)})
+        if job_doc:
+            job_doc["_id"] = str(job_doc["_id"])
+            job_doc["stats"] = {
+                "total_recipients": job_doc.get("stats", {}).get("total_recipients", 0),
+                "sent": stats.get("sent", 0),
+                "delivered": stats.get("delivered", 0),
+                "read": stats.get("read", 0),
+                "failed": stats.get("failed", 0),
+            }
+            return job_doc
+        return {}
 
     # --- THIS IS THE FIX ---
     async def get_human_escalation_requests(self, limit: int = 5) -> List:

@@ -14,6 +14,7 @@ from app.services.string_service import string_service
 from app.services.rule_service import rule_service
 from app.utils.rate_limiter import limiter
 import asyncio
+from fastapi import APIRouter, Depends, HTTPException, Request, BackgroundTasks
 
 router = APIRouter(
     prefix="/admin",
@@ -109,59 +110,109 @@ async def get_security_events(
     )
 
 
+async def run_broadcast_task(broadcast_id: str, message: str, image_url: str | None, customers: list):
+    """The actual background task that sends messages."""
+    for customer in customers:
+        phone = customer.get("phone_number")
+        if not phone:
+            continue
+
+        # In a real template-based broadcast, you'd format the message here
+        # For now, we send the raw message
+        wamid = await whatsapp_service.send_message(
+            to_phone=phone,
+            message=message,
+            image_url=image_url
+        )
+
+        # Log the wamid with the broadcast_id
+        if wamid:
+            await db_service.db.message_logs.update_one(
+                {"wamid": wamid},
+                {"$set": {"metadata.broadcast_id": broadcast_id}}
+            )
+        
+        await asyncio.sleep(0.2) # Sleep to avoid hitting API limits too quickly
+    
+    await db_service.db.broadcasts.update_one(
+        {"_id": ObjectId(broadcast_id)},
+        {"$set": {"status": "completed"}}
+    )
+
 @router.post("/broadcast", response_model=APIResponse)
 @limiter.limit("1/minute")
 async def broadcast_message(
     request: Request,
     broadcast_data: BroadcastRequest,
+    background_tasks: BackgroundTasks,
     current_user: dict = Depends(verify_jwt_token)
 ):
-    """Broadcast message to all, active, recent, or a specific list of customers."""
+    """Creates a broadcast job and runs it in the background."""
     security_service.EnhancedSecurityService.validate_admin_session(request, current_user)
     
-    message = broadcast_data.message
-    if not message or len(message.strip()) == 0:
-        raise HTTPException(status_code=400, detail="Message cannot be empty")
-    if len(message) > 1000:
-        raise HTTPException(status_code=400, detail="Message too long (max 1000 characters)")
-
     customers_to_message = await db_service.get_customers_for_broadcast(
         broadcast_data.target_type, broadcast_data.target_phones
     )
 
     if not customers_to_message:
-        return APIResponse(success=True, message="No customers found for the selected target", data={"sent_count": 0}, version=settings.api_version)
+        raise HTTPException(status_code=404, detail="No customers found for the selected target group.")
 
-    sent_count, failed_count = 0, 0
-    for customer in customers_to_message:
-        wamid = await whatsapp_service.send_message(
-            customer["phone_number"],
-            message,
-            image_url=broadcast_data.image_url
-        )
-        if wamid:
-            sent_count += 1
-        else:
-            failed_count += 1
-        await asyncio.sleep(0.1)
-
-    await db_service.log_security_event(
-        "message_broadcast",
-        get_remote_address(request),
-        {
-            "target": f"{len(broadcast_data.target_phones)} specific users" if broadcast_data.target_phones else broadcast_data.target_type,
-            "sent_count": sent_count,
-            "failed_count": failed_count
-        }
+    # Create the broadcast job record in the database
+    job_id = await db_service.create_broadcast_job(
+        message=broadcast_data.message,
+        image_url=broadcast_data.image_url,
+        target_type=broadcast_data.target_type,
+        total_recipients=len(customers_to_message)
     )
-    
+
+    # Add the sending process to the background
+    background_tasks.add_task(
+        run_broadcast_task, 
+        job_id, 
+        broadcast_data.message, 
+        broadcast_data.image_url, 
+        customers_to_message
+    )
+
     return APIResponse(
         success=True,
-        message=f"Broadcast completed: {sent_count} sent, {failed_count} failed",
-        data={"sent_count": sent_count, "failed_count": failed_count},
+        message=f"Broadcast job created and started for {len(customers_to_message)} customers.",
+        data={"job_id": job_id},
         version=settings.api_version
     )
 
+
+@router.get("/broadcasts", response_model=APIResponse)
+async def get_broadcasts(
+    request: Request,
+    page: int = 1,
+    limit: int = 20,
+    current_user: dict = Depends(verify_jwt_token)
+):
+    """Get a list of all past broadcast jobs."""
+    security_service.EnhancedSecurityService.validate_admin_session(request, current_user)
+    jobs, pagination = await db_service.get_broadcast_jobs(page, limit)
+    return APIResponse(
+        success=True,
+        message="Broadcast jobs retrieved.",
+        data={"broadcasts": jobs, "pagination": pagination},
+        version=settings.api_version
+    )
+
+
+@router.get("/broadcasts/{job_id}", response_model=APIResponse)
+async def get_broadcast_details(job_id: str, request: Request, current_user: dict = Depends(verify_jwt_token)):
+    """Get detailed stats for a specific broadcast job."""
+    security_service.EnhancedSecurityService.validate_admin_session(request, current_user)
+    details = await db_service.get_broadcast_job_details(job_id)
+    if not details:
+        raise HTTPException(status_code=404, detail="Broadcast job not found.")
+    return APIResponse(
+        success=True,
+        message="Broadcast details retrieved.",
+        data={"details": details},
+        version=settings.api_version
+    )
 
 @router.get("/health", response_model=APIResponse)
 @limiter.limit("10/minute")

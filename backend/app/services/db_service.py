@@ -545,7 +545,7 @@ class DatabaseService:
         await send_packing_alert_background(payload)
         
         # 2. Send an order confirmation template to the customer
-         customer_phone = (
+        customer_phone = (
             (payload.get("customer") or {}).get("phone")
             or (payload.get("shipping_address") or {}).get("phone")
             or (payload.get("billing_address") or {}).get("phone")

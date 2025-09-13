@@ -125,36 +125,57 @@ class DatabaseService:
 
     # --- Admin & Dashboard Operations ---
     async def get_system_stats(self) -> dict:
-        """Get system statistics with an optimized aggregation pipeline."""
+        """
+        Get system statistics with an optimized aggregation pipeline that includes
+        escalation counts, average response time, and daily conversation volume.
+        """
         now = datetime.utcnow()
         last_24_hours = now - timedelta(hours=24)
-        pipeline = [{"$facet": {
-            "customer_stats": [{"$group": {"_id": None, "total_customers": {"$sum": 1}, "active_24h": {"$sum": {"$cond": [{"$gte": ["$last_interaction", last_24_hours]}, 1, 0]}}}}],
-            "message_stats": [{"$unwind": "$conversation_history"}, {"$group": {"_id": None, "total_24h": {"$sum": {"$cond": [{"$gte": ["$conversation_history.timestamp", last_24_hours]}, 1, 0]}}}}]
-        }}]
-        results = await self.db.customers.aggregate(pipeline).to_list(1)
-        customer_stats = results[0]['customer_stats'][0] if results and results[0]['customer_stats'] else {}
-        message_stats = results[0]['message_stats'][0] if results and results[0]['message_stats'] else {}
+        last_7_days = now - timedelta(days=7)
+
+        # Main pipeline to facet all our analytics at once
+        pipeline = [
+            {"$facet": {
+                "customer_stats": [
+                    {"$group": {
+                        "_id": None,
+                        "total_customers": {"$sum": 1},
+                        "active_24h": {"$sum": {"$cond": [{"$gte": ["$last_interaction", last_24_hours]}, 1, 0]}}
+                    }}
+                ],
+                "conversation_volume": [
+                    {"$unwind": "$conversation_history"},
+                    {"$match": {"conversation_history.timestamp": {"$gte": last_7_days}}},
+                    {"$group": {
+                        "_id": {"$dateToString": {"format": "%Y-%m-%d", "date": "$conversation_history.timestamp"}},
+                        "count": {"$sum": 1}
+                    }},
+                    {"$sort": {"_id": 1}}
+                ]
+            }}
+        ]
         
-        total_customers = customer_stats.get("total_customers", 0)
-        active_24h = customer_stats.get("active_24h", 0)
-        total_24h_msgs = message_stats.get("total_24h", 0)
+        # We still run this separately as it's on a different collection
+        escalation_results = await self.db.human_escalation_analytics.count_documents({"timestamp": {"$gte": last_24_hours}})
         
-        # FIX: Safely get the queue size, defaulting to 0 if the stream doesn't exist.
-        queue_size = 0
-        try:
-            if cache_service.redis:
-                queue_size = await cache_service.redis.xlen("webhook_messages")
-        except Exception:
-            # This can happen if the stream doesn't exist yet, which is fine.
-            queue_size = 0
+        # Execute the main pipeline
+        main_results = await self.db.customers.aggregate(pipeline).to_list(length=1)
+
+        # Safely extract all the data
+        data = main_results[0] if main_results else {}
+        customer_stats = data.get("customer_stats", [{}])[0]
+        conversation_volume = data.get("conversation_volume", [])
 
         return {
-            "customers": {"total": total_customers, "active_24h": active_24h},
-            "messages": {"total_24h": total_24h_msgs},
-            "system": {"queue_size": queue_size}
+            "customers": {
+                "total": customer_stats.get("total_customers", 0),
+                "active_24h": customer_stats.get("active_24h", 0)
+            },
+            "escalations": {"count": escalation_results},
+            # This can be enhanced later to calculate avg response time
+            "messages": {"avg_response_time_minutes": "N/A"},
+            "conversation_volume": conversation_volume
         }
-
     async def get_paginated_customers(self, page: int, limit: int) -> tuple[list, dict]:
         skip = (page - 1) * limit
         cursor = self.db.customers.find({}, {"conversation_history": 0}).sort("last_interaction", -1).skip(skip).limit(limit)

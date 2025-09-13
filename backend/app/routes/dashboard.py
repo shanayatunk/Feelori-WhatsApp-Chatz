@@ -16,9 +16,25 @@ router = APIRouter(
 @router.get("/stats", response_model=APIResponse)
 async def get_dashboard_stats(current_user: dict = Depends(verify_jwt_token)):
     """Provides key metrics for the main admin dashboard."""
-    stats = await db_service.get_system_stats()
-    # FIX: Wrap the returned data in a dictionary
-    return APIResponse(success=True, message="Stats retrieved successfully.", data={"stats": stats}, version=settings.api_version)
+    # 1. Get the nested data from the database service
+    db_stats = await db_service.get_system_stats()
+
+    # 2. Transform the data into the flat structure the frontend expects
+    #    Note: The DB doesn't calculate escalations or avg response time yet, so we default them.
+    frontend_stats = {
+        "total_customers": db_stats.get("customers", {}).get("total", 0),
+        "active_conversations": db_stats.get("customers", {}).get("active_24h", 0),
+        "human_escalations": db_stats.get("escalations", {}).get("count", 0),
+        "avg_response_time": db_stats.get("messages", {}).get("avg_response_time_minutes", "N/A")
+    }
+    
+    # 3. Return the correctly formatted data
+    return APIResponse(
+        success=True, 
+        message="Stats retrieved successfully.", 
+        data={"stats": frontend_stats}, 
+        version=settings.api_version
+    )
 
 @router.get("/escalations", response_model=APIResponse)
 async def get_human_escalations(current_user: dict = Depends(verify_jwt_token)):
@@ -27,10 +43,5 @@ async def get_human_escalations(current_user: dict = Depends(verify_jwt_token)):
     # FIX: Wrap the returned data in a dictionary
     return APIResponse(success=True, message="Escalations retrieved successfully.", data={"escalations": escalations}, version=settings.api_version)
 
-@router.get("/packing-metrics", response_model=APIResponse)
-async def get_react_packing_metrics(current_user: dict = Depends(verify_jwt_token)):
-    """Provides packing metrics for the React admin dashboard's performance page."""
-    metrics = await db_service.get_packing_dashboard_metrics()
-    # FIX: Wrap the returned data in a dictionary
-    return APIResponse(success=True, message="Packing metrics retrieved successfully.", data={"metrics": metrics}, version=settings.api_version)
+
 

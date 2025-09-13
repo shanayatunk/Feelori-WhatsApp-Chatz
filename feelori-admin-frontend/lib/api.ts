@@ -18,6 +18,7 @@ export interface StatsData {
   active_conversations: number;
   human_escalations: number;
   avg_response_time: string;
+  conversation_volume: { _id: string; count: number }[]; // <-- ADD THIS LINE
 }
 
 export interface HealthData {

@@ -40,9 +40,8 @@ export const PerformancePage = () => {
                 setLoading(false);
             }
         };
-
         fetchMetrics();
-    }, [days]); // Re-fetch when 'days' changes
+    }, [days]);
 
     if (loading) return <div className="text-center p-10 text-gray-900">Loading performance data...</div>;
     if (error) return <div className="text-center p-10 text-red-500">Error: {error}</div>;
@@ -60,7 +59,6 @@ export const PerformancePage = () => {
                             key={d}
                             variant={days === d ? 'primary' : 'ghost'}
                             onClick={() => setDays(d)}
-                            // --- UI FIX: Added classes to make inactive buttons darker ---
                             className={`px-4 py-2 ${days !== d && 'text-gray-700 font-semibold'}`}
                         >
                             Last {d} Days
@@ -69,7 +67,6 @@ export const PerformancePage = () => {
                 </div>
             </div>
 
-            {/* KPI Cards Section */}
             <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
                 <KpiCard title="Completed Orders" value={kpis.completed_orders} />
                 <KpiCard title="Avg. Time to Pack" value={kpis.avg_time_to_pack_minutes} unit="min" />
@@ -78,7 +75,6 @@ export const PerformancePage = () => {
             </div>
             
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                {/* Packer Leaderboard */}
                 <Card className="lg:col-span-2">
                     <CardHeader>
                         <CardTitle>Packer Leaderboard</CardTitle>
@@ -95,7 +91,8 @@ export const PerformancePage = () => {
                             <tbody>
                                 {data.packer_leaderboard.map((packer) => (
                                     <tr key={packer._id} className="border-b">
-                                        <td className="px-4 py-3 font-medium">{packer._id}</td>
+                                        {/* --- UI FIX: Added text-gray-900 class --- */}
+                                        <td className="px-4 py-3 font-medium text-gray-900">{packer._id}</td>
                                         <td className="px-4 py-3 text-right font-bold text-[#ff4d6d]">{packer.orders_packed}</td>
                                     </tr>
                                 ))}
@@ -104,7 +101,6 @@ export const PerformancePage = () => {
                     </CardContent>
                 </Card>
 
-                {/* Hold Analysis */}
                 <Card>
                     <CardHeader>
                         <CardTitle>Hold Analysis</CardTitle>
@@ -112,21 +108,21 @@ export const PerformancePage = () => {
                     </CardHeader>
                     <CardContent className="space-y-4">
                         <div>
-                            {/* --- UI FIX: Added classes to make subheading darker --- */}
                             <h3 className="text-sm font-medium mb-2 text-gray-900">By Reason</h3>
                             {data.hold_analysis.by_reason.map(reason => (
                                 <div key={reason._id} className="flex justify-between text-sm">
-                                    <span>{reason._id}</span>
+                                    {/* --- UI FIX: Added text-gray-800 class --- */}
+                                    <span className="text-gray-800">{reason._id}</span>
                                     <span className="font-semibold">{reason.count}</span>
                                 </div>
                             ))}
                         </div>
                         <div>
-                            {/* --- UI FIX: Added classes to make subheading darker --- */}
                             <h3 className="text-sm font-medium mb-2 text-gray-900">Top Problem SKUs</h3>
                              {data.hold_analysis.top_problem_skus.map(sku => (
                                 <div key={sku._id} className="flex justify-between text-sm">
-                                    <span className="font-mono text-xs">{sku._id}</span>
+                                    {/* --- UI FIX: Added text-gray-800 class --- */}
+                                    <span className="font-mono text-xs text-gray-800">{sku._id}</span>
                                     <span className="font-semibold">{sku.count}</span>
                                 </div>
                             ))}

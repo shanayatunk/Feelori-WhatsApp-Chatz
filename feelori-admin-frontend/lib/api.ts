@@ -21,6 +21,15 @@ export interface StatsData {
   conversation_volume: { _id: string; count: number }[]; // <-- ADD THIS LINE
 }
 
+export interface Recipient {
+  _id: string;
+  phone: string;
+  status: string;
+  customer_info?: {
+      name: string;
+  };
+}
+
 export interface HealthData {
   status: string;
   services: Record<string, string>;

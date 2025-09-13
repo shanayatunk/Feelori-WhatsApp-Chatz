@@ -214,6 +214,42 @@ async def get_broadcast_details(job_id: str, request: Request, current_user: dic
         version=settings.api_version
     )
 
+@router.get("/broadcasts/{job_id}/recipients", response_model=APIResponse)
+async def get_broadcast_recipients(
+    job_id: str,
+    request: Request,
+    page: int = 1,
+    limit: int = 20,
+    search: str = None,
+    current_user: dict = Depends(verify_jwt_token)
+):
+    """Get a paginated list of recipients for a broadcast job."""
+    security_service.EnhancedSecurityService.validate_admin_session(request, current_user)
+    recipients, pagination = await db_service.get_broadcast_recipients(job_id, page, limit, search)
+    return APIResponse(
+        success=True,
+        message="Recipients retrieved.",
+        data={"recipients": recipients, "pagination": pagination},
+        version=settings.api_version
+    )
+
+
+@router.get("/broadcasts/{job_id}/recipients/csv", response_model=None)
+async def download_recipients_csv(job_id: str, request: Request, current_user: dict = Depends(verify_jwt_token)):
+    """Download a CSV of all recipients for a broadcast job."""
+    security_service.EnhancedSecurityService.validate_admin_session(request, current_user)
+    recipients = await db_service.get_all_broadcast_recipients_for_csv(job_id)
+
+    output = io.StringIO()
+    writer = csv.DictWriter(output, fieldnames=["Name", "Phone Number", "Status", "Timestamp"])
+    writer.writeheader()
+    writer.writerows(recipients)
+    
+    headers = {
+        'Content-Disposition': f'attachment; filename="broadcast_{job_id}_recipients.csv"'
+    }
+    return StreamingResponse(iter([output.getvalue()]), media_type="text/csv", headers=headers)
+
 @router.get("/health", response_model=APIResponse)
 @limiter.limit("10/minute")
 async def get_system_health(request: Request, current_user: dict = Depends(verify_jwt_token)):

@@ -35,7 +35,7 @@ class WhatsAppService:
     async def resilient_api_call(self, func, *args, **kwargs):
         return await self.circuit_breaker.call(func, *args, **kwargs)
 
-    async def send_whatsapp_request(self, payload: dict) -> Optional[str]:
+    async def send_whatsapp_request(self, payload: dict, metadata: dict | None = None) -> Optional[str]:
         """Generic method to send a request to the WhatsApp messages API."""
         try:
             to_phone = payload.get("to")
@@ -52,12 +52,9 @@ class WhatsAppService:
                 message_id = response_data.get("messages", [{}])[0].get("id")
                 logger.info(f"WhatsApp message sent to {to_phone}, wamid: {message_id}")
 
-                # --- THIS IS THE NEW LOGIC ---
-                # Log the outbound message to the dedicated database collection
                 from app.services.db_service import db_service
                 from datetime import datetime
                 
-                # Determine content based on message type
                 content_payload = {}
                 if payload.get("type") == "text":
                     content_payload = payload.get("text", {})
@@ -74,9 +71,7 @@ class WhatsAppService:
                     "timestamp": datetime.utcnow(),
                     "metadata": metadata or {}
                 }
-                # Use a background task to avoid slowing down the response
                 await db_service.log_message(log_data)
-                # --- END OF NEW LOGIC ---
                 
                 return message_id
             else:

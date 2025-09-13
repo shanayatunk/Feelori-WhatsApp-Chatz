@@ -146,6 +146,12 @@ export const apiService = {
       return result.data.stats;
   },
 
+  getBroadcastRecipients: async (jobId: string, page: number, search: string): Promise<{ recipients: Recipient[], pagination: Pagination }> => {
+    const result = await makeRequest(`${API_BASE_URL}/admin/broadcasts/${jobId}/recipients?page=${page}&limit=20&search=${search}`);
+    return result.data;
+  },
+
+
   getHealth: async (): Promise<HealthData> => {
     const result = await makeRequest(`${API_BASE_URL}/admin/health`);
     return result.data;

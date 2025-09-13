@@ -229,6 +229,67 @@ class DatabaseService:
         result = await self.db.broadcasts.insert_one(job_doc)
         return str(result.inserted_id)
 
+    async def get_broadcast_recipients(self, job_id: str, page: int, limit: int, search: str | None) -> tuple[list, dict]:
+        """Gets a paginated and searchable list of recipients for a specific broadcast job."""
+        skip = (page - 1) * limit
+        match_query = {"metadata.broadcast_id": job_id}
+
+        # Main pipeline to join message logs with customer names
+        pipeline = [
+            {"$match": match_query},
+            {"$lookup": {
+                "from": "customers",
+                "localField": "phone",
+                "foreignField": "phone_number",
+                "as": "customer_info"
+            }},
+            {"$unwind": {"path": "$customer_info", "preserveNullAndEmptyArrays": True}},
+        ]
+
+        # Add search stage if a query is provided
+        if search:
+            search_regex = {"$regex": search, "$options": "i"}
+            pipeline.append({"$match": {"$or": [
+                {"phone": search_regex},
+                {"customer_info.name": search_regex}
+            ]}})
+
+        # Facet for pagination and total count
+        facet_pipeline = pipeline + [
+            {"$facet": {
+                "recipients": [{"$skip": skip}, {"$limit": limit}],
+                "total_count": [{"$count": "count"}]
+            }}
+        ]
+        
+        result = await self.db.message_logs.aggregate(facet_pipeline).to_list(length=1)
+        
+        recipients = result[0]['recipients'] if result and result[0]['recipients'] else []
+        total_count = result[0]['total_count'][0]['count'] if result and result[0]['total_count'] else 0
+
+        pagination = {"page": page, "limit": limit, "total": total_count, "pages": (total_count + limit - 1) // limit}
+        return recipients, pagination
+
+    async def get_all_broadcast_recipients_for_csv(self, job_id: str) -> list:
+        """Gets all recipients for a broadcast job for CSV export."""
+        pipeline = [
+            {"$match": {"metadata.broadcast_id": job_id}},
+            {"$lookup": {
+                "from": "customers",
+                "localField": "phone",
+                "foreignField": "phone_number",
+                "as": "customer_info"
+            }},
+            {"$unwind": {"path": "$customer_info", "preserveNullAndEmptyArrays": True}},
+            {"$project": {
+                "Name": "$customer_info.name",
+                "Phone Number": "$phone",
+                "Status": "$status",
+                "Timestamp": "$timestamp"
+            }}
+        ]
+        return await self.db.message_logs.aggregate(pipeline).to_list(length=None)
+
     async def get_broadcast_jobs(self, page: int = 1, limit: int = 20) -> tuple[list, dict]:
         """Gets a paginated list of all broadcast jobs."""
         skip = (page - 1) * limit

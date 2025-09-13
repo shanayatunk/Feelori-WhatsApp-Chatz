@@ -1,5 +1,5 @@
 import React from 'react';
-import { apiService, DashboardStats, Escalation } from '../../../lib/api';
+import { apiService, StatsData, Escalation } from '../../../lib/api';
 import { Card, CardHeader, CardContent, CardTitle, CardDescription } from '../../components/ui/Card';
 
 const StatCard = ({ title, value, icon, color = '#ff4d6d' }: { title: string; value: string | number; icon?: React.ReactNode; color?: string; }) => (
@@ -44,7 +44,7 @@ const VolumeChart = ({ data }: { data: { _id: string; count: number }[] }) => {
 
 
 export const DashboardPage = ({ onViewCustomer }: { onViewCustomer: (customerId: string) => void; }) => {
-  const [stats, setStats] = React.useState<DashboardStats | null>(null);
+  const [stats, setStats] = React.useState<StatsData | null>(null);
   const [escalations, setEscalations] = React.useState<Escalation[]>([]);
   const [loading, setLoading] = React.useState(true);
   const [error, setError] = React.useState<string | null>(null);

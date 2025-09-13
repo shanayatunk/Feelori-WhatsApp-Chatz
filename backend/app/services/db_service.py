@@ -280,30 +280,57 @@ class DatabaseService:
         return result.modified_count > 0
 
     async def requeue_held_order(self, order_id: int) -> bool:
-        order_on_hold = await self.db.orders.find_one({"id": order_id, "fulfillment_status_internal": "On Hold"})
-        if not order_on_hold: return False
-        
+        order_on_hold = await self.db.orders.find_one(
+            {"id": order_id, "fulfillment_status_internal": "On Hold"}
+        )
+        if not order_on_hold:
+            return False
+
         previous_reason = order_on_hold.get("hold_reason", "Unknown reason")
         previous_skus = order_on_hold.get("problem_item_skus", [])
-        
+
         await self.db.orders.update_one(
             {"id": order_id},
-            {"$set": {"fulfillment_status_internal": "Pending", "previously_on_hold_reason": previous_reason, "previously_problem_skus": previous_skus},
-             "$unset": {"hold_reason": "", "problem_item_skus": "", "notes": ""}}
+            {"$set": {
+                "fulfillment_status_internal": "Pending",
+                "previously_on_hold_reason": previous_reason,
+                "previously_problem_skus": previous_skus,
+                "updated_at": datetime.utcnow()  # <-- ADD THIS LINE
+            },
+             "$unset": {
+                 "hold_reason": "",
+                 "problem_item_skus": "",
+                 "notes": ""
+             }}
         )
         return True
+	
 
     async def hold_order(self, order_id: int, reason: str, notes: str | None, skus: list | None):
         await self.db.orders.update_one(
             {"id": order_id},
-            {"$set": {"fulfillment_status_internal": "On Hold", "hold_reason": reason, "notes": notes, "problem_item_skus": skus or []}}
+            {"$set": {
+                "fulfillment_status_internal": "On Hold",
+                "hold_reason": reason,
+                "notes": notes,
+                "problem_item_skus": skus or [],
+                "updated_at": datetime.utcnow()  # <-- ADD THIS LINE
+            }}
         )
+
         
     async def complete_order_fulfillment(self, order_id: int, packer_name: str, fulfillment_id: int):
         await self.db.orders.update_one(
             {"id": order_id},
-            {"$set": {"fulfillment_status_internal": "Completed", "packed_by": packer_name, "fulfillment_id": fulfillment_id, "fulfilled_at": datetime.utcnow()}}
+            {"$set": {
+                "fulfillment_status_internal": "Completed",
+                "packed_by": packer_name,
+                "fulfillment_id": fulfillment_id,
+                "fulfilled_at": datetime.utcnow(),
+                "updated_at": datetime.utcnow()  # <-- ADD THIS LINE
+            }}
         )
+
 
     async def get_packing_dashboard_metrics(self) -> dict:
         # Simplified version for brevity, can be expanded to full pipeline
@@ -316,8 +343,14 @@ class DatabaseService:
         """Updates the status and details of an order from the packing dashboard."""
         update_doc = {
             "fulfillment_status_internal": new_status,
-            **details  # This will add fields like hold_reason, notes, etc.
+            "updated_at": datetime.utcnow(), # <-- ADD THIS
+            **details
         }
+        
+        # This part ensures the 'in_progress_at' timestamp is set when needed
+        if new_status == "In Progress":
+            update_doc["in_progress_at"] = datetime.utcnow()
+        
         await self.db.orders.update_one(
             {"id": order_id},
             {"$set": update_doc}
@@ -464,14 +497,22 @@ class DatabaseService:
     async def get_packer_performance_metrics(self, days: int = 7) -> dict:
         """
         Calculates advanced performance metrics for the packing dashboard using an aggregation pipeline.
+        This version is robust and handles both old and new order data.
         """
         start_date = datetime.utcnow() - timedelta(days=days)
 
         pipeline = [
             {
+                # --- THIS IS THE FIX ---
+                # Match orders updated, fulfilled, OR created in the time window
                 "$match": {
-                    "created_at": {"$gte": start_date}
+                    "$or": [
+                        {"updated_at": {"$gte": start_date}},
+                        {"fulfilled_at": {"$gte": start_date}},
+                        {"created_at": {"$gte": start_date}}
+                    ]
                 }
+                # --- END OF FIX ---
             },
             {
                 "$facet": {

@@ -60,7 +60,8 @@ export const PerformancePage = () => {
                             key={d}
                             variant={days === d ? 'primary' : 'ghost'}
                             onClick={() => setDays(d)}
-                            className="px-4 py-2"
+                            // --- UI FIX: Added classes to make inactive buttons darker ---
+                            className={`px-4 py-2 ${days !== d && 'text-gray-700 font-semibold'}`}
                         >
                             Last {d} Days
                         </Button>
@@ -111,7 +112,8 @@ export const PerformancePage = () => {
                     </CardHeader>
                     <CardContent className="space-y-4">
                         <div>
-                            <h3 className="text-sm font-medium mb-2">By Reason</h3>
+                            {/* --- UI FIX: Added classes to make subheading darker --- */}
+                            <h3 className="text-sm font-medium mb-2 text-gray-900">By Reason</h3>
                             {data.hold_analysis.by_reason.map(reason => (
                                 <div key={reason._id} className="flex justify-between text-sm">
                                     <span>{reason._id}</span>
@@ -120,7 +122,8 @@ export const PerformancePage = () => {
                             ))}
                         </div>
                         <div>
-                            <h3 className="text-sm font-medium mb-2">Top Problem SKUs</h3>
+                            {/* --- UI FIX: Added classes to make subheading darker --- */}
+                            <h3 className="text-sm font-medium mb-2 text-gray-900">Top Problem SKUs</h3>
                              {data.hold_analysis.top_problem_skus.map(sku => (
                                 <div key={sku._id} className="flex justify-between text-sm">
                                     <span className="font-mono text-xs">{sku._id}</span>

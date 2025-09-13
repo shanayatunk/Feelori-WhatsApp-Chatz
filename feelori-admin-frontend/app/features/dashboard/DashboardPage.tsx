@@ -97,7 +97,7 @@ export const DashboardPage = ({ onViewCustomer }: { onViewCustomer: (customerId:
         <Card>
             <CardHeader>
                 <CardTitle>Human Support Requests</CardTitle>
-                <CardDescription>Recent conversations that triggered the 'human_escalation' intent.</CardDescription>
+                <CardDescription>Recent conversations that triggered the &apos;human_escalation&apos; intent.</CardDescription>
             </CardHeader>
             <CardContent>
                 <div className="space-y-2 text-sm">

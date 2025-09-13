@@ -48,7 +48,7 @@ export const BroadcastReportPage = ({ jobId, onBack }: { jobId: string; onBack: 
                 <CardContent>
                     <p className="text-sm text-gray-700 border p-3 rounded-md bg-gray-50 mb-6">{details.message}</p>
                     <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
-                        <StatCard title="Total Recipients" value={stats.total_recipients} />
+                        <StatCard title="Total Recipients" value={stats.total_recipients} color="#000000" />
                         <StatCard title="Sent" value={stats.sent} color="#3b82f6" />
                         <StatCard title="Delivered" value={stats.delivered} color="#22c55e" />
                         <StatCard title="Read" value={stats.read} color="#8b5cf6" />

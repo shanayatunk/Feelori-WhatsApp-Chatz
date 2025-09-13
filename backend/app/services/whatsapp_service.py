@@ -71,10 +71,11 @@ class WhatsAppService:
                     "message_type": payload.get("type"),
                     "content": json.dumps(content_payload),
                     "status": "sent",
-                    "timestamp": datetime.utcnow()
+                    "timestamp": datetime.utcnow(),
+                    "metadata": metadata or {}
                 }
                 # Use a background task to avoid slowing down the response
-                asyncio.create_task(db_service.log_message(log_data))
+                await db_service.log_message(log_data)
                 # --- END OF NEW LOGIC ---
                 
                 return message_id

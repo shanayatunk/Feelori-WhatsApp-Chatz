@@ -48,10 +48,11 @@ export const BroadcastHistoryPage = ({ onSelectBroadcast }: { onSelectBroadcast:
                     <tbody>
                         {jobs.map(job => (
                             <tr key={job._id} className="border-b">
-                                <td className="px-4 py-3">{new Date(job.created_at).toLocaleString()}</td>
+                                {/* --- UI FIX: Added text-gray-800 for readability --- */}
+                                <td className="px-4 py-3 text-gray-800">{new Date(job.created_at).toLocaleString()}</td>
                                 <td className="px-4 py-3 text-gray-600 truncate max-w-xs">{job.message}</td>
-                                <td className="px-4 py-3 capitalize">{job.target_type}</td>
-                                <td className="px-4 py-3 capitalize">{job.status}</td>
+                                <td className="px-4 py-3 capitalize text-gray-800">{job.target_type}</td>
+                                <td className="px-4 py-3 capitalize text-gray-800">{job.status}</td>
                                 <td className="px-4 py-3 text-right">
                                     <Button variant="secondary" onClick={() => onSelectBroadcast(job._id)}>
                                         View Report

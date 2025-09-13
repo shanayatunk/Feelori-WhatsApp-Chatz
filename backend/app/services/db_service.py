@@ -242,14 +242,24 @@ class DatabaseService:
 
     async def get_broadcast_job_details(self, job_id: str) -> dict:
         """Gets details and aggregated message statuses for a single broadcast job."""
+        
+        # --- THIS IS THE FIX ---
+        # This new pipeline correctly calculates cumulative statuses.
         pipeline = [
             {"$match": {"metadata.broadcast_id": job_id}},
-            {"$group": {"_id": "$status", "count": {"$sum": 1}}}
+            {
+                "$group": {
+                    "_id": None,
+                    "sent": {"$sum": {"$cond": [{"$in": ["$status", ["sent", "delivered", "read", "failed"]]}, 1, 0]}},
+                    "delivered": {"$sum": {"$cond": [{"$in": ["$status", ["delivered", "read"]]}, 1, 0]}},
+                    "read": {"$sum": {"$cond": [{"$eq": ["$status", "read"]}, 1, 0]}},
+                    "failed": {"$sum": {"$cond": [{"$eq": ["$status", "failed"]}, 1, 0]}}
+                }
+            }
         ]
-        status_results = await self.db.message_logs.aggregate(pipeline).to_list(length=10)
-        
-        # Convert list of {'_id': 'failed', 'count': 5} to a dict {'failed': 5}
-        stats = {res["_id"]: res["count"] for res in status_results if res.get("_id")}
+        status_results = await self.db.message_logs.aggregate(pipeline).to_list(length=1)
+        stats = status_results[0] if status_results else {}
+        # --- END OF FIX ---
         
         job_doc = await self.db.broadcasts.find_one({"_id": ObjectId(job_id)})
         if job_doc:

@@ -11,6 +11,7 @@ from app.services import security_service
 from app.services.whatsapp_service import whatsapp_service
 from app.utils.rate_limiter import limiter
 from app.services.shopify_service import shopify_service
+from app.config.settings import settings
 
 # This file defines all API routes specifically for the packing team's HTML dashboard.
 # All routes are protected and require JWT authentication.
@@ -71,8 +72,6 @@ async def fulfill_order(order_id: str, fulfill_data: FulfillOrderRequest, reques
     """Marks an order as 'Completed' in Shopify and sends a template notification."""
     security_service.EnhancedSecurityService.validate_admin_session(request, current_user)
     
-    # --- THIS IS THE FIX ---
-    # 1. Call Shopify service, which now returns the tracking_url
     success, fulfillment_id, tracking_url = await shopify_service.fulfill_order(
         order_id=int(order_id),
         packer_name=fulfill_data.packer_name,
@@ -83,29 +82,31 @@ async def fulfill_order(order_id: str, fulfill_data: FulfillOrderRequest, reques
     if not success:
         raise HTTPException(status_code=400, detail="Failed to create fulfillment in Shopify.")
 
-    # 2. Update our internal database
     await db_service.complete_order_fulfillment(
         order_id=int(order_id),
         packer_name=fulfill_data.packer_name,
         fulfillment_id=fulfillment_id
     )
     
-    # 3. Send the correct 'shipping_update_v1' template to the customer
     order_doc = await db_service.get_order_by_id(int(order_id))
     if order_doc and order_doc.get("phone_numbers"):
         customer_phone = order_doc["phone_numbers"][0]
         customer_name = (order_doc.get("raw", {}).get("customer", {}) or {}).get("first_name", "there")
         order_number = order_doc.get("order_number")
         
+        # --- THIS IS THE FIX ---
+        # Add the carrier name to the body_params list
+        body_params = [customer_name, order_number, fulfill_data.carrier]
+        # --- END OF FIX ---
+        
         asyncio.create_task(
             whatsapp_service.send_template_message(
                 to=customer_phone,
                 template_name="shipping_update_v1",
-                body_params=[customer_name, order_number],
-                button_url_param=tracking_url  # Use the full URL from Shopify
+                body_params=body_params,
+                button_url_param=tracking_url
             )
         )
-    # --- END OF FIX ---
 
     return APIResponse(success=True, message="Order fulfilled in Shopify and customer notified.", version=settings.api_version)
 

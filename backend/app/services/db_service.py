@@ -597,7 +597,6 @@ class DatabaseService:
         order_id = fulfillment.get("order_id")
         if not order_id: return
         
-        # 1. Update your internal database
         tracking_numbers = fulfillment.get("tracking_numbers", [])
         await self.db.orders.update_one(
             {"id": order_id},
@@ -606,7 +605,6 @@ class DatabaseService:
             upsert=True
         )
 
-        # 2. Send the WhatsApp shipping notification to the customer
         try:
             order_doc = await self.db.orders.find_one({"id": order_id})
             if not order_doc:
@@ -620,16 +618,17 @@ class DatabaseService:
             customer_name = (order_doc.get("raw", {}).get("customer") or {}).get("first_name", "there")
             order_number = order_doc.get("order_number")
             
-            # --- THIS IS THE FIX ---
-            # Use the tracking NUMBER directly instead of parsing the URL
             tracking_url = (fulfillment.get("tracking_urls") or [""])[0]
             if not tracking_url:
                 logger.warning(f"No tracking URL found for order {order_id}, cannot send update.")
                 return
             button_param = tracking_url
-            # --- END OF FIX ---
 
-            body_params = [customer_name, order_number]
+            # --- THIS IS THE FIX ---
+            # Extract the carrier name and add it to the body_params list
+            carrier_name = fulfillment.get("tracking_company", "our shipping partner")
+            body_params = [customer_name, order_number, carrier_name]
+            # --- END OF FIX ---
             
             from app.services.whatsapp_service import whatsapp_service
             wamid = await whatsapp_service.send_template_message(
@@ -639,7 +638,6 @@ class DatabaseService:
                 button_url_param=button_param
             )
 
-            # Save the wamid to the conversation history
             if wamid:
                 await self.update_conversation_history(
                     phone_number=customer_phone,

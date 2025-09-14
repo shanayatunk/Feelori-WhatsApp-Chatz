@@ -114,17 +114,36 @@ class WhatsAppService:
         return await self.send_whatsapp_request(payload)
 
     # --- THIS FUNCTION IS NOW CORRECTED ---
-    async def send_template_message(self, to: str, template_name: str, body_params: list, button_url_param: str = None) -> Optional[str]:
-        """Sends a pre-approved WhatsApp message template with optional button parameters."""
+    async def send_template_message(
+        self, 
+        to: str, 
+        template_name: str, 
+        body_params: list, 
+        header_image_url: str | None = None,
+        button_url_param: str | None = None
+    ) -> Optional[str]:
+        """Sends a pre-approved WhatsApp message template with optional header and button parameters."""
         clean_phone = re.sub(r"[^\d+]", "", to)
         if not clean_phone.startswith("+"):
             clean_phone = "+" + clean_phone.lstrip("+")
 
-        components = [{
-            "type": "body",
-            "parameters": [{"type": "text", "text": str(p)} for p in body_params]
-        }]
+        components = []
         
+        # --- NEW: Add header component if an image URL is provided ---
+        if header_image_url:
+            components.append({
+                "type": "header",
+                "parameters": [{"type": "image", "image": {"link": header_image_url}}]
+            })
+
+        # Add body component
+        if body_params:
+            components.append({
+                "type": "body",
+                "parameters": [{"type": "text", "text": str(p)} for p in body_params]
+            })
+        
+        # Add button component
         if button_url_param:
             components.append({
                 "type": "button",
@@ -139,7 +158,7 @@ class WhatsAppService:
             "type": "template",
             "template": {
                 "name": template_name,
-                "language": {"code": "en_US"},
+                "language": {"code": "en"},
                 "components": components
             }
         }

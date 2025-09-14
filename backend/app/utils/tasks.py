@@ -7,6 +7,7 @@ from app.services.shopify_service import shopify_service
 from app.services.db_service import db_service
 from app.config import strings
 from app.services import whatsapp_service
+from app.services.whatsapp_service import whatsapp_service
 
 logger = logging.getLogger(__name__)
 
@@ -66,28 +67,55 @@ async def update_escalation_analytics():
 
 async def process_abandoned_checkouts():
     """
-    Finds abandoned checkouts that are ~1 hour old and sends a reminder.
+    Finds abandoned checkouts that are ready for a reminder and sends a WhatsApp message.
     """
-    logger.info("--- Checking for abandoned checkouts to process ---")
-    try:
-        checkouts = await db_service.get_pending_abandoned_checkouts()
-        if not checkouts:
-            logger.info("--- No abandoned checkouts to process at this time. ---")
-            return
+    logger.info("Scheduler starting: process_abandoned_checkouts job.")
+    
+    checkouts = await db_service.get_pending_abandoned_checkouts()
+    if not checkouts:
+        logger.info("No pending abandoned checkouts to process.")
+        return
 
-        for checkout in checkouts:
-            phone_number = checkout.get("phone") or (checkout.get("shipping_address") or {}).get("phone")
-            if not phone_number:
-                await db_service.mark_reminder_as_sent(checkout['id']) # Mark as done to avoid re-checking
+    logger.info(f"Found {len(checkouts)} abandoned checkouts to process.")
+    
+    for checkout in checkouts:
+        try:
+            checkout_id = checkout.get("id")
+            customer = checkout.get("customer", {})
+            
+            # Find a valid phone number
+            phone = customer.get("phone") or (checkout.get("shipping_address") or {}).get("phone")
+            if not phone:
+                await db_service.mark_reminder_as_sent(checkout_id) # Mark as processed to avoid retries
                 continue
 
-            customer_name = checkout.get("customer", {}).get("first_name", "there")
-            message = f"Hi {customer_name}! 👋\nIt looks like you left some beautiful items in your cart. ✨\nComplete your purchase here:\n{checkout['abandoned_checkout_url']}"
+            customer_name = customer.get("first_name", "there")
+            checkout_url = checkout.get("abandoned_checkout_url")
+            line_items = checkout.get("line_items", [])
             
-            await whatsapp_service.send_message(phone_number, message)
-            await db_service.mark_reminder_as_sent(checkout['id'])
-            logger.info(f"Sent abandoned checkout reminder to {phone_number} for checkout {checkout['id']}")
-        
-        logger.info(f"--- Finished abandoned checkout task. Processed {len(checkouts)} reminders. ---")
-    except Exception as e:
-        logger.error("Error processing abandoned checkouts", exc_info=True)
+            # Get the image of the first item in the cart for the header
+            first_item_image_url = None
+            if line_items and line_items[0].get("variant", {}).get("image", {}).get("src"):
+                 first_item_image_url = line_items[0]["variant"]["image"]["src"]
+
+            # Prepare template parameters
+            body_params = [customer_name]
+            button_param = checkout_url.split('/')[-1] if checkout_url else ""
+
+            # Send the template message
+            await whatsapp_service.send_template_message(
+                to=phone,
+                template_name="abandoned_cart_reminder_v1",
+                header_image_url=first_item_image_url,
+                body_params=body_params,
+                button_url_param=button_param
+            )
+            
+            # Mark the reminder as sent in the database
+            await db_service.mark_reminder_as_sent(checkout_id)
+            logger.info(f"Successfully sent abandoned cart reminder for checkout ID {checkout_id}.")
+
+        except Exception as e:
+            logger.error(f"Failed to process abandoned checkout ID {checkout.get('id')}: {e}", exc_info=True)
+            
+    logger.info("Scheduler finished: process_abandoned_checkouts job.")

@@ -68,15 +68,12 @@ async def hold_order(order_id: str, hold_data: HoldOrderRequest, request: Reques
 # API endpoint to fulfill an order
 @router.post("/orders/{order_id}/fulfill", response_model=APIResponse)
 async def fulfill_order(order_id: str, fulfill_data: FulfillOrderRequest, request: Request, current_user: dict = Depends(verify_jwt_token)):
-    """
-    Marks an order as 'fulfilled' in Shopify, updates the local database, 
-    and triggers customer notification.
-    """
+    """Marks an order as 'Completed' in Shopify and sends a template notification."""
     security_service.EnhancedSecurityService.validate_admin_session(request, current_user)
-
+    
     # --- THIS IS THE FIX ---
-    # 1. Call the Shopify service to create the fulfillment in Shopify first.
-    success, fulfillment_id = await shopify_service.fulfill_order(
+    # 1. Call Shopify service, which now returns the tracking_url
+    success, fulfillment_id, tracking_url = await shopify_service.fulfill_order(
         order_id=int(order_id),
         packer_name=fulfill_data.packer_name,
         tracking_number=fulfill_data.tracking_number,
@@ -84,31 +81,33 @@ async def fulfill_order(order_id: str, fulfill_data: FulfillOrderRequest, reques
     )
 
     if not success:
-        raise HTTPException(status_code=400, detail="Failed to create fulfillment in Shopify. Please check the order status in Shopify admin.")
+        raise HTTPException(status_code=400, detail="Failed to create fulfillment in Shopify.")
 
-    # 2. Update our internal database with the new status and the fulfillment ID from Shopify.
+    # 2. Update our internal database
     await db_service.complete_order_fulfillment(
         order_id=int(order_id),
         packer_name=fulfill_data.packer_name,
         fulfillment_id=fulfillment_id
     )
-    # --- END OF FIX ---
-
-    # 3. Send notification to customer
+    
+    # 3. Send the correct 'shipping_update_v1' template to the customer
     order_doc = await db_service.get_order_by_id(int(order_id))
     if order_doc and order_doc.get("phone_numbers"):
         customer_phone = order_doc["phone_numbers"][0]
-        customer_name = order_doc.get("raw", {}).get("customer", {}).get("first_name", "there")
+        customer_name = (order_doc.get("raw", {}).get("customer", {}) or {}).get("first_name", "there")
+        order_number = order_doc.get("order_number")
         
-        notification_message = (
-            f"Great news, {customer_name}! 🥳 Your FeelOri order #{order_doc.get('order_number')} has been packed and is on its way!\n\n"
-            f"🚚 Tracking Number: {fulfill_data.tracking_number}\n"
-            f"📦 Carrier: {fulfill_data.carrier}\n\n"
-            "We're so excited for you to receive your items!"
+        asyncio.create_task(
+            whatsapp_service.send_template_message(
+                to=customer_phone,
+                template_name="shipping_update_v1",
+                body_params=[customer_name, order_number],
+                button_url_param=tracking_url  # Use the full URL from Shopify
+            )
         )
-        asyncio.create_task(whatsapp_service.send_message(customer_phone, notification_message))
+    # --- END OF FIX ---
 
-    return APIResponse(success=True, message="Order fulfilled in Shopify and customer notified.", version="v1")
+    return APIResponse(success=True, message="Order fulfilled in Shopify and customer notified.", version=settings.api_version)
 
 # --- NEW FUNCTION ---
 # API endpoint to move a held order back to the pending queue

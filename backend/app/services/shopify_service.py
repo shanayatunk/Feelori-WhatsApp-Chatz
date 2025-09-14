@@ -335,8 +335,8 @@ class ShopifyService:
             logger.error(f"Shopify get_order_by_name error for {order_name}: {e}", exc_info=True)
             return None
 
-    async def fulfill_order(self, order_id: int, tracking_number: str, packer_name: str, carrier: str = "India Post") -> Tuple[bool, Optional[int]]:
-        """Fulfills an order using the Fulfillment Orders API."""
+    async def fulfill_order(self, order_id: int, tracking_number: str, packer_name: str, carrier: str = "India Post") -> Tuple[bool, Optional[int], Optional[str]]:
+        """Fulfills an order using the Fulfillment Orders API and returns the tracking URL."""
         try:
             fo_url = f"https://{self.store_url}/admin/api/2025-07/orders/{order_id}/fulfillment_orders.json"
             headers = {"X-Shopify-Access-Token": self.access_token}
@@ -344,7 +344,7 @@ class ShopifyService:
             fo_resp.raise_for_status()
             fulfillment_orders = fo_resp.json().get("fulfillment_orders", [])
             open_fo = next((fo for fo in fulfillment_orders if fo.get("status") == "open"), None)
-            if not open_fo: return False, None
+            if not open_fo: return False, None, None
 
             line_items = [{"id": item["id"], "quantity": item["fulfillable_quantity"]} for item in open_fo.get("line_items", []) if item.get("fulfillable_quantity", 0) > 0]
             payload = {
@@ -358,12 +358,15 @@ class ShopifyService:
             resp = await self.resilient_api_call(self.http_client.post, fulfillment_url, json=payload, headers=headers)
             
             if resp.status_code == 201:
-                fulfillment_id = resp.json().get("fulfillment", {}).get("id")
-                return True, fulfillment_id
-            return False, None
+                fulfillment = resp.json().get("fulfillment", {})
+                fulfillment_id = fulfillment.get("id")
+                tracking_url = (fulfillment.get("tracking_urls") or [""])[0]
+                # --- FIX: Return the tracking_url ---
+                return True, fulfillment_id, tracking_url
+            return False, None, None
         except Exception as e:
             logger.error(f"Shopify fulfill_order exception for {order_id}: {e}", exc_info=True)
-            return False, None
+            return False, None, None
             
     # --- URL Generation Helpers ---
 

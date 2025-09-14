@@ -557,7 +557,11 @@ class DatabaseService:
                 order_url = payload.get("order_status_url")
 
                 body_params = [customer_name, order_number]
-                button_param = order_url.split('/')[-1] if order_url else ""
+                button_param = ""
+                if order_url and "orders/" in order_url:
+                    # This finds "orders/" and takes everything after it,
+                    # which is the part Shopify needs to identify the specific order.
+                    button_param = order_url.split("orders/", 1)[1]
                 
                 from app.services.whatsapp_service import whatsapp_service
                 wamid = await whatsapp_service.send_template_message(
@@ -611,14 +615,17 @@ class DatabaseService:
 
             customer_name = (order_doc.get("raw", {}).get("customer") or {}).get("first_name", "there")
             order_number = order_doc.get("order_number")
-            tracking_url = (fulfillment.get("tracking_urls") or [""])[0]
-
-            if not tracking_url:
-                logger.warning(f"No tracking URL found for order {order_id}, cannot send update.")
+            
+            # --- THIS IS THE FIX ---
+            # Use the tracking NUMBER directly instead of parsing the URL
+            tracking_number = (fulfillment.get("tracking_numbers") or [""])[0]
+            if not tracking_number:
+                logger.warning(f"No tracking NUMBER found for order {order_id}, cannot send update.")
                 return
+            button_param = tracking_number
+            # --- END OF FIX ---
 
             body_params = [customer_name, order_number]
-            button_param = tracking_url.split('/')[-1] if tracking_url else ""
             
             from app.services.whatsapp_service import whatsapp_service
             wamid = await whatsapp_service.send_template_message(

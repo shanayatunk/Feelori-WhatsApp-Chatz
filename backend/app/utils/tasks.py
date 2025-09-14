@@ -83,35 +83,34 @@ async def process_abandoned_checkouts():
             checkout_id = checkout.get("id")
             customer = checkout.get("customer", {})
             
-            # Find a valid phone number
             phone = customer.get("phone") or (checkout.get("shipping_address") or {}).get("phone")
             if not phone:
-                await db_service.mark_reminder_as_sent(checkout_id) # Mark as processed to avoid retries
+                await db_service.mark_reminder_as_sent(checkout_id)
                 continue
 
             customer_name = customer.get("first_name", "there")
             checkout_url = checkout.get("abandoned_checkout_url")
             line_items = checkout.get("line_items", [])
             
-            # Get the image of the first item in the cart for the header
             first_item_image_url = None
             if line_items and line_items[0].get("variant", {}).get("image", {}).get("src"):
                  first_item_image_url = line_items[0]["variant"]["image"]["src"]
 
-            # Prepare template parameters
-            body_params = [customer_name]
-            button_param = checkout_url.split('/')[-1] if checkout_url else ""
+            # --- THIS IS THE FIX ---
+            # Correctly parse the URL to include the unique checkout token
+            button_param = ""
+            if checkout_url and "checkouts/" in checkout_url:
+                button_param = checkout_url.split("checkouts/", 1)[1]
+            # --- END OF FIX ---
 
-            # Send the template message
             await whatsapp_service.send_template_message(
                 to=phone,
                 template_name="abandoned_cart_reminder_v1",
                 header_image_url=first_item_image_url,
-                body_params=body_params,
+                body_params=[customer_name],
                 button_url_param=button_param
             )
             
-            # Mark the reminder as sent in the database
             await db_service.mark_reminder_as_sent(checkout_id)
             logger.info(f"Successfully sent abandoned cart reminder for checkout ID {checkout_id}.")
 

@@ -540,11 +540,9 @@ class DatabaseService:
         }
         await self.db.orders.update_one({"id": order_id}, {"$set": order_doc}, upsert=True)
         
-        # 1. Send an alert to the packing team
         from app.services.order_service import send_packing_alert_background
         await send_packing_alert_background(payload)
         
-        # 2. Send an order confirmation template to the customer
         customer_phone = (
             (payload.get("customer") or {}).get("phone")
             or (payload.get("shipping_address") or {}).get("phone")
@@ -556,22 +554,28 @@ class DatabaseService:
                 order_number = payload.get("order_number")
                 order_url = payload.get("order_status_url")
 
+                # --- THIS IS THE FIX ---
+                # Extract the unique order token from the URL provided by Shopify
+                order_token = None
+                if order_url and "/orders/" in order_url and "/authenticate" in order_url:
+                    order_token = order_url.split("/orders/")[1].split("/authenticate")[0]
+                
+                if not order_token:
+                    logger.warning(f"Could not parse order token from order_status_url for order {order_number}")
+                    return
+
                 body_params = [customer_name, order_number]
-                button_param = ""
-                if order_url and "orders/" in order_url:
-                    # This finds "orders/" and takes everything after it,
-                    # which is the part Shopify needs to identify the specific order.
-                    button_param = order_url.split("orders/", 1)[1]
+                button_param = order_token # The button parameter is now just the token
+                # --- END OF FIX ---
                 
                 from app.services.whatsapp_service import whatsapp_service
                 wamid = await whatsapp_service.send_template_message(
                     to=customer_phone,
-                    template_name="order_confirmation_v1",
+                    template_name="order_confirmation_v2",
                     body_params=body_params,
                     button_url_param=button_param
                 )
                 
-                # Save the wamid to the conversation history
                 if wamid:
                     await self.update_conversation_history(
                         phone_number=customer_phone,
@@ -618,11 +622,11 @@ class DatabaseService:
             
             # --- THIS IS THE FIX ---
             # Use the tracking NUMBER directly instead of parsing the URL
-            tracking_number = (fulfillment.get("tracking_numbers") or [""])[0]
-            if not tracking_number:
-                logger.warning(f"No tracking NUMBER found for order {order_id}, cannot send update.")
+            tracking_url = (fulfillment.get("tracking_urls") or [""])[0]
+            if not tracking_url:
+                logger.warning(f"No tracking URL found for order {order_id}, cannot send update.")
                 return
-            button_param = tracking_number
+            button_param = tracking_url
             # --- END OF FIX ---
 
             body_params = [customer_name, order_number]

@@ -1,0 +1,148 @@
+# .github/workflows/cicd.yml
+
+name: 'Feelori: Backend CI & Deployment'
+
+on:
+  push:
+    branches:
+      - 'main'
+      - 'develop'
+
+env:
+  REGISTRY: docker.io
+  BACKEND_IMAGE_NAME: ${{ secrets.DOCKERHUB_USERNAME }}/feelori-backend
+  # Note: Frontend deployment is handled by Vercel. This workflow focuses on the backend.
+
+jobs:
+  #########################################
+  #      BACKEND CI & BUILD             #
+  #########################################
+  build_backend:
+    name: Build & Test Backend
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Cache Pip Dependencies
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('backend/requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      - name: Install Python Dependencies
+        run: pip install -r backend/requirements.txt
+
+      # Optional but Recommended: Add your linting and testing steps here
+      # - name: Run Linter (e.g., Flake8)
+      #   run: |
+      #     pip install flake8
+      #     flake8 backend/app
+
+      # - name: Run Tests (Pytest)
+      #   run: |
+      #     pip install pytest
+      #     pytest backend/tests/
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Extract Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.BACKEND_IMAGE_NAME }}
+          tags: |
+            type=sha
+            type=ref,event=branch
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./backend
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+
+  #########################################
+  #      DEPLOY TO DEVELOPMENT          #
+  #########################################
+  deploy_dev:
+    name: Deploy to Development
+    needs: build_backend
+    if: github.ref == 'refs/heads/develop'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fetch Doppler Secrets
+        id: doppler
+        uses: dopplerhq/cli-action@v2.4.1
+        with:
+          doppler-token: ${{ secrets.DEV_DOPPLER_TOKEN }}
+          inject-env-vars: true
+
+      - name: Deploy to Digital Ocean Dev Server
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.DEV_DO_HOST }}
+          username: ${{ secrets.DEV_DO_USERNAME }}
+          key: ${{ secrets.DEV_DO_SSH_KEY }}
+          script: |
+            # Navigate to your project directory
+            cd /path/to/your/project/feelori-whatsapp-chatz
+
+            # Set the Docker image tag from the commit SHA
+            export IMAGE_TAG=${{ github.sha }}
+            echo "Deploying image tag: $IMAGE_TAG"
+
+            # Use Doppler Run to inject secrets into docker-compose
+            doppler run -- docker-compose -f docker-compose.yml up -d --pull always
+
+            # Clean up old, unused Docker images to save space
+            docker image prune -af
+
+  #########################################
+  #      DEPLOY TO PRODUCTION           #
+  #########################################
+  deploy_prod:
+    name: Deploy to Production
+    needs: build_backend
+    if: github.ref == 'refs/heads/main'
+    environment: production # This enables manual approval if configured in repo settings
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fetch Doppler Secrets
+        id: doppler
+        uses: dopplerhq/cli-action@v2.4.1
+        with:
+          doppler-token: ${{ secrets.PROD_DOPPLER_TOKEN }}
+          inject-env-vars: true
+
+      - name: Deploy to Digital Ocean Prod Server
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.PROD_DO_HOST }}
+          username: ${{ secrets.PROD_DO_USERNAME }}
+          key: ${{ secrets.PROD_DO_SSH_KEY }}
+          script: |
+            # Navigate to your project directory
+            cd /path/to/your/project/feelori-whatsapp-chatz
+
+            # Set the Docker image tag from the commit SHA
+            export IMAGE_TAG=${{ github.sha }}
+            echo "Deploying image tag: $IMAGE_TAG"
+
+            # Use Doppler Run to inject secrets into docker-compose
+            doppler run -- docker-compose -f docker-compose.yml up -d --pull always
+
+            # Clean up old, unused Docker images to save space
+            docker image prune -af

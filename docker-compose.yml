@@ -1,18 +1,15 @@
 version: '3.8'
 
-# This file defines the multi-container application setup.
+# This file defines the multi-container application setup for CI/CD deployment.
 # It now includes the backend, a dedicated scheduler for background jobs, and Redis.
+# Images are pulled from a container registry, and secrets are injected by Doppler.
 
 services:
   # 1. The main web application service
   backend:
-    build:
-      context: ./backend
-      dockerfile: Dockerfile
+    image: ${{ secrets.DOCKERHUB_USERNAME }}/feelori-backend:${IMAGE_TAG:-latest}
     container_name: feelori_backend
     restart: unless-stopped
-    env_file:
-      - ./backend/.env
     ports:
       - "127.0.0.1:8000:8000"
     command: gunicorn -w 2 -k uvicorn.workers.UvicornWorker -b 0.0.0.0:8000 -t 120 app.main:app
@@ -24,12 +21,9 @@ services:
   # 2. The new dedicated scheduler service
   # This service runs all background and periodic tasks (e.g., analytics, reminders).
   scheduler:
-    build:
-      context: ./backend
+    image: ${{ secrets.DOCKERHUB_USERNAME }}/feelori-backend:${IMAGE_TAG:-latest}
     container_name: feelori_scheduler
     restart: unless-stopped
-    env_file:
-      - ./backend/.env
     # This command runs our new scheduler script.
     command: python scheduler.py
     depends_on:
@@ -40,12 +34,9 @@ services:
   # 3. The dedicated ML worker is disabled to save memory.
   # To re-enable it in the future, simply uncomment the lines below.
   # ml_worker:
-  #   build:
-  #     context: ./backend
+  #   image: ${{ secrets.DOCKERHUB_USERNAME }}/feelori-backend:${IMAGE_TAG:-latest}
   #   container_name: feelori_ml_worker
   #   restart: unless-stopped
-  #   env_file:
-  #     - ./backend/.env
   #   command: python ml_worker.py
   #   depends_on:
   #     - redis

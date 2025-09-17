@@ -68,7 +68,29 @@ async def handle_whatsapp_webhook(
                 if change.get("field") != "messages": 
                     log.debug("Ignoring non-message change", change=change)
                     continue
+                
                 value = change.get("value", {})
+
+                # --- [START] NEW PHONE ID FILTER ---
+                # Get the Phone ID from the incoming webhook payload
+                metadata = value.get("metadata", {})
+                incoming_phone_id = metadata.get("phone_number_id")
+                
+                # Get the Phone ID this server *expects* (from Doppler/env)
+                # This 'settings' object is already imported at the top of the file
+                expected_phone_id = settings.whatsapp_phone_id 
+
+                # If they don't match, log it and skip this change completely.
+                if incoming_phone_id and expected_phone_id and incoming_phone_id != expected_phone_id:
+                    log.info(
+                        "Ignored event for different phone ID.",
+                        incoming_id=incoming_phone_id,
+                        expected_id=expected_phone_id
+                    )
+                    continue  # <-- This skips to the next 'change'
+                # --- [END] NEW PHONE ID FILTER ---
+
+                # --- (Your existing logic continues below) ---
                 if "statuses" in value:
                     for status_data in value.get("statuses", []):
                         log.info("Processing status update", status=status_data)

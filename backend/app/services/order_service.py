@@ -133,7 +133,9 @@ class QuestionDetector:
 # --- Core Message Processing Orchestration ---
 
 async def process_message(phone_number: str, message_text: str, message_type: str, quoted_wamid: str | None) -> str | None:
-    """Processes an incoming message and routes it to the correct handler."""
+    """
+    Processes an incoming message and routes it using an AI-first intent model.
+    """
     try:
         clean_phone = EnhancedSecurityService.sanitize_phone_number(phone_number)
         
@@ -154,9 +156,76 @@ async def process_message(phone_number: str, message_text: str, message_type: st
                 return await handle_show_unfiltered_products(customer=customer)
             if clean_msg in default_rules.NEGATIVE_RESPONSES:
                 return "No problem! Let me know if there's anything else I can help you find. ✨"
+
+        # --- NEW AI INTENT LOGIC ---
+
+        # 1. Handle simple, non-AI intents first (like images or button clicks)
+        if message_type == "interactive" or message_text.startswith("visual_search_"):
+            intent = await analyze_intent(message_text, message_type, customer, quoted_wamid)
+            response = await route_message(intent, clean_phone, message_text, customer, quoted_wamid)
+            return response[:4096] if response else None
         
-        intent = await analyze_intent(message_text, message_type, customer, quoted_wamid)
-        response = await route_message(intent, clean_phone, message_text, customer, quoted_wamid)
+        # 2. For all other text, use AI to classify
+        logger.debug(f"Classifying intent with AI for: '{message_text}'")
+        intent_prompt = f"""
+        Analyze the user's message: "{message_text}"
+        Classify the user's primary intent. Your response must be a JSON object
+        with two keys: 'intent' and 'keywords'.
+
+        Possible intents are:
+        - 'product_search': User is looking for a product or category. (e.g., "show me gold necklaces")
+        - 'product_inquiry': User is asking a specific question ABOUT a product. (e.g., "is this waterproof?", "are the rubies certified?")
+        - 'greeting': User is just saying hi.
+        - 'smalltalk': User is making casual conversation.
+        - 'rule_based': User is asking for order tracking, shipping policy, or other specific rules.
+        
+        If intent is 'product_inquiry', keywords should be the full question.
+        If intent is 'product_search', keywords should be just the product names/types.
+        If intent is 'rule_based', 'greeting', or 'smalltalk', keywords can be the original message.
+        """
+        
+        ai_result = {}
+        try:
+            # Use your existing ai_service
+            ai_result = await ai_service.get_ai_json_response(
+                prompt=intent_prompt, 
+                message_text=message_text, 
+                client_type="gemini"  # Use your fast/cheap model
+            )
+            ai_intent = ai_result.get("intent", "rule_based") # Default to your old system
+            ai_keywords = ai_result.get("keywords", message_text)
+            logger.info(f"AI classified intent as '{ai_intent}' with keywords: '{ai_keywords}'")
+
+        except Exception as e:
+            logger.error(f"AI intent classification failed: {e}. Falling back to rule-based.")
+            ai_intent = "rule_based" # Fallback to your old system
+            ai_keywords = message_text
+
+        # 3. Route based on the AI's classification
+        if ai_intent == "product_search":
+            response = await handle_product_search(message=ai_keywords, customer=customer, phone_number=clean_phone, quoted_wamid=quoted_wamid)
+        
+        elif ai_intent == "product_inquiry":
+            # This is the new flow that fixes your original problem
+            # It uses the AI's Q&A ability instead of searching
+            answer = await ai_service.get_product_qa(
+                query=ai_keywords,  # This will be the full question
+                product=None
+            )
+            response = answer
+
+        elif ai_intent == "greeting":
+            response = await handle_greeting(phone_number=clean_phone, customer=customer, message=ai_keywords, quoted_wamid=quoted_wamid)
+
+        elif ai_intent == "smalltalk":
+            response = await handle_general_inquiry(message=ai_keywords, customer=customer, phone_number=clean_phone, quoted_wamid=quoted_wamid)
+
+        else: 
+            # ai_intent is 'rule_based' or a fallback
+            # Now we run your ORIGINAL rule-based logic
+            logger.debug("AI intent not definitive, running rule-based analyzer.")
+            intent = await analyze_intent(message_text, message_type, customer, quoted_wamid)
+            response = await route_message(intent, clean_phone, message_text, customer, quoted_wamid)
         
         return response[:4096] if response else None
         

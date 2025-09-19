@@ -1,0 +1,16 @@
+name: Test Doppler Token
+
+on:
+  workflow_dispatch:
+
+jobs:
+  doppler-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install Doppler CLI
+        run: curl -Ls https://cli.doppler.com/install.sh | sh
+
+      - name: Test Doppler Dev Token
+        run: |
+          echo "${{ secrets.DEV_DOPPLER_TOKEN }}" | doppler configure set token
+          doppler secrets download --no-file --format json | jq .

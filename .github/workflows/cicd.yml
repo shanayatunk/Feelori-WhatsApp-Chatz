@@ -12,7 +12,7 @@ env:
 
 jobs:
   #########################################
-  #      BACKEND CI & BUILD             #
+  #      BACKEND CI & BUILD               #
   #########################################
   build_backend:
     name: Build & Test Backend
@@ -61,7 +61,7 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
 
   #########################################
-  #      DEPLOY TO DEVELOPMENT          #
+  #      DEPLOY TO DEVELOPMENT            #
   #########################################
   deploy_dev:
     name: Deploy to Development
@@ -70,7 +70,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Fetch Doppler Secrets
-        uses: dopplerhq/cli-action@v2.4.1
+        uses: dopplerhq/cli-action@v2.1.0
         with:
           doppler-token: ${{ secrets.DEV_DOPPLER_TOKEN }}
           inject-env-vars: true
@@ -94,7 +94,7 @@ jobs:
             docker image prune -af
 
   #########################################
-  #      DEPLOY TO PRODUCTION           #
+  #      DEPLOY TO PRODUCTION             #
   #########################################
   deploy_prod:
     name: Deploy to Production
@@ -104,7 +104,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Fetch Doppler Secrets
-        uses: dopplerhq/cli-action@v2.4.1
+        uses: dopplerhq/cli-action@v2.1.0
         with:
           doppler-token: ${{ secrets.PROD_DOPPLER_TOKEN }}
           inject-env-vars: true

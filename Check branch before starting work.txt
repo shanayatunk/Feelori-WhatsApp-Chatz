@@ -1,0 +1,42 @@
+Check branch before starting work
+
+git branch --show-current
+
+
+If it says develop, good.
+
+Create feature branches (optional but clean)
+
+git checkout develop
+git pull origin develop
+git checkout -b feature/my-change
+
+
+Do your coding here.
+
+When done → merge into develop locally
+
+git checkout develop
+git merge feature/my-change
+git push origin develop
+
+
+→ This deploys to your dev server automatically.
+
+After testing on dev server → merge into main
+
+git checkout main
+git pull origin main   # update main
+git merge develop
+git push origin main
+
+
+→ This deploys to your prod server automatically.
+
+Go back to develop to keep building
+
+git checkout develop
+git pull origin develop
+
+
+Repeat cycle.

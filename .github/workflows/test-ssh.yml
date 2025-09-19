@@ -1,16 +1,18 @@
-name: Test SSH Connection
+name: Test Doppler Token
 
 on:
-  workflow_dispatch:  # so you can trigger it manually
+  workflow_dispatch:  # Trigger manually
 
 jobs:
-  ssh-test:
+  doppler-test:
     runs-on: ubuntu-latest
     steps:
-      - name: Test SSH to Dev Droplet
-        uses: appleboy/ssh-action@v1.0.3
-        with:
-          host: ${{ secrets.DEV_DO_HOST }}
-          username: ${{ secrets.DEV_DO_USERNAME }}
-          key: ${{ secrets.DEV_DO_SSH_KEY }}
-          script: echo "✅ Connected successfully to Dev droplet!"
+      - name: Install Doppler CLI
+        run: curl -Ls https://cli.doppler.com/install.sh | sh
+
+      - name: Test Doppler Dev Token
+        env:
+          DOPPLER_TOKEN: ${{ secrets.DEV_DOPPLER_TOKEN }}
+        run: |
+          echo "🔑 Testing Doppler token..."
+          doppler secrets download --no-file --format json | jq .

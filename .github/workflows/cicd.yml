@@ -4,7 +4,6 @@ on:
   push:
     branches:
       - 'main'
-      - 'develop'
 
 env:
   REGISTRY: docker.io
@@ -70,7 +69,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Fetch Doppler Secrets
-        uses: dopplerhq/cli-action@v2.1.0
+        uses: dopplerhq/cli-action@v3
         with:
           doppler-token: ${{ secrets.DEV_DOPPLER_TOKEN }}
           inject-env-vars: true
@@ -104,7 +103,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Fetch Doppler Secrets
-        uses: dopplerhq/cli-action@v2.1.0
+        uses: dopplerhq/cli-action@v3
         with:
           doppler-token: ${{ secrets.PROD_DOPPLER_TOKEN }}
           inject-env-vars: true

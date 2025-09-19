@@ -1,7 +1,7 @@
 name: Test Doppler Token
 
 on:
-  workflow_dispatch:
+  workflow_dispatch:  # Trigger manually
 
 jobs:
   doppler-test:
@@ -11,6 +11,8 @@ jobs:
         run: curl -Ls https://cli.doppler.com/install.sh | sh
 
       - name: Test Doppler Dev Token
+        env:
+          DOPPLER_TOKEN: ${{ secrets.DEV_DOPPLER_TOKEN }}
         run: |
-          echo "${{ secrets.DEV_DOPPLER_TOKEN }}" | doppler configure set token
+          echo "🔑 Testing Doppler token..."
           doppler secrets download --no-file --format json | jq .

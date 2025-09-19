@@ -4,7 +4,7 @@ on:
   push:
     branches:
       - 'main'
-
+      - 'develop'
 env:
   REGISTRY: docker.io
   BACKEND_IMAGE_NAME: ${{ secrets.DOCKERHUB_USERNAME }}/feelori-backend

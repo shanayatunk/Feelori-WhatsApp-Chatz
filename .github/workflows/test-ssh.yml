@@ -1,0 +1,16 @@
+name: Test SSH Connection
+
+on:
+  workflow_dispatch:  # so you can trigger it manually
+
+jobs:
+  ssh-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Test SSH to Dev Droplet
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.DEV_DO_HOST }}
+          username: ${{ secrets.DEV_DO_USERNAME }}
+          key: ${{ secrets.DEV_DO_SSH_KEY }}
+          script: echo "✅ Connected successfully to Dev droplet!"

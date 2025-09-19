@@ -1,5 +1,3 @@
-# .github/workflows/cicd.yml
-
 name: 'Feelori: Backend CI & Deployment'
 
 on:
@@ -11,7 +9,6 @@ on:
 env:
   REGISTRY: docker.io
   BACKEND_IMAGE_NAME: ${{ secrets.DOCKERHUB_USERNAME }}/feelori-backend
-  # Note: Frontend deployment is handled by Vercel. This workflow focuses on the backend.
 
 jobs:
   #########################################
@@ -39,17 +36,6 @@ jobs:
 
       - name: Install Python Dependencies
         run: pip install -r backend/requirements.txt
-
-      # Optional but Recommended: Add your linting and testing steps here
-      # - name: Run Linter (e.g., Flake8)
-      #   run: |
-      #     pip install flake8
-      #     flake8 backend/app
-
-      # - name: Run Tests (Pytest)
-      #   run: |
-      #     pip install pytest
-      #     pytest backend/tests/
 
       - name: Log in to Docker Hub
         uses: docker/login-action@v3
@@ -84,7 +70,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Fetch Doppler Secrets
-        id: doppler
         uses: dopplerhq/cli-action@v2.4.1
         with:
           doppler-token: ${{ secrets.DEV_DOPPLER_TOKEN }}
@@ -97,17 +82,15 @@ jobs:
           username: ${{ secrets.DEV_DO_USERNAME }}
           key: ${{ secrets.DEV_DO_SSH_KEY }}
           script: |
-            # Navigate to your project directory
-            cd /path/to/your/project/feelori-whatsapp-chatz
+            cd /root/Feelori-WhatsApp-Chatz
+            git fetch origin
+            git checkout develop
+            git pull origin develop
 
-            # Set the Docker image tag from the commit SHA
             export IMAGE_TAG=${{ github.sha }}
             echo "Deploying image tag: $IMAGE_TAG"
 
-            # Use Doppler Run to inject secrets into docker-compose
             doppler run -- docker-compose -f docker-compose.yml up -d --pull always
-
-            # Clean up old, unused Docker images to save space
             docker image prune -af
 
   #########################################
@@ -117,11 +100,10 @@ jobs:
     name: Deploy to Production
     needs: build_backend
     if: github.ref == 'refs/heads/main'
-    environment: production # This enables manual approval if configured in repo settings
+    environment: production
     runs-on: ubuntu-latest
     steps:
       - name: Fetch Doppler Secrets
-        id: doppler
         uses: dopplerhq/cli-action@v2.4.1
         with:
           doppler-token: ${{ secrets.PROD_DOPPLER_TOKEN }}
@@ -134,15 +116,13 @@ jobs:
           username: ${{ secrets.PROD_DO_USERNAME }}
           key: ${{ secrets.PROD_DO_SSH_KEY }}
           script: |
-            # Navigate to your project directory
-            cd /path/to/your/project/feelori-whatsapp-chatz
+            cd /root/Feelori-WhatsApp-Chatz
+            git fetch origin
+            git checkout main
+            git pull origin main
 
-            # Set the Docker image tag from the commit SHA
             export IMAGE_TAG=${{ github.sha }}
             echo "Deploying image tag: $IMAGE_TAG"
 
-            # Use Doppler Run to inject secrets into docker-compose
             doppler run -- docker-compose -f docker-compose.yml up -d --pull always
-
-            # Clean up old, unused Docker images to save space
             docker image prune -af

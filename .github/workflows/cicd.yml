@@ -97,7 +97,7 @@ jobs:
             export IMAGE_TAG=${{ github.sha }}
             echo "Deploying image tag: $IMAGE_TAG"
 
-            doppler run -- docker-compose -f docker-compose.yml up -d --pull always
+            doppler run -- docker compose -f docker-compose.yml up -d --pull always
             docker image prune -af
 
   #########################################

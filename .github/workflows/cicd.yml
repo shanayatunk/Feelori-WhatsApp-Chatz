@@ -50,7 +50,7 @@ jobs:
         with:
           images: ${{ env.BACKEND_IMAGE_NAME }}
           tags: |
-            type=sha
+            type=sha,format=long
             type=ref,event=branch
 
       - name: Build and push Docker image

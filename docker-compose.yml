@@ -7,7 +7,7 @@ version: '3.8'
 services:
   # 1. The main web application service
   backend:
-    image: ${{ secrets.DOCKERHUB_USERNAME }}/feelori-backend:${IMAGE_TAG:-latest}
+    image: ${DOCKERHUB_USERNAME}/feelori-backend:${IMAGE_TAG:-latest}
     container_name: feelori_backend
     restart: unless-stopped
     ports:
@@ -21,7 +21,7 @@ services:
   # 2. The new dedicated scheduler service
   # This service runs all background and periodic tasks (e.g., analytics, reminders).
   scheduler:
-    image: ${{ secrets.DOCKERHUB_USERNAME }}/feelori-backend:${IMAGE_TAG:-latest}
+    image: ${DOCKERHUB_USERNAME}/feelori-backend:${IMAGE_TAG:-latest}
     container_name: feelori_scheduler
     restart: unless-stopped
     # This command runs our new scheduler script.
@@ -34,7 +34,7 @@ services:
   # 3. The dedicated ML worker is disabled to save memory.
   # To re-enable it in the future, simply uncomment the lines below.
   # ml_worker:
-  #   image: ${{ secrets.DOCKERHUB_USERNAME }}/feelori-backend:${IMAGE_TAG:-latest}
+  #   image: ${DOCKERHUB_USERNAME}/feelori-backend:${IMAGE_TAG:-latest}
   #   container_name: feelori_ml_worker
   #   restart: unless-stopped
   #   command: python ml_worker.py

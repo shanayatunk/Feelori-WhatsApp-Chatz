@@ -95,6 +95,7 @@ jobs:
             git pull origin develop
 
             export IMAGE_TAG=${{ github.sha }}
+            export DOCKERHUB_USERNAME=${{ secrets.DOCKERHUB_USERNAME }}
             echo "Deploying image tag: $IMAGE_TAG"
 
             doppler run -- docker compose -f docker-compose.yml up -d --pull always
@@ -129,6 +130,7 @@ jobs:
             git pull origin main
 
             export IMAGE_TAG=${{ github.sha }}
+            export DOCKERHUB_USERNAME=${{ secrets.DOCKERHUB_USERNAME }}
             echo "Deploying image tag: $IMAGE_TAG"
 
             doppler run -- docker-compose -f docker-compose.yml up -d --pull always

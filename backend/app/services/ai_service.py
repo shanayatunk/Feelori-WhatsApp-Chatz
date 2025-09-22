@@ -6,6 +6,8 @@ import asyncio
 import numpy as np
 import google.generativeai as genai
 from openai import AsyncOpenAI
+from typing import Optional
+from app.models.domain import Product
 from rapidfuzz import process, fuzz
 
 from app.config.settings import settings
@@ -79,6 +81,7 @@ class AIService:
         full_prompt = f"{AI_SYSTEM_PROMPT}\n\nContext: {json.dumps(context)}\n\nMessage: {message}"
         response = await self.gemini_client.generate_content_async(full_prompt)
         return response.text.strip()
+
     async def get_ai_json_response(self, prompt: str, **kwargs) -> dict:
         """
         Generates a JSON response from a prompt, required for intent classification.

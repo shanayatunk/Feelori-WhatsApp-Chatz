@@ -65,7 +65,7 @@ services:
   #   deploy:
   #     resources:
   #       limits:
-  * memory: 4G
+  #         memory: 4G
 
   # 4. Redis service for caching and queuing
   redis:

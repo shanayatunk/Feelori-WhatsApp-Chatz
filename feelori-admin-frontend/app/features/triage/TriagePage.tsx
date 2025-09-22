@@ -57,9 +57,9 @@ export const TriagePage = () => {
                 <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700">{ticket.issue_type}</td>
                 <td className="px-6 py-4 whitespace-nowrap text-sm font-medium space-x-2">
                   {ticket.image_media_id && ticket.image_media_id !== 'N/A' && (
-                    <Button variant="outline" size="sm" disabled>View Photo</Button>
+                    <Button variant="secondary" size="sm" disabled>View Photo</Button>
                   )}
-                  <Button variant="default" size="sm" disabled>Resolve</Button>
+                  <Button variant="primary" size="sm" disabled>Resolve</Button>
                 </td>
               </tr>
             ))}

@@ -1,8 +1,8 @@
 version: '3.8'
 
-# This file defines the multi-container application setup for CI/CD deployment.
-# It now includes the backend, a dedicated scheduler for background jobs, and Redis.
-# Images are pulled from a container registry, and secrets are injected by Doppler.
+# Multi-container setup for CI/CD deployment
+# Includes backend, scheduler, Redis.
+# Secrets are injected by Doppler via GitHub Actions (not inside this file).
 
 services:
   # 1. The main web application service
@@ -18,21 +18,19 @@ services:
     networks:
       - feelori-net
 
-  # 2. The new dedicated scheduler service
-  # This service runs all background and periodic tasks (e.g., analytics, reminders).
+  # 2. Dedicated scheduler service for background and periodic tasks
   scheduler:
     image: ${DOCKERHUB_USERNAME}/feelori-backend:${IMAGE_TAG:-latest}
     container_name: feelori_scheduler
     restart: unless-stopped
-    # This command runs our new scheduler script.
     command: python scheduler.py
     depends_on:
       - redis
     networks:
       - feelori-net
 
-  # 3. The dedicated ML worker is disabled to save memory.
-  # To re-enable it in the future, simply uncomment the lines below.
+  # 3. (Optional) ML worker – disabled to save memory
+  # To re-enable, uncomment the lines below
   # ml_worker:
   #   image: ${DOCKERHUB_USERNAME}/feelori-backend:${IMAGE_TAG:-latest}
   #   container_name: feelori_ml_worker
@@ -47,7 +45,7 @@ services:
   #       limits:
   #         memory: 4G
 
-  # 4. The Redis service for caching and queuing
+  # 4. Redis service for caching and queuing
   redis:
     image: "redis:7-alpine"
     container_name: feelori_redis
@@ -59,10 +57,10 @@ services:
     networks:
       - feelori-net
 
-# Define a volume to persist Redis data across container restarts
+# Persistent Redis data
 volumes:
   redis-data:
 
-# Define a shared network for all services to communicate
+# Shared network
 networks:
   feelori-net:

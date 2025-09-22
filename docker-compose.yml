@@ -17,8 +17,8 @@ services:
       - redis
     networks:
       - feelori-net
-    # CORRECTED BLOCK: Maps UPPERCASE (host) to lowercase (container)
     environment:
+      # --- Original 9 Variables ---
       - mongo_atlas_uri=${MONGO_ATLAS_URI}
       - whatsapp_access_token=${WHATSAPP_ACCESS_TOKEN}
       - whatsapp_phone_id=${WHATSAPP_PHONE_ID}
@@ -28,6 +28,10 @@ services:
       - jwt_secret_key=${JWT_SECRET_KEY}
       - admin_password=${ADMIN_PASSWORD}
       - session_secret_key=${SESSION_SECRET_KEY}
+      
+      # --- ADD THESE NEW LINES ---
+      - gemini_api_key=${GEMINI_API_KEY}
+      - openai_api_key=${OPENAI_API_KEY}
 
   # 2. Dedicated scheduler service for background and periodic tasks
   scheduler:
@@ -39,8 +43,8 @@ services:
       - redis
     networks:
       - feelori-net
-    # CORRECTED BLOCK: Maps UPPERCASE (host) to lowercase (container)
     environment:
+      # --- Original 9 Variables ---
       - mongo_atlas_uri=${MONGO_ATLAS_URI}
       - whatsapp_access_token=${WHATSAPP_ACCESS_TOKEN}
       - whatsapp_phone_id=${WHATSAPP_PHONE_ID}
@@ -50,6 +54,10 @@ services:
       - jwt_secret_key=${JWT_SECRET_KEY}
       - admin_password=${ADMIN_PASSWORD}
       - session_secret_key=${SESSION_SECRET_KEY}
+      
+      # --- ADD THESE NEW LINES ---
+      - gemini_api_key=${GEMINI_API_KEY}
+      - openai_api_key=${OPENAI_API_KEY}
 
   # 3. (Optional) ML worker – disabled to save memory
   # To re-enable, uncomment the lines below

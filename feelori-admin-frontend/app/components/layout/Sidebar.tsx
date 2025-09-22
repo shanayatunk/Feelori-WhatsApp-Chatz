@@ -12,6 +12,7 @@ export const Sidebar = ({ activePage, setActivePage }: { activePage: string; set
     { id: 'health', label: 'System Health', icon: <HeartPulseIcon className="h-5 w-5" /> },
     { id: 'security', label: 'Security', icon: <ShieldCheckIcon className="h-5 w-5" /> },
     { id: 'broadcast', label: 'Broadcast', icon: <SendIcon className="h-5 w-5" /> },
+    { id: 'triage', label: 'Triage Tickets', icon: <FileTextIcon className="h-5 w-5" /> },
     { type: 'divider' as const },
     { type: 'header', label: 'Configuration' },
     { id: 'rules', label: 'Rules Engine', icon: <SettingsIcon className="h-5 w-5" /> },

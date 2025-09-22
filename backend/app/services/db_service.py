@@ -53,7 +53,24 @@ class DatabaseService:
             logger.error(f"Failed to create database indexes: {e}")
 
 
-
+    async def get_recent_orders_by_phone(self, phone_number: str, limit: int = 3) -> List[dict]:
+        """
+        Gets a list of the most recent orders for a customer by querying
+        our own database, which has the phone_numbers array.
+        """
+        try:
+            # Find orders where the 'phone_numbers' array contains the customer's phone
+            # Fetch the 'raw' payload which _format_single_order needs
+            cursor = self.db.orders.find(
+                {"phone_numbers": phone_number},
+                {"order_number": 1, "created_at": 1, "raw": 1} # Get the raw payload
+            ).sort("created_at", -1).limit(limit)
+            
+            orders = await cursor.to_list(length=limit)
+            return orders
+        except Exception as e:
+            logger.error(f"Failed to get_recent_orders_by_phone for {phone_number}: {e}")
+            return []
 
     # Scheduler
 

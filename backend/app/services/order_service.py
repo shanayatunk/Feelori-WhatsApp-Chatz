@@ -136,7 +136,8 @@ class QuestionDetector:
 
 async def process_message(phone_number: str, message_text: str, message_type: str, quoted_wamid: str | None) -> str | None:
     """
-    Processes an incoming message and routes it using an AI-first intent model.
+    Processes an incoming message, handling triage states before
+    routing to the AI-first intent model.
     """
     try:
         clean_phone = EnhancedSecurityService.sanitize_phone_number(phone_number)
@@ -145,6 +146,98 @@ async def process_message(phone_number: str, message_text: str, message_type: st
             return string_service.get_string("PACKING_DEPT_REDIRECT", strings.PACKING_DEPT_REDIRECT)
 
         customer = await get_or_create_customer(clean_phone)
+
+        # --- START: AUTOMATED TRIAGE FLOW ---
+        # Check for active triage state *before* anything else
+        
+        # State 1: Check if user is replying to "Is this your order?"
+        confirm_order_key = f"state:awaiting_triage_order_confirm:{clean_phone}"
+        order_to_confirm = await cache_service.get(confirm_order_key)
+        if order_to_confirm:
+            await cache_service.redis.delete(confirm_order_key)
+            if message_text == "triage_confirm_yes":
+                # User confirmed the order, now send the issue list
+                await _send_triage_issue_list(clean_phone, order_to_confirm)
+                return "[Bot is handling triage step 2: issue selection]"
+            else:
+                # User said "No," so now we ask for the order number
+                await cache_service.set(f"state:awaiting_triage_order_number:{clean_phone}", "1", ex=900)
+                return "No problem. Please reply with the correct order number (e.g., #FO1039)."
+
+        # State 2: Check if user is selecting an order from a list
+        if message_text.startswith("triage_select_order_"):
+            order_number = message_text.replace("triage_select_order_", "")
+            await _send_triage_issue_list(clean_phone, order_number)
+            return "[Bot is handling triage step 2: issue selection]"
+
+        # State 3: Check if user is replying with an order number manually
+        order_number_key = f"state:awaiting_triage_order_number:{clean_phone}"
+        if await cache_service.get(order_number_key):
+            order_number = message_text.strip() # This is the order number
+            await cache_service.redis.delete(order_number_key)
+            await _send_triage_issue_list(clean_phone, order_number)
+            return "[Bot is handling triage step 2: issue selection]"
+
+        # State 4: Check if user is selecting an issue type
+        # We find the key by searching for the pattern
+        issue_selection_keys = await cache_service.redis.keys(f"state:awaiting_triage_issue_selection:*:{clean_phone}")
+        if issue_selection_keys:
+            key = issue_selection_keys[0].decode()
+            order_number = key.split(":")[2] # Extract order num from the key
+            await cache_service.redis.delete(key) # Clear this state
+
+            if message_text == "triage_issue_damaged":
+                # Ask for a photo
+                await cache_service.set(f"state:awaiting_triage_photo:{order_number}:{clean_phone}", "1", ex=900)
+                return "I understand. To process this, please reply with a photo of the damaged item. If you can, please also include a photo of the shipping box."
+            else:
+                # For any other issue, create a ticket and escalate
+                issue_text = message_text.replace("triage_issue_", "").replace("_", " ")
+                logger.info(f"Triage: Escalating for {clean_phone}, Order: {order_number}, Issue: {issue_text}")
+                
+                triage_ticket = {
+                    "customer_phone": clean_phone,
+                    "order_number": order_number,
+                    "issue_type": issue_text,
+                    "image_media_id": None, # No image for this issue
+                    "status": "pending",
+                    "created_at": datetime.utcnow()
+                }
+                await db_service.db.triage_tickets.insert_one(triage_ticket)
+                return string_service.get_string("HUMAN_ESCALATION", strings.HUMAN_ESCALATION)
+        
+        # State 5: Check if user is sending a damage photo
+        photo_keys = await cache_service.redis.keys(f"state:awaiting_triage_photo:*:{clean_phone}")
+        # We must check for "image" type OR your special "visual_search_" text
+        if photo_keys and (message_type == "image" or message_text.startswith("visual_search_")):
+            key = photo_keys[0].decode()
+            order_number = key.split(":")[2]
+            await cache_service.redis.delete(key)
+            
+            image_id = "N/A"
+            if message_text.startswith("visual_search_"):
+                 image_id = message_text.replace("visual_search_", "").split("_caption_")[0]
+            
+            logger.info(f"Triage: Got photo (Media ID: {image_id}) for {clean_phone}, Order: {order_number}. Escalating.")
+
+            # Create the final triage ticket with the photo
+            triage_ticket = {
+                "customer_phone": clean_phone,
+                "order_number": order_number,
+                "issue_type": "damaged_item",
+                "image_media_id": image_id,
+                "status": "pending",
+                "created_at": datetime.utcnow()
+            }
+            await db_service.db.triage_tickets.insert_one(triage_ticket)
+            
+            return string_service.get_string("HUMAN_ESCALATION", strings.HUMAN_ESCALATION)
+        # --- END: AUTOMATED TRIAGE FLOW ---
+
+
+        # --- START: ORIGINAL FUNCTION LOGIC ---
+        # If no triage state was matched, proceed with normal logic
+
         last_question_raw = await cache_service.redis.get(f"state:last_bot_question:{clean_phone}")
         
         if last_question_raw:
@@ -705,19 +798,44 @@ async def handle_visual_search(message: str, customer: Dict, **kwargs) -> Option
         return "Something went wrong during the visual search. Please try again. 😔"
 
 async def handle_order_inquiry(phone_number: str, customer: Dict, **kwargs) -> str:
-    """Handles general order status inquiries by asking the user for their order number."""
-    message_lower = (customer.get("conversation_history", [{}])[-1] or {}).get("message", "").lower()
-
-    # This part helps users who ask *how* to find their order number
-    if any(k in message_lower for k in {"where", "find", "how"}) and "order number" in message_lower:
-        return string_service.get_string("ORDER_NUMBER_HELP", strings.ORDER_NUMBER_HELP)
+    """
+    Handles general order status inquiries by proactively searching for the
+    customer's recent orders in the database.
+    """
     
-    # Instead of searching, we now prompt the user for the order number.
-    prompt_message = string_service.get_string(
-        "ORDER_INQUIRY_PROMPT",
-        "I can help with that! Please reply with your order number (e.g., #FO1039), and I'll look it up for you. You can find it in your order confirmation email. 📧"
-    )
-    return prompt_message
+    # 1. Proactively search our database for recent orders
+    recent_orders = await db_service.get_recent_orders_by_phone(phone_number, limit=3)
+
+    if not recent_orders:
+        # 2. NO ORDERS FOUND: Fall back to the original behavior
+        logger.info(f"No orders found for {phone_number}. Asking for order number.")
+        return string_service.get_string(
+            "ORDER_INQUIRY_PROMPT",
+            "I can help with that! Please reply with your order number (e.g., #FO1039), and I'll look it up for you. You can find it in your order confirmation email. 📧"
+        )
+    
+    elif len(recent_orders) == 1:
+        # 3. ONE ORDER FOUND: Give them the status directly
+        logger.info(f"Found one recent order for {phone_number}. Displaying status.")
+        order_data = recent_orders[0].get("raw", {}) # Get the raw payload
+        return _format_single_order(order_data, detailed=False) # Use the existing formatter
+
+    else:
+        # 4. MULTIPLE ORDERS FOUND: List them and ask which one
+        logger.info(f"Found multiple recent orders for {phone_number}. Asking to clarify.")
+        order_list = []
+        for order in recent_orders:
+            order_num = order.get("order_number") or "N/A"
+            order_date = "Unknown Date"
+            try:
+                raw_created_at = order.get("created_at") or order.get("raw", {}).get("created_at", "")
+                order_date = datetime.fromisoformat(raw_created_at.replace("Z", "+00:00")).strftime("%d %b %Y")
+            except Exception:
+                pass # Keep default "Unknown Date"
+            order_list.append(f"• {order_num} (from {order_date})")
+        
+        orders_text = "\n".join(order_list)
+        return f"I found a few recent orders for this number:\n\n{orders_text}\n\nPlease reply with the order number (e.g., #FO1039) you'd like to check."
 
 async def handle_support_request(message: str, customer: Dict, **kwargs) -> str:
     """Handles support requests for damaged items, returns, etc."""
@@ -770,7 +888,7 @@ async def handle_general_inquiry(message: str, customer: Dict, **kwargs) -> str:
         return string_service.get_string("ERROR_AI_GENERAL", strings.ERROR_AI_GENERAL)
 
 # --- Handlers for string constants ---
-async def handle_human_escalation(**kwargs) -> str: return string_service.get_string("HUMAN_ESCALATION", strings.HUMAN_ESCALATION)
+
 async def handle_price_feedback(**kwargs) -> str: return string_service.get_string("PRICE_FEEDBACK_RESPONSE", strings.PRICE_FEEDBACK_RESPONSE)
 async def handle_discount_inquiry(**kwargs) -> str: return string_service.get_string("DISCOUNT_INFO", strings.DISCOUNT_INFO)
 async def handle_review_inquiry(**kwargs) -> str: return string_service.get_string("REVIEW_INFO", strings.REVIEW_INFO)
@@ -780,7 +898,79 @@ async def handle_contact_inquiry(**kwargs) -> str: return string_service.get_str
 async def handle_thank_you(**kwargs) -> str: return string_service.get_string("THANK_YOU_RESPONSE", strings.THANK_YOU_RESPONSE)
 
 
+async def handle_human_escalation(phone_number: str, customer: Dict, **kwargs) -> str:
+    """
+    STARTS the automated triage flow instead of immediately escalating.
+    It proactively finds the user's orders and asks them to confirm.
+    """
+    logger.info(f"Starting triage flow for {phone_number} instead of escalating.")
+    
+    # 1. Proactively search our database for recent orders
+    recent_orders = await db_service.get_recent_orders_by_phone(phone_number, limit=3)
+
+    if not recent_orders:
+        # 2. NO ORDERS FOUND: Ask for the order number.
+        logger.info(f"Triage: No orders found for {phone_number}. Asking for order number.")
+        await cache_service.set(f"state:awaiting_triage_order_number:{phone_number}", "1", ex=900)
+        return "I'm sorry to hear you're having an issue. To help, could you please reply with your order number (e.g., #FO1039)?"
+
+    elif len(recent_orders) == 1:
+        # 3. ONE ORDER FOUND: Ask to confirm.
+        order_num = recent_orders[0].get("order_number")
+        logger.info(f"Triage: Found one order ({order_num}) for {phone_number}. Asking for confirmation.")
+        
+        # Save the order number to Redis so we know what "yes" means
+        await cache_service.set(f"state:awaiting_triage_order_confirm:{phone_number}", order_num, ex=900)
+        
+        options = {"triage_confirm_yes": "Yes, that's it", "triage_confirm_no": "No, it's different"}
+        await whatsapp_service.send_quick_replies(
+            phone_number,
+            f"I'm sorry to hear you're having an issue. I see your most recent order is **{order_num}**. Is this the one you need help with?",
+            options
+        )
+        return "[Bot is asking to confirm order for triage]"
+
+    else:
+        # 4. MULTIPLE ORDERS FOUND: Ask to select.
+        logger.info(f"Triage: Found multiple orders for {phone_number}. Asking to select.")
+        
+        options = {}
+        for order in recent_orders:
+            order_num = order.get("order_number")
+            options[f"triage_select_order_{order_num}"] = f"Order {order_num}"
+        
+        await whatsapp_service.send_quick_replies(
+            phone_number,
+            "I'm sorry to hear you're having an issue. I found a few of your recent orders. Which one do you need help with?",
+            options
+        )
+        return "[Bot is asking to select order for triage]"
+
 # --- Helper Functions for Handlers ---
+
+async def _send_triage_issue_list(phone_number: str, order_number: str):
+    """
+    Sends the list of common issues for the user to select.
+    This is Step 2 of the triage flow.
+    """
+    logger.info(f"Triage: Sending issue list for order {order_number} to {phone_number}.")
+    
+    # We save the selected order number in the state key
+    state_key = f"state:awaiting_triage_issue_selection:{order_number}:{phone_number}"
+    await cache_service.set(state_key, "1", ex=900)
+    
+    options = {
+        "triage_issue_damaged": "📦 Item is damaged",
+        "triage_issue_wrong_item": "Wrong item received",
+        "triage_issue_return": "I want to return it",
+        "triage_issue_other": "Something else"
+    }
+    
+    await whatsapp_service.send_quick_replies(
+        phone_number,
+        f"Thank you. What is the issue with order **{order_number}**?",
+        options
+    )
 
 def _identify_search_category(keywords: List[str]) -> str:
     """Identifies the primary product category from a list of keywords."""

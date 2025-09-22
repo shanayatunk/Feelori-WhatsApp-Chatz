@@ -11,6 +11,7 @@ import { SecurityPage } from './features/security/SecurityPage';
 import { BroadcastPage } from './features/broadcast/BroadcastPage';
 import { RulesEnginePage } from './features/rules/RulesEnginePage';
 import { StringsManagerPage } from './features/strings/StringsManagerPage';
+import { TriagePage } from './features/triage/TriagePage';
 
 export default function App() {
   const [isAuthenticated, setIsAuthenticated] = React.useState(false);
@@ -75,6 +76,8 @@ export default function App() {
         return <RulesEnginePage />;
       case 'strings':
         return <StringsManagerPage />;
+      case 'triage':
+        return <TriagePage />;
       default:
         // CORRECTED: Removed the unused `setPage` prop
         return <DashboardPage onViewCustomer={handleViewCustomer} />;

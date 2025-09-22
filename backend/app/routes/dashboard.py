@@ -1,10 +1,14 @@
 # /app/routes/dashboard.py
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from app.config.settings import settings
 from app.services.db_service import db_service
 from app.utils.dependencies import verify_jwt_token
 from app.models.api import APIResponse
+import structlog  # <-- ADD THIS IMPORT
+
+# Get a logger
+log = structlog.get_logger(__name__)
 
 # This file defines all API routes specifically for the new React Admin Dashboard.
 router = APIRouter(
@@ -44,4 +48,31 @@ async def get_human_escalations(current_user: dict = Depends(verify_jwt_token)):
     return APIResponse(success=True, message="Escalations retrieved successfully.", data={"escalations": escalations}, version=settings.api_version)
 
 
+# --- ADD THIS NEW ENDPOINT ---
 
+@router.get("/triage-tickets", response_model=APIResponse)
+async def get_triage_tickets(current_user: dict = Depends(verify_jwt_token)):
+    """
+    Fetches all open triage tickets for the admin panel.
+    """
+    try:
+        tickets_cursor = db_service.db.triage_tickets.find(
+            {"status": "pending"}
+        ).sort("created_at", 1)  # Show oldest first
+        
+        tickets = await tickets_cursor.to_list(length=100)
+        
+        # Convert MongoDB ObjectId to string for JSON serialization
+        for ticket in tickets:
+            ticket["_id"] = str(ticket["_id"])
+            
+        return APIResponse(
+            success=True,
+            message="Triage tickets retrieved successfully.",
+            data={"tickets": tickets},
+            version=settings.api_version
+        )
+        
+    except Exception as e:
+        log.error("Error fetching triage tickets", exc_info=True, error=str(e))
+        raise HTTPException(status_code=500, detail="Failed to fetch triage tickets")

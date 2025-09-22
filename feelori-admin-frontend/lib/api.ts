@@ -249,3 +249,24 @@ export const apiService = {
   },
 };
 
+// ADD THIS NEW TYPE
+export type TriageTicket = {
+  _id: string;
+  customer_phone: string;
+  order_number: string;
+  issue_type: string;
+  image_media_id: string | null;
+  status: 'pending' | 'resolved';
+  created_at: string;
+};
+
+// ADD THIS NEW API FUNCTION
+export const getTriageTickets = async (): Promise<{ tickets: TriageTicket[] }> => {
+  try {
+    const { data } = await api.get('/dashboard/triage-tickets');
+    return data.data; // The API wraps data in a 'data' key
+  } catch (error) {
+    console.error("Failed to fetch triage tickets:", error);
+    throw new Error("Failed to fetch triage tickets");
+  }
+};

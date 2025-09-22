@@ -18,20 +18,30 @@ services:
     networks:
       - feelori-net
     environment:
-      # --- Original 9 Variables ---
+      - admin_password=${ADMIN_PASSWORD}
+      - allowed_hosts=${ALLOWED_HOSTS}
+      - api_key=${API_KEY}
+      - cors_allowed_origins=${CORS_ALLOWED_ORIGINS}
+      - environment=${ENVIRONMENT}
+      - gemini_api_key=${GEMINI_API_KEY}
+      - jwt_secret_key=${JWT_SECRET_KEY}
       - mongo_atlas_uri=${MONGO_ATLAS_URI}
+      - next_public_api_url=${NEXT_PUBLIC_API_URL}
+      - openai_api_key=${OPENAI_API_KEY}
+      - packing_dept_whatsapp_number=${PACKING_DEPT_WHATSAPP_NUMBER}
+      - redis_url=${REDIS_URL}
+      - session_secret_key=${SESSION_SECRET_KEY}
+      - shopify_access_token=${SHOPIFY_ACCESS_TOKEN}
+      - shopify_storefront_access_token=${SHOPIFY_STOREFRONT_ACCESS_TOKEN}
+      - shopify_store_url=${SHOPIFY_STORE_URL}
+      - shopify_webhook_secret=${SHOPIFY_WEBHOOK_SECRET}
       - whatsapp_access_token=${WHATSAPP_ACCESS_TOKEN}
+      - whatsapp_app_secret=${WHATSAPP_APP_SECRET}
+      - whatsapp_business_account_id=${WHATSAPP_BUSINESS_ACCOUNT_ID}
+      - whatsapp_catalog_id=${WHATSAPP_CATALOG_ID}
       - whatsapp_phone_id=${WHATSAPP_PHONE_ID}
       - whatsapp_verify_token=${WHATSAPP_VERIFY_TOKEN}
-      - whatsapp_app_secret=${WHATSAPP_APP_SECRET}
-      - shopify_access_token=${SHOPIFY_ACCESS_TOKEN}
-      - jwt_secret_key=${JWT_SECRET_KEY}
-      - admin_password=${ADMIN_PASSWORD}
-      - session_secret_key=${SESSION_SECRET_KEY}
-      
-      # --- ADD THESE NEW LINES ---
-      - gemini_api_key=${GEMINI_API_KEY}
-      - openai_api_key=${OPENAI_API_KEY}
+      - whatsapp_webhook_secret=${WHATSAPP_WEBHOOK_SECRET}
 
   # 2. Dedicated scheduler service for background and periodic tasks
   scheduler:
@@ -44,20 +54,30 @@ services:
     networks:
       - feelori-net
     environment:
-      # --- Original 9 Variables ---
+      - admin_password=${ADMIN_PASSWORD}
+      - allowed_hosts=${ALLOWED_HOSTS}
+      - api_key=${API_KEY}
+      - cors_allowed_origins=${CORS_ALLOWED_ORIGINS}
+      - environment=${ENVIRONMENT}
+      - gemini_api_key=${GEMINI_API_KEY}
+      - jwt_secret_key=${JWT_SECRET_KEY}
       - mongo_atlas_uri=${MONGO_ATLAS_URI}
+      - next_public_api_url=${NEXT_PUBLIC_API_URL}
+      - openai_api_key=${OPENAI_API_KEY}
+      - packing_dept_whatsapp_number=${PACKING_DEPT_WHATSAPP_NUMBER}
+      - redis_url=${REDIS_URL}
+      - session_secret_key=${SESSION_SECRET_KEY}
+      - shopify_access_token=${SHOPIFY_ACCESS_TOKEN}
+      - shopify_storefront_access_token=${SHOPIFY_STOREFRONT_ACCESS_TOKEN}
+      - shopify_store_url=${SHOPIFY_STORE_URL}
+      - shopify_webhook_secret=${SHOPIFY_WEBHOOK_SECRET}
       - whatsapp_access_token=${WHATSAPP_ACCESS_TOKEN}
+      - whatsapp_app_secret=${WHATSAPP_APP_SECRET}
+      - whatsapp_business_account_id=${WHATSAPP_BUSINESS_ACCOUNT_ID}
+      - whatsapp_catalog_id=${WHATSAPP_CATALOG_ID}
       - whatsapp_phone_id=${WHATSAPP_PHONE_ID}
       - whatsapp_verify_token=${WHATSAPP_VERIFY_TOKEN}
-      - whatsapp_app_secret=${WHATSAPP_APP_SECRET}
-      - shopify_access_token=${SHOPIFY_ACCESS_TOKEN}
-      - jwt_secret_key=${JWT_SECRET_KEY}
-      - admin_password=${ADMIN_PASSWORD}
-      - session_secret_key=${SESSION_SECRET_KEY}
-      
-      # --- ADD THESE NEW LINES ---
-      - gemini_api_key=${GEMINI_API_KEY}
-      - openai_api_key=${OPENAI_API_KEY}
+      - whatsapp_webhook_secret=${WHATSAPP_WEBHOOK_SECRET}
 
   # 3. (Optional) ML worker – disabled to save memory
   # To re-enable, uncomment the lines below

@@ -79,7 +79,47 @@ class AIService:
         full_prompt = f"{AI_SYSTEM_PROMPT}\n\nContext: {json.dumps(context)}\n\nMessage: {message}"
         response = await self.gemini_client.generate_content_async(full_prompt)
         return response.text.strip()
-    
+    async def get_ai_json_response(self, prompt: str, **kwargs) -> dict:
+        """
+        Generates a JSON response from a prompt, required for intent classification.
+        """
+        if not self.gemini_client:
+            raise Exception("Gemini client is not configured for JSON response.")
+        
+        try:
+            # Use a model configured to output JSON
+            json_model = genai.GenerativeModel(
+                'gemini-1.5-flash',
+                generation_config={"response_mime_type": "application/json"}
+            )
+            response = await json_model.generate_content_async(prompt)
+            ai_requests_counter.labels(model="gemini-json", status="success").inc()
+            return json.loads(response.text)
+        except Exception as e:
+            logger.error(f"Gemini JSON response generation failed: {e}")
+            ai_requests_counter.labels(model="gemini-json", status="error").inc()
+            # Re-raise the exception to be caught by the fallback logic in order_service
+            raise e
+
+
+    async def get_product_qa(self, query: str, product: Optional[Product] = None) -> str:
+        """
+        Answers a question. If a product is provided, answers about the product.
+        If no product is provided, tries to answer generally.
+        """
+        prompt = query
+        context = None
+
+        if product:
+            # If a product *is* provided, create a specific Q&A prompt
+            prompt = self.create_qa_prompt(product, query)
+        else:
+            # No product provided, so just pass the query to the general model
+            context = {"conversation_history": []} # Give it empty context
+        
+        # Call the *existing* generate_response function
+        return await self.generate_response(prompt, context)  
+  
     def create_qa_prompt(self, product, user_question: str) -> str:
         """Creates a formatted prompt for answering a question about a specific product."""
         return QA_PROMPT_TEMPLATE.format(

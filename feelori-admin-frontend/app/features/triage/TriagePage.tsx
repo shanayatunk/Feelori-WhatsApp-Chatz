@@ -3,9 +3,9 @@
 "use client";
 import React from 'react';
 import useSWR from 'swr';
-import { Card, CardContent, CardHeader, CardTitle } from '@/app/components/ui/Card';
-import { getTriageTickets, TriageTicket } from '@/lib/api';
-import { Button } from '@/app/components/ui/Button';
+import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/Card';
+import { getTriageTickets, TriageTicket } from '../../../lib/api';
+import { Button } from '../../components/ui/Button';
 
 // A helper to format dates
 const formatDateTime = (isoString: string) => {

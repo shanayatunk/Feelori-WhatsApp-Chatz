@@ -17,6 +17,17 @@ services:
       - redis
     networks:
       - feelori-net
+    # CORRECTED BLOCK: Maps UPPERCASE (host) to lowercase (container)
+    environment:
+      - mongo_atlas_uri=${MONGO_ATLAS_URI}
+      - whatsapp_access_token=${WHATSAPP_ACCESS_TOKEN}
+      - whatsapp_phone_id=${WHATSAPP_PHONE_ID}
+      - whatsapp_verify_token=${WHATSAPP_VERIFY_TOKEN}
+      - whatsapp_app_secret=${WHATSAPP_APP_SECRET}
+      - shopify_access_token=${SHOPIFY_ACCESS_TOKEN}
+      - jwt_secret_key=${JWT_SECRET_KEY}
+      - admin_password=${ADMIN_PASSWORD}
+      - session_secret_key=${SESSION_SECRET_KEY}
 
   # 2. Dedicated scheduler service for background and periodic tasks
   scheduler:
@@ -28,6 +39,17 @@ services:
       - redis
     networks:
       - feelori-net
+    # CORRECTED BLOCK: Maps UPPERCASE (host) to lowercase (container)
+    environment:
+      - mongo_atlas_uri=${MONGO_ATLAS_URI}
+      - whatsapp_access_token=${WHATSAPP_ACCESS_TOKEN}
+      - whatsapp_phone_id=${WHATSAPP_PHONE_ID}
+      - whatsapp_verify_token=${WHATSAPP_VERIFY_TOKEN}
+      - whatsapp_app_secret=${WHATSAPP_APP_SECRET}
+      - shopify_access_token=${SHOPIFY_ACCESS_TOKEN}
+      - jwt_secret_key=${JWT_SECRET_KEY}
+      - admin_password=${ADMIN_PASSWORD}
+      - session_secret_key=${SESSION_SECRET_KEY}
 
   # 3. (Optional) ML worker – disabled to save memory
   # To re-enable, uncomment the lines below
@@ -43,7 +65,7 @@ services:
   #   deploy:
   #     resources:
   #       limits:
-  #         memory: 4G
+  * memory: 4G
 
   # 4. Redis service for caching and queuing
   redis:

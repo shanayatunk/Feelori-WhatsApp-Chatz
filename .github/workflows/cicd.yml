@@ -75,30 +75,42 @@ jobs:
     if: github.ref == 'refs/heads/develop'
     runs-on: ubuntu-latest
     steps:
-      - name: Fetch Doppler Secrets
-        uses: dopplerhq/cli-action@v3
-        with:
-          doppler-token: ${{ secrets.DEV_DOPPLER_TOKEN }}
-          inject-env-vars: true
-
       - name: Deploy to Digital Ocean Dev Server
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.DEV_DO_HOST }}
           username: ${{ secrets.DEV_DO_USERNAME }}
           key: ${{ secrets.DEV_DO_SSH_KEY }}
+          envs: DOCKERHUB_USERNAME,IMAGE_TAG,DEV_DOPPLER_TOKEN
           script: |
             cd /root/Feelori-WhatsApp-Chatz
             git fetch origin
             git checkout develop
             git pull origin develop
 
+            # Set deployment variables
             export IMAGE_TAG=${{ github.sha }}
             export DOCKERHUB_USERNAME=${{ secrets.DOCKERHUB_USERNAME }}
+            export DOPPLER_TOKEN=${{ secrets.DEV_DOPPLER_TOKEN }}
+            
             echo "Deploying image tag: $IMAGE_TAG"
 
-            doppler run -- docker compose -f docker-compose.yml up -d --pull always
+            # Install Doppler CLI if not present
+            if ! command -v doppler &> /dev/null; then
+                echo "Installing Doppler CLI..."
+                curl -Ls --tlsv1.2 --proto "=https" --retry 3 https://cli.doppler.com/install.sh | sudo sh
+            fi
+
+            # Deploy with Doppler injecting environment variables
+            doppler run --token="$DOPPLER_TOKEN" -- docker compose -f docker-compose.yml up -d --pull always
+            
+            # Clean up old images
             docker image prune -af
+
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          IMAGE_TAG: ${{ github.sha }}
+          DEV_DOPPLER_TOKEN: ${{ secrets.DEV_DOPPLER_TOKEN }}
 
   #########################################
   #      DEPLOY TO PRODUCTION             #
@@ -110,27 +122,39 @@ jobs:
     environment: production
     runs-on: ubuntu-latest
     steps:
-      - name: Fetch Doppler Secrets
-        uses: dopplerhq/cli-action@v3
-        with:
-          doppler-token: ${{ secrets.PROD_DOPPLER_TOKEN }}
-          inject-env-vars: true
-
       - name: Deploy to Digital Ocean Prod Server
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.PROD_DO_HOST }}
           username: ${{ secrets.PROD_DO_USERNAME }}
           key: ${{ secrets.PROD_DO_SSH_KEY }}
+          envs: DOCKERHUB_USERNAME,IMAGE_TAG,PROD_DOPPLER_TOKEN
           script: |
             cd /root/Feelori-WhatsApp-Chatz
             git fetch origin
             git checkout main
             git pull origin main
 
+            # Set deployment variables
             export IMAGE_TAG=${{ github.sha }}
             export DOCKERHUB_USERNAME=${{ secrets.DOCKERHUB_USERNAME }}
+            export DOPPLER_TOKEN=${{ secrets.PROD_DOPPLER_TOKEN }}
+            
             echo "Deploying image tag: $IMAGE_TAG"
 
-            doppler run -- docker compose -f docker-compose.yml up -d --pull always
+            # Install Doppler CLI if not present
+            if ! command -v doppler &> /dev/null; then
+                echo "Installing Doppler CLI..."
+                curl -Ls --tlsv1.2 --proto "=https" --retry 3 https://cli.doppler.com/install.sh | sudo sh
+            fi
+
+            # Deploy with Doppler injecting environment variables
+            doppler run --token="$DOPPLER_TOKEN" -- docker compose -f docker-compose.yml up -d --pull always
+            
+            # Clean up old images
             docker image prune -af
+
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          IMAGE_TAG: ${{ github.sha }}
+          PROD_DOPPLER_TOKEN: ${{ secrets.PROD_DOPPLER_TOKEN }}

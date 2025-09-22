@@ -5,9 +5,11 @@ import json
 import uuid
 import asyncio
 import logging
+import tenacity
 from datetime import datetime, timedelta
 from dataclasses import dataclass, field
 from typing import Set, Dict, List, Tuple, Optional, Any
+
 
 from rapidfuzz import process, fuzz
 
@@ -164,6 +166,19 @@ async def process_message(phone_number: str, message_text: str, message_type: st
             intent = await analyze_intent(message_text, message_type, customer, quoted_wamid)
             response = await route_message(intent, clean_phone, message_text, customer, quoted_wamid)
             return response[:4096] if response else None
+
+        # 1.5. Check for a contextual reply BEFORE classifying with AI
+        if quoted_wamid:
+            # Check if the user is replying to a product we just sent
+            last_product_raw = await cache_service.redis.get(f"state:last_single_product:{clean_phone}")
+            if last_product_raw:
+                # This is a contextual question about a product.
+                logger.info(f"Detected contextual reply (quoted_wamid: {quoted_wamid}) about a product.")
+                intent = "contextual_product_question"
+                response = await route_message(intent, clean_phone, message_text, customer, quoted_wamid)
+                return response[:4096] if response else None
+        # --- END OF NEW BLOCK ---
+
         
         # 2. For all other text, use AI to classify
         logger.debug(f"Classifying intent with AI for: '{message_text}'")
@@ -930,34 +945,40 @@ async def process_webhook_message(message: Dict[str, Any], webhook_data: Dict[st
 
 async def handle_status_update(status_data: Dict):
     """Processes a message status update from WhatsApp using the message_logs collection."""
-    try:
-        wamid, status = status_data.get("id"), status_data.get("status")
-        if not wamid or not status: return
-        
-        from app.services.db_service import db_service
-        
-        # Now we look in the fast, dedicated collection
-        result = await db_service.db.message_logs.update_one(
-            {"wamid": wamid},
-            {"$set": {"status": status}}
-        )
+    wamid, status = status_data.get("id"), status_data.get("status")
+    if not wamid or not status:
+        return
 
-        if result.modified_count > 0:
-            logger.info(f"Message status updated for {wamid} to {status}")
-        else:
-            # It can take a moment for the sent message to be logged, so we retry once.
-            await asyncio.sleep(2)
-            result = await db_service.db.message_logs.update_one(
+    try:
+        from app.services.db_service import db_service
+
+        # Define a retryable update operation
+        @tenacity.retry(
+            stop=tenacity.stop_after_delay(10),  # Stop after 10 seconds
+            wait=tenacity.wait_exponential(multiplier=1, min=0.5, max=3),  # Wait 0.5s, 1s, 2s, 3s, 3s...
+            retry=tenacity.retry_if_result(lambda result: result.modified_count == 0),  # Retry if it didn't update
+            reraise=True  # Reraise the exception if it fails after 10s
+        )
+        async def _update_message_status():
+            """Attempts to update the message status."""
+            return await db_service.db.message_logs.update_one(
                 {"wamid": wamid},
                 {"$set": {"status": status}}
             )
-            if result.modified_count > 0:
-                logger.info(f"Message status updated for {wamid} to {status} after retry.")
-            else:
-                logger.warning(f"Could not find message {wamid} to update status in message_logs.")
-            
+
+        # Call the retryable function
+        result = await _update_message_status()
+
+        if result.modified_count > 0:
+            logger.info(f"Message status updated for {wamid} to {status}")
+
+    except tenacity.RetryError:
+        # This log happens *only* if it fails after all retries
+        logger.warning(f"Could not find message {wamid} to update status in message_logs after 10 seconds.")
     except Exception as e:
         logger.error(f"Error handling status update: {e}", exc_info=True)
+
+
 async def handle_abandoned_checkout(payload: dict):
     """
     Receives an abandoned checkout webhook and saves it to the database.

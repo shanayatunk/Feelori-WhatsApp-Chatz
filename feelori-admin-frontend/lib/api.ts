@@ -263,8 +263,10 @@ export type TriageTicket = {
 // ADD THIS NEW API FUNCTION
 export const getTriageTickets = async (): Promise<{ tickets: TriageTicket[] }> => {
   try {
-    const { data } = await api.get('/dashboard/triage-tickets');
-    return data.data; // The API wraps data in a 'data' key
+    // The API wraps data in a 'data' key, so we call makeRequest and expect
+    // the result to have a .data property containing the tickets.
+    const result = await makeRequest(`${API_BASE_URL}/dashboard/triage-tickets`);
+    return result.data;
   } catch (error) {
     console.error("Failed to fetch triage tickets:", error);
     throw new Error("Failed to fetch triage tickets");

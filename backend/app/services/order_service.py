@@ -936,7 +936,7 @@ async def handle_human_escalation(phone_number: str, customer: Dict, **kwargs) -
     if not recent_orders:
         # 2. NO ORDERS FOUND: Ask for the order number.
         logger.info(f"Triage: No orders found for {phone_number}. Asking for order number.")
-        await cache_service.set(f"state:awaiting_triage_order_number:{phone_number}", "1", ex=900)
+        await cache_service.set(f"state:awaiting_triage_order_number:{phone_number}", "1", ttl=900)
         return "I'm sorry to hear you're having an issue. To help, could you please reply with your order number (e.g., #FO1039)?"
 
     elif len(recent_orders) == 1:

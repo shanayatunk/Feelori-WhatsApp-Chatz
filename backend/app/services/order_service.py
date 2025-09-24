@@ -335,6 +335,9 @@ async def process_message(phone_number: str, message_text: str, message_type: st
         if ai_intent == "product_search":
             response = await handle_product_search(message=ai_keywords, customer=customer, phone_number=clean_phone, quoted_wamid=quoted_wamid)
         
+        elif ai_intent == "human_escalation":
+             response = await handle_human_escalation(phone_number=clean_phone, customer=customer)
+
         elif ai_intent == "product_inquiry":
             # This is the new flow that fixes your original problem
             # It uses the AI's Q&A ability instead of searching

@@ -275,7 +275,7 @@ class WhatsAppService:
     async def send_quick_replies(self, to_phone: str, message: str, options: Dict[str, str]):
         """Sends a message with up to 3 quick reply buttons."""
         try:
-            buttons = [{"type": "reply", "reply": {"id": option_id, "title": title[:20]}} for title, option_id in list(options.items())[:3]]
+            buttons = [{"type": "reply", "reply": {"id": option_id, "title": title[:20]}} for option_id, title in list(options.items())[:3]]
             payload = {
                 "messaging_product": "whatsapp", "to": to_phone, "type": "interactive",
                 "interactive": {"type": "button", "body": {"text": message}, "action": {"buttons": buttons}}

@@ -497,28 +497,28 @@ async def route_message(intent: str, phone_number: str, message: str, customer: 
 
 # --- Handler Functions ---
 
-async def handle_product_search(message: str, customer: Dict, **kwargs) -> Optional[str]:
+async def handle_product_search(message: List[str], customer: Dict, **kwargs) -> Optional[str]:
     """Handles a product search request with intelligent filtering."""
     try:
         config = SearchConfig()
         query_builder = QueryBuilder(config, customer=customer)
         
-        # --- THIS IS THE NEW LOGIC ---
-        # First, extract keywords to check for unavailable items.
-        keywords = query_builder._extract_keywords(message)
+        # The AI now provides a clean list of keywords, so we use it directly.
+        keywords = message
         
         # Check if any keyword is in our unavailable list.
         for keyword in keywords:
             if keyword in default_rules.UNAVAILABLE_CATEGORIES:
                 # If it is, call the specific handler for unavailable products.
-                return await _handle_no_results(customer, message)
-        # --- END OF NEW LOGIC ---
+                # We join the keywords back into a string for a clean log message.
+                return await _handle_no_results(customer, " ".join(keywords))
 
-        # If the category is available, proceed with building the query and searching.
-        text_query, price_filter = query_builder.build_query_parts(message)
+        # We need to reconstruct a "message" string for the query builder
+        message_str = " ".join(keywords)
+        text_query, price_filter = query_builder.build_query_parts(message_str)
         
         if not text_query and not price_filter:
-            return await _handle_unclear_request(customer, message)
+            return await _handle_unclear_request(customer, message_str)
 
         filtered_products, unfiltered_count = await shopify_service.get_products(
             query=text_query, filters=price_filter, limit=config.MAX_SEARCH_RESULTS
@@ -529,13 +529,17 @@ async def handle_product_search(message: str, customer: Dict, **kwargs) -> Optio
                 price_cond = price_filter.get("price", {})
                 price_str = f"under ₹{price_cond['lessThan']}" if "lessThan" in price_cond else f"over ₹{price_cond['greaterThan']}"
                 response = f"I found {unfiltered_count} item(s), but none are {price_str}. 😔\n\nWould you like to see them anyway?"
-                await cache_service.redis.set(f"state:last_search:{customer['phone_number']}", json.dumps({"query": message, "page": 1}), ex=900)
+                
+                # --- FIX: Use ttl instead of ex ---
+                await cache_service.redis.set(f"state:last_search:{customer['phone_number']}", json.dumps({"query": message_str, "page": 1}), ex=900)
                 await cache_service.redis.set(f"state:last_bot_question:{customer['phone_number']}", "offer_unfiltered_products", ex=900)
+                # --- END OF FIX ---
+                
                 return response
             else:
-                return await _handle_no_results(customer, message)
+                return await _handle_no_results(customer, message_str)
 
-        return await _handle_standard_search(filtered_products, message, customer)
+        return await _handle_standard_search(filtered_products, message_str, customer)
     except Exception as e:
         logger.error(f"Error in product search: {e}", exc_info=True)
         return await _handle_error(customer)
@@ -982,7 +986,7 @@ async def _send_triage_issue_list(phone_number: str, order_number: str):
     
     # We save the selected order number in the state key
     state_key = f"state:awaiting_triage_issue_selection:{order_number}:{phone_number}"
-    await cache_service.set(state_key, "1", ex=900)
+    await cache_service.set(state_key, "1", ttl=900)
     
     options = {
         "triage_issue_damaged": "📦 Item is damaged",

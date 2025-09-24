@@ -220,7 +220,6 @@ class ShopifyService:
         """Search for recent orders using a customer's phone number via the REST API.
         Ensures strict filtering to prevent leaking other customers' orders.
         """
-        # Using a sanitized phone number for the cache key is more consistent.
         sanitized_user_phone = EnhancedSecurityService.sanitize_phone_number(phone_number)
         cache_key = f"shopify:orders_by_phone:{sanitized_user_phone}"
         cached = await cache_service.get(cache_key)
@@ -230,7 +229,6 @@ class ShopifyService:
         rest_url = f"https://{self.store_url}/admin/api/2025-07/orders.json"
         headers = {"X-Shopify-Access-Token": self.access_token}
 
-        # Fetch the 50 most recent orders regardless of phone number
         params = {
             "status": "any",
             "limit": max_fetch,
@@ -244,30 +242,35 @@ class ShopifyService:
             resp.raise_for_status()
             orders = resp.json().get("orders", []) or []
 
-            # --- DEBUG LOGGING ---
-            logger.info(f"DEBUG: Input phone_number: '{phone_number}'")
-            logger.info(f"DEBUG: Sanitized user phone: '{sanitized_user_phone}'")
-            logger.info(f"DEBUG: Total orders fetched: {len(orders)}")
+            # --- Enhanced Diagnostic Logging ---
+            logger.info(f"--- RAW SHOPIFY ORDER DATA CHECK (First 5 of {len(orders)} orders) ---")
+            for i, order in enumerate(orders[:5]):  # Log first 5 to avoid spamming logs
+                order_name = order.get("name", "N/A")
+                customer_info = order.get("customer", {})
+                customer_name = f"{customer_info.get('first_name', '')} {customer_info.get('last_name', '')}".strip()
 
-            for i, o in enumerate(orders):
-                order_name = o.get("name", "Unknown")
-                raw_phone = o.get("phone", "")
-                shipping_phone = (o.get("shipping_address") or {}).get("phone", "")
-                billing_phone = (o.get("billing_address") or {}).get("phone", "")
-                
-                logger.info(f"DEBUG Order {i+1} ({order_name}):")
-                logger.info(f"  - Raw phone: '{raw_phone}'")
-                logger.info(f"  - Shipping phone: '{shipping_phone}'") 
-                logger.info(f"  - Billing phone: '{billing_phone}'")
-                
-                for field_name, phone_value in [("phone", raw_phone), ("shipping", shipping_phone), ("billing", billing_phone)]:
-                    if phone_value:
-                        sanitized = EnhancedSecurityService.sanitize_phone_number(phone_value)
-                        matches = sanitized.endswith(sanitized_user_phone)
-                        logger.info(f"  - {field_name}: '{phone_value}' -> '{sanitized}' -> matches: {matches}")
+                logger.info(f"Order #{i+1}: {order_name} for Customer: '{customer_name}'")
+                logger.info(f"  -> Top-level 'phone' field: {order.get('phone')}")
+
+                shipping_address = order.get("shipping_address", {})
+                if shipping_address:
+                    logger.info(f"  -> 'shipping_address.phone' field: {shipping_address.get('phone')}")
+                else:
+                    logger.info("  -> 'shipping_address' field: Not present")
+
+                billing_address = order.get("billing_address", {})
+                if billing_address:
+                    logger.info(f"  -> 'billing_address.phone' field: {billing_address.get('phone')}")
+                else:
+                    logger.info("  -> 'billing_address' field: Not present")
+            logger.info("--- END OF RAW SHOPIFY ORDER DATA CHECK ---")
+            # --- End of Logging ---
 
             # --- Security filtering logic ---
+            # FIX: Use a more robust comparison of the last 10 digits
+            user_phone_suffix = sanitized_user_phone[-10:]
             filtered_orders = []
+
             for o in orders:
                 order_phone = (
                     o.get("phone")
@@ -276,7 +279,8 @@ class ShopifyService:
                     or ""
                 )
                 sanitized_order_phone = EnhancedSecurityService.sanitize_phone_number(order_phone)
-                if sanitized_order_phone and sanitized_order_phone.endswith(sanitized_user_phone):
+
+                if sanitized_order_phone and sanitized_order_phone.endswith(user_phone_suffix):
                     filtered_orders.append(o)
 
             await cache_service.set(

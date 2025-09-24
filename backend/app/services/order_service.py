@@ -275,30 +275,52 @@ async def process_message(phone_number: str, message_text: str, message_type: st
         
         # 2. For all other text, use AI to classify
         logger.debug(f"Classifying intent with AI for: '{message_text}'")
+        
+        # --- REPLACE THE OLD PROMPT WITH THIS NEW ONE ---
         intent_prompt = f"""
-        Analyze the user's message: "{message_text}"
-        Classify the user's primary intent. Your response must be a JSON object
-        with two keys: 'intent' and 'keywords'.
+        You are an intelligent AI assistant for an Indian jewelry e-commerce WhatsApp store.
+        Your task is to analyze the user's message and the conversation context, then classify the intent.
+        Your response MUST be a single, valid JSON object with "intent" (string) and "keywords" (array of strings).
 
-        Possible intents are:
-        - 'product_search': User is looking for a product or category. (e.g., "show me gold necklaces")
-        - 'product_inquiry': User is asking a specific question ABOUT a product. (e.g., "is this waterproof?", "are the rubies certified?")
-        - 'greeting': User is just saying hi.
-        - 'smalltalk': User is making casual conversation.
-        - 'rule_based': User is asking for order tracking, shipping policy, or other specific rules.
-        
-        If intent is 'product_inquiry', keywords should be the full question.
-        If intent is 'product_search', keywords should be just the product names/types.
-        If intent is 'rule_based', 'greeting', or 'smalltalk', keywords can be the original message.
+        **Conversation Context:**
+        - User's Message: "{message_text}"
+        - Is this a reply to a previous message?: {"Yes" if 'is_reply' in locals() and is_reply else "No"}
+        - Last product shown to the user: {json.dumps(locals().get('last_product_shown', 'None'))}
+
+        **Possible Intents:**
+        - 'human_escalation': User has a problem, is angry, or wants a person. (e.g., "this is broken", "issue with my order"). **Prioritize this if there is any doubt.**
+        - 'product_search': User is looking for a product/category. Keywords should be product terms (e.g., "show me gold necklaces" -> ["gold", "necklaces"]).
+        - 'product_inquiry': User is asking a specific question about a product. **If the user replies to a product and asks a vague question like "how much?", this is the correct intent.** Keywords should be the full question.
+        - 'order_inquiry': User is asking for the status of an existing order.
+        - 'price_inquiry': User is asking about price *without* referring to a specific product.
+        - 'shipping_inquiry': User is asking about shipping policies or timelines.
+        - 'discount_inquiry': User is asking for a discount or coupon.
+        - 'greeting': A simple greeting.
+        - 'thank_you': The user is expressing thanks.
+        - 'smalltalk': Casual, non-transactional conversation.
+
+        **Classification Rules:**
+        1.  **Context is Key:** If `is_reply` is "Yes" or `last_product_shown` is not "None", the user's message is likely a `product_inquiry`.
+        2.  **Keywords:** Always return an array of strings, even if it's empty. For inquiries, extract key terms (e.g., "shipping", "delhi").
+        3.  **Format:** Always use lowercase intent names.
+
+        Classify the message now based on the message and the context.
         """
-        
+        # --- END OF NEW PROMPT ---
+
         ai_result = {}
         try:
             # Use your existing ai_service
+            last_product_raw = await cache_service.get(f"state:last_single_product:{clean_phone}")
+            last_product_context = json.loads(last_product_raw) if last_product_raw else None
+
             ai_result = await ai_service.get_ai_json_response(
                 prompt=intent_prompt, 
                 message_text=message_text, 
-                client_type="gemini"  # Use your fast/cheap model
+                client_type="gemini",
+                # Pass our new context variables
+                is_reply=bool(quoted_wamid),
+                last_product_shown=last_product_context
             )
             ai_intent = ai_result.get("intent", "rule_based") # Default to your old system
             ai_keywords = ai_result.get("keywords", message_text)

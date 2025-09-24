@@ -21,7 +21,7 @@ from app.utils.rate_limiter import limiter
 # --- FIX 1: Import the new 'packing' router ---
 from app.routes import auth, admin, webhooks, public, dashboard, packing
 
-# Initialize the FastAPI application
+# Initialize the FastAPI application 1
 app = FastAPI(
     title="FeelOri AI WhatsApp Assistant",
     version="2.0.0",

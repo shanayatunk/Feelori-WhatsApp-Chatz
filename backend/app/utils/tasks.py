@@ -1,7 +1,7 @@
 # /app/utils/tasks.py
 
 import logging
-from app.services.visual_search_service import visual_matcher
+
 from app.services.shopify_service import shopify_service
 # Add the new imports needed for the analytics task
 from app.services.db_service import db_service
@@ -16,6 +16,14 @@ async def refresh_visual_search_index():
     A scheduled task to periodically rebuild the visual search index by
     fetching all products from Shopify and re-indexing their images.
     """
+    # ADD THIS CHECK: First, check if the feature is enabled.
+    if not settings.VISUAL_SEARCH_ENABLED:
+        logger.info("Visual search is disabled, skipping index refresh.")
+        return
+
+    # MOVE THE IMPORT HERE: Only import the service if the feature is enabled.
+    from app.services.visual_search_service import visual_matcher
+    
     logger.info("--- Starting scheduled visual search index refresh ---")
     try:
         # The logic to index all products is in your VisualProductMatcher.
@@ -25,7 +33,6 @@ async def refresh_visual_search_index():
     except Exception as e:
         # Using exc_info=True will log the full traceback for better debugging.
         logger.error("An error occurred during the scheduled index refresh.", exc_info=True)
-
 
 # This is the new function you need to add
 async def update_escalation_analytics():

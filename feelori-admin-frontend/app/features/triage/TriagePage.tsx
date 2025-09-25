@@ -2,9 +2,11 @@
 
 "use client";
 import React from 'react';
-import useSWR from 'swr';
+// 1. Import 'mutate' from SWR to refresh data after an update
+import useSWR, { mutate } from 'swr';
 import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/Card';
-import { getTriageTickets, TriageTicket } from '../../../lib/api';
+// 2. Import the new 'resolveTriageTicket' function
+import { getTriageTickets, TriageTicket, resolveTriageTicket } from '../../../lib/api';
 import { Button } from '../../components/ui/Button';
 
 // A helper to format dates
@@ -24,6 +26,29 @@ const formatDateTime = (isoString: string) => {
 
 export const TriagePage = () => {
   const { data, error, isLoading } = useSWR('triageTickets', getTriageTickets);
+
+  // 3. Add the handler function to resolve a ticket
+  const handleResolveTicket = async (ticketId: string) => {
+    try {
+      // Call the API to mark the ticket as resolved
+      await resolveTriageTicket(ticketId);
+      // Tell SWR to re-fetch the data, which will remove the resolved
+      // ticket from the list automatically.
+      mutate('triageTickets');
+    } catch (err) {
+      console.error("Failed to resolve ticket:", err);
+      // Optional: Add a user-facing error notification here
+      alert("Could not resolve the ticket. Please try again.");
+    }
+  };
+
+  // 4. Add a handler for viewing photos (connect to backend later)
+  const handleViewPhoto = (mediaId: string) => {
+    // This will open a new tab to the backend endpoint which then redirects
+    // to the temporary WhatsApp media URL.
+    window.open(`/api/triage/media/${mediaId}`, '_blank');
+  };
+
 
   const renderContent = () => {
     if (isLoading) {
@@ -56,10 +81,21 @@ export const TriagePage = () => {
                 <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700">{ticket.customer_phone}</td>
                 <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700">{ticket.issue_type}</td>
                 <td className="px-6 py-4 whitespace-nowrap text-sm font-medium space-x-2">
+                  {/* --- 5. THE FIX IS APPLIED HERE --- */}
                   {ticket.image_media_id && ticket.image_media_id !== 'N/A' && (
-                    <Button variant="secondary" disabled>View Photo</Button>
+                    <Button
+                      variant="secondary"
+                      onClick={() => handleViewPhoto(ticket.image_media_id!)}
+                    >
+                      View Photo
+                    </Button>
                   )}
-                  <Button variant="primary" disabled>Resolve</Button>
+                  <Button
+                    variant="primary"
+                    onClick={() => handleResolveTicket(ticket._id)}
+                  >
+                    Resolve
+                  </Button>
                 </td>
               </tr>
             ))}

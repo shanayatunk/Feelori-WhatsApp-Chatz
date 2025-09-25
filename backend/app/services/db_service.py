@@ -72,6 +72,20 @@ class DatabaseService:
             logger.error(f"Failed to get_recent_orders_by_phone for {phone_number}: {e}")
             return []
 
+    async def resolve_triage_ticket(self, ticket_id: str) -> bool:
+        """Updates a triage ticket's status to 'resolved'."""
+        try:
+            result = await self.db.triage_tickets.update_one(
+                {"_id": ObjectId(ticket_id), "status": "pending"},
+                {"$set": {"status": "resolved"}}
+            )
+            # Return True if a document was actually modified
+            return result.modified_count > 0
+        except Exception as e:
+            logger.error(f"Failed to resolve triage ticket {ticket_id}: {e}")
+            return False
+
+
     # Scheduler
 
    

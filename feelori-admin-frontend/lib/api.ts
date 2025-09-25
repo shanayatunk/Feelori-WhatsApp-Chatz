@@ -141,6 +141,11 @@ const makeRequest = async (url: string, options: RequestInit = {}) => {
   return response.json();
 };
 
+export const resolveTriageTicket = async (ticketId: string): Promise<{ message: string }> => {
+  return makeRequest(`${API_BASE_URL}/triage/${ticketId}/resolve`, {
+    method: 'PUT',
+  });
+};
 
 export const apiService = {
   login: async (password: string): Promise<{ access_token: string }> => {

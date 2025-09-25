@@ -188,7 +188,7 @@ async def process_message(phone_number: str, message_text: str, message_type: st
 
             if message_text == "triage_issue_damaged":
                 # Ask for a photo
-                await cache_service.set(f"state:awaiting_triage_photo:{order_number}:{clean_phone}", "1", ex=900)
+                await cache_service.set(f"state:awaiting_triage_photo:{order_number}:{clean_phone}", "1", ttl=900)
                 return "I understand. To process this, please reply with a photo of the damaged item. If you can, please also include a photo of the shipping box."
             else:
                 # For any other issue, create a ticket and escalate

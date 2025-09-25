@@ -21,11 +21,11 @@ google-generativeai
 
 # Visual Search & AI Models
 numpy
-torch
-transformers
-scikit-learn
-Pillow
-huggingface_hub
+#torch
+#transformers
+#scikit-learn
+#Pillow
+#huggingface_hub
 rapidfuzz
 
 # Auth & Security

@@ -15,7 +15,7 @@ from app.config.persona import AI_SYSTEM_PROMPT, VISUAL_SEARCH_PROMPT, QA_PROMPT
 from app.utils.circuit_breaker import CircuitBreaker
 from app.utils.metrics import ai_requests_counter
 from app.services import shopify_service
-from app.services.visual_search_service import visual_matcher # Import the matcher instance
+
 
 # This service encapsulates all interactions with external AI models like
 # Google Gemini and OpenAI GPT, including text generation and visual search analysis.
@@ -173,6 +173,7 @@ class AIService:
         # ADD THIS CHECK AT THE TOP
         if not settings.VISUAL_SEARCH_ENABLED:
             return {'success': False, 'message': 'Visual search is temporarily unavailable.'}
+        from app.services.visual_search_service import visual_matcher
         try:
             visual_candidates_task = visual_matcher.find_matching_products_offloaded(image_bytes)
             keyword_task = self.get_keywords_from_image_for_reranking(image_bytes, mime_type)

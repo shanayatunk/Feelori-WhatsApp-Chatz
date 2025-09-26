@@ -6,7 +6,7 @@ import asyncio
 import numpy as np
 import google.generativeai as genai
 from openai import AsyncOpenAI
-from typing import Optional
+from typing import Optional, Dict
 from app.models.domain import Product
 from rapidfuzz import process, fuzz
 

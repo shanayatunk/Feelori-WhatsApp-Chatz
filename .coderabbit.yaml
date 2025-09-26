@@ -1,0 +1,6 @@
+reviews:
+  # This tells CodeRabbit to automatically review Pull Requests that
+  # are being merged into either the 'main' or 'develop' branch.
+  branches:
+    - main
+    - develop

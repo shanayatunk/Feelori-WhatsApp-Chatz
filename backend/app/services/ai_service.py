@@ -26,7 +26,7 @@ class AIService:
     def __init__(self):
         if settings.gemini_api_key:
             genai.configure(api_key=settings.gemini_api_key)
-            self.gemini_client = genai.GenerativeModel('gemini-1.5-flash')
+            self.gemini_client = genai.GenerativeModel('gemini-1.5-flash-latest')
         else:
             self.gemini_client = None
         
@@ -64,6 +64,30 @@ class AIService:
         
         return "I'm sorry, I'm having trouble connecting. Could you rephrase your question?"
 
+
+    async def _generate_openai_json_response(self, prompt: str) -> Optional[Dict]:
+        """Generates a JSON response from OpenAI using its JSON mode."""
+        if not self.openai_client:
+            return None
+            
+        system_message = "You are a helpful assistant designed to output JSON."
+        
+        try:
+            response = await self.openai_client.chat.completions.create(
+                model="gpt-3.5-turbo",
+                response_format={"type": "json_object"}, # This enables OpenAI's JSON mode
+                messages=[
+                    {"role": "system", "content": system_message},
+                    {"role": "user", "content": prompt}
+                ]
+            )
+            ai_requests_counter.labels(model="openai-json", status="success").inc()
+            return json.loads(response.choices[0].message.content)
+        except Exception as e:
+            logger.error(f"OpenAI JSON response generation failed: {e}")
+            ai_requests_counter.labels(model="openai-json", status="error").inc()
+            return None # Return None on failure
+
     async def _generate_openai_response(self, message: str, context: dict) -> str:
         messages = [{"role": "system", "content": AI_SYSTEM_PROMPT}]
         if context.get("conversation_history"):
@@ -84,26 +108,34 @@ class AIService:
 
     async def get_ai_json_response(self, prompt: str, **kwargs) -> dict:
         """
-        Generates a JSON response from a prompt, required for intent classification.
+        Generates a JSON response, trying Gemini first and falling back to OpenAI.
+        If both fail, it raises an exception to trigger the rule-based system.
         """
-        if not self.gemini_client:
-            raise Exception("Gemini client is not configured for JSON response.")
-        
-        try:
-            # Use a model configured to output JSON
-            json_model = genai.GenerativeModel(
-                'gemini-1.5-flash',
-                generation_config={"response_mime_type": "application/json"}
-            )
-            response = await json_model.generate_content_async(prompt)
-            ai_requests_counter.labels(model="gemini-json", status="success").inc()
-            return json.loads(response.text)
-        except Exception as e:
-            logger.error(f"Gemini JSON response generation failed: {e}")
-            ai_requests_counter.labels(model="gemini-json", status="error").inc()
-            # Re-raise the exception to be caught by the fallback logic in order_service
-            raise e
+        # 1. Try Gemini First
+        if self.gemini_client:
+            try:
+                json_model = genai.GenerativeModel(
+                    'gemini-1.5-flash-latest',
+                    generation_config={"response_mime_type": "application/json"}
+                )
+                response = await json_model.generate_content_async(prompt)
+                ai_requests_counter.labels(model="gemini-json", status="success").inc()
+                return json.loads(response.text)
+            except Exception as e:
+                logger.error(f"Gemini JSON response generation failed: {e}. Trying OpenAI fallback.")
+                ai_requests_counter.labels(model="gemini-json", status="error").inc()
 
+        # 2. Fallback to OpenAI if Gemini failed
+        if self.openai_client:
+            try:
+                openai_response = await self._generate_openai_json_response(prompt)
+                if openai_response:
+                    return openai_response
+            except Exception as e:
+                 logger.error(f"OpenAI JSON fallback also failed: {e}")
+
+        # 3. If both AI services fail, raise an exception to trigger the rule-based fallback.
+        raise Exception("Both Gemini and OpenAI failed to generate a JSON response.")
 
     async def get_product_qa(self, query: str, product: Optional[Product] = None) -> str:
         """
@@ -138,7 +170,7 @@ class AIService:
         """Generates text keywords from an image for re-ranking visual search results."""
         if not self.gemini_client: return []
         try:
-            vision_model = genai.GenerativeModel('gemini-1.5-flash')
+            vision_model = genai.GenerativeModel('gemini-1.5-flash-latest')
             image_part = {"mime_type": mime_type, "data": image_bytes}
             resp = await vision_model.generate_content_async([VISUAL_SEARCH_PROMPT, image_part])
             text = (resp.text or "").strip().lower()

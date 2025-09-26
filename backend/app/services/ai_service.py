@@ -135,6 +135,7 @@ class AIService:
                  logger.error(f"OpenAI JSON fallback also failed: {e}")
 
         # 3. If both AI services fail, raise an exception to trigger the rule-based fallback.
+        # If both services fail, raise an exception to trigger the rule-based fallback.
         raise Exception("Both Gemini and OpenAI failed to generate a JSON response.")
 
     async def get_product_qa(self, query: str, product: Optional[Product] = None) -> str:

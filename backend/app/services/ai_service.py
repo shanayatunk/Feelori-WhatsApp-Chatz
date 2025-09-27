@@ -28,7 +28,7 @@ class AIService:
             # The new library automatically uses the v1 API
             genai.configure(api_key=settings.gemini_api_key)
             # The model initialization remains the same.
-            self.gemini_client = genai.GenerativeModel('gemini-1.5-pro-latest')
+            self.gemini_client = genai.GenerativeModel('gemini-1.5-pro-001')
         else:
             self.gemini_client = None
         
@@ -117,7 +117,7 @@ class AIService:
         if self.gemini_client:
             try:
                 json_model = genai.GenerativeModel(
-                    'gemini-1.5-pro-latest',
+                    'gemini-1.5-pro-001',
                     generation_config={"response_mime_type": "application/json"}
                 )
                 response = await json_model.generate_content_async(prompt)
@@ -173,7 +173,7 @@ class AIService:
         """Generates text keywords from an image for re-ranking visual search results."""
         if not self.gemini_client: return []
         try:
-            vision_model = genai.GenerativeModel('gemini-1.5-pro-latest')
+            vision_model = genai.GenerativeModel('gemini-1.5-pro-001')
             image_part = {"mime_type": mime_type, "data": image_bytes}
             resp = await vision_model.generate_content_async([VISUAL_SEARCH_PROMPT, image_part])
             text = (resp.text or "").strip().lower()

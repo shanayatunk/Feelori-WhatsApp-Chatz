@@ -5,11 +5,11 @@ import logging
 import asyncio
 import numpy as np
 import google.generativeai as genai
+from google.generativeai import client
 from openai import AsyncOpenAI
 from typing import Optional, Dict
 from app.models.domain import Product
 from rapidfuzz import process, fuzz
-
 from app.config.settings import settings
 from app.config.persona import AI_SYSTEM_PROMPT, VISUAL_SEARCH_PROMPT, QA_PROMPT_TEMPLATE
 from app.utils.circuit_breaker import CircuitBreaker
@@ -25,6 +25,7 @@ logger = logging.getLogger(__name__)
 class AIService:
     def __init__(self):
         if settings.gemini_api_key:
+            client.Client(api_key=settings.gemini_api_key, api_version="v1")
             genai.configure(api_key=settings.gemini_api_key)
             self.gemini_client = genai.GenerativeModel('gemini-1.5-pro-latest')
         else:

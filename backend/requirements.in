@@ -16,7 +16,7 @@ pydantic-settings
 # AI APIs & HTTP
 httpx[http2]
 openai
-google-generativeai
+google-genai
 
 
 # Visual Search & AI Models

@@ -27,7 +27,7 @@ class AIService:
         if settings.gemini_api_key:
             # Configure the new google-genai client
             self.gemini_client = genai.Client(api_key=settings.gemini_api_key)
-            self.model_name = 'gemini-1.5-flash'  # Correct model name for google-genai
+            self.model_name = 'models/gemini-1.5-flash'  # Fully qualified model ID
         else:
             self.gemini_client = None
             self.model_name = None

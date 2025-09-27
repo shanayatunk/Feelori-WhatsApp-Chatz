@@ -5,7 +5,7 @@ import logging
 import asyncio
 import numpy as np
 from google import genai
-from google.genai.types import GenerateContentConfig, Tool
+from google.genai.types import GenerateContentConfig, Tool, HttpOptions
 from openai import AsyncOpenAI
 from typing import Optional, Dict
 from app.models.domain import Product
@@ -25,9 +25,14 @@ logger = logging.getLogger(__name__)
 class AIService:
     def __init__(self):
         if settings.gemini_api_key:
-            # Configure the new google-genai client
-            self.gemini_client = genai.Client(api_key=settings.gemini_api_key)
-            self.model_name = 'models/gemini-1.5-flash'  # Fully qualified model ID
+            # Configure the new google-genai client with v1 API (stable endpoints)
+            from google.genai.types import HttpOptions
+            http_options = HttpOptions(api_version='v1')
+            self.gemini_client = genai.Client(api_key=settings.gemini_api_key, http_options=http_options)
+            
+            # Get available models and select the best one
+            self.model_name = self._get_available_model()
+            logger.info(f"Using Gemini model: {self.model_name}")
         else:
             self.gemini_client = None
             self.model_name = None
@@ -39,6 +44,42 @@ class AIService:
             
         self.circuit_breaker = CircuitBreaker()
         self.openai_breaker = CircuitBreaker()
+
+    def _get_available_model(self) -> str:
+        """Check available models and return the best one for our use case."""
+        try:
+            # List available models
+            models = self.gemini_client.models.list()
+            available_models = [model.name for model in models]
+            logger.info(f"Available Gemini models: {available_models}")
+            
+            # Priority order of models we want to use
+            preferred_models = [
+                'models/gemini-1.5-pro',
+                'models/gemini-1.5-flash',
+                'models/gemini-2.5-flash',
+                'models/gemini-1.5-pro-001',
+                'models/gemini-1.5-flash-001'
+            ]
+            
+            # Find the first available model from our preferred list
+            for model in preferred_models:
+                if model in available_models:
+                    logger.info(f"Selected model: {model}")
+                    return model
+            
+            # If none of our preferred models are available, use the first available one
+            if available_models:
+                fallback_model = available_models[0]
+                logger.warning(f"Using fallback model: {fallback_model}")
+                return fallback_model
+                
+            raise Exception("No models available")
+            
+        except Exception as e:
+            logger.error(f"Failed to get available models: {e}")
+            # Fallback to a common model name
+            return 'models/gemini-1.5-flash'
 
     async def generate_response(self, message: str, context: dict | None = None) -> str:
         """Generate AI response for general text-based inquiries with failover."""

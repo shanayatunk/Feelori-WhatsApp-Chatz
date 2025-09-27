@@ -5,7 +5,7 @@ import logging
 import asyncio
 import numpy as np
 import google.generativeai as genai
-from google.generativeai import client
+from google.generativeai import types
 from openai import AsyncOpenAI
 from typing import Optional, Dict
 from app.models.domain import Product
@@ -25,8 +25,11 @@ logger = logging.getLogger(__name__)
 class AIService:
     def __init__(self):
         if settings.gemini_api_key:
-            client.Client(api_key=settings.gemini_api_key, api_version="v1")
-            genai.configure(api_key=settings.gemini_api_key)
+            genai.configure(
+                api_key=settings.gemini_api_key,
+                transport="rest",
+                client_options={"api_version": "v1"},
+            )
             self.gemini_client = genai.GenerativeModel('gemini-1.5-pro-latest')
         else:
             self.gemini_client = None

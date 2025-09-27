@@ -26,7 +26,7 @@ class AIService:
     def __init__(self):
         if settings.gemini_api_key:
             genai.configure(api_key=settings.gemini_api_key)
-            self.gemini_client = genai.GenerativeModel('gemini-1.5-flash-latest')
+            self.gemini_client = genai.GenerativeModel('gemini-1.5-flash')
         else:
             self.gemini_client = None
         
@@ -115,7 +115,7 @@ class AIService:
         if self.gemini_client:
             try:
                 json_model = genai.GenerativeModel(
-                    'gemini-1.5-flash-latest',
+                    'gemini-1.5-flash',
                     generation_config={"response_mime_type": "application/json"}
                 )
                 response = await json_model.generate_content_async(prompt)
@@ -171,7 +171,7 @@ class AIService:
         """Generates text keywords from an image for re-ranking visual search results."""
         if not self.gemini_client: return []
         try:
-            vision_model = genai.GenerativeModel('gemini-1.5-flash-latest')
+            vision_model = genai.GenerativeModel('gemini-1.5-flash')
             image_part = {"mime_type": mime_type, "data": image_bytes}
             resp = await vision_model.generate_content_async([VISUAL_SEARCH_PROMPT, image_part])
             text = (resp.text or "").strip().lower()

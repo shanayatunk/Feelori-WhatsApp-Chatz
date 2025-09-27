@@ -4,8 +4,8 @@ import json
 import logging
 import asyncio
 import numpy as np
-import google.generativeai as genai
-from google.generativeai import types
+from google import genai
+from google.genai.types import GenerateContentConfig, Tool
 from openai import AsyncOpenAI
 from typing import Optional, Dict
 from app.models.domain import Product
@@ -25,12 +25,12 @@ logger = logging.getLogger(__name__)
 class AIService:
     def __init__(self):
         if settings.gemini_api_key:
-            # The new library automatically uses the v1 API
-            genai.configure(api_key=settings.gemini_api_key)
-            # The model initialization remains the same.
-            self.gemini_client = genai.GenerativeModel('gemini-1.5-pro-001')
+            # Configure the new google-genai client
+            self.gemini_client = genai.Client(api_key=settings.gemini_api_key)
+            self.model_name = 'gemini-1.5-pro'  # Updated model name format
         else:
             self.gemini_client = None
+            self.model_name = None
         
         if settings.openai_api_key:
             self.openai_client = AsyncOpenAI(api_key=settings.openai_api_key)
@@ -65,7 +65,6 @@ class AIService:
                 ai_requests_counter.labels(model="openai", status="error").inc()
         
         return "I'm sorry, I'm having trouble connecting. Could you rephrase your question?"
-
 
     async def _generate_openai_json_response(self, prompt: str) -> Optional[Dict]:
         """Generates a JSON response from OpenAI using its JSON mode."""
@@ -104,8 +103,19 @@ class AIService:
         return response.choices[0].message.content.strip()
 
     async def _generate_gemini_response(self, message: str, context: dict) -> str:
+        """Generate response using the new google-genai client."""
+        if not self.gemini_client:
+            raise Exception("Gemini client not available")
+            
         full_prompt = f"{AI_SYSTEM_PROMPT}\n\nContext: {json.dumps(context)}\n\nMessage: {message}"
-        response = await self.gemini_client.generate_content_async(full_prompt)
+        
+        # Use the new API format
+        response = await asyncio.to_thread(
+            self.gemini_client.models.generate_content,
+            model=self.model_name,
+            contents=full_prompt
+        )
+        
         return response.text.strip()
 
     async def get_ai_json_response(self, prompt: str, **kwargs) -> dict:
@@ -116,11 +126,18 @@ class AIService:
         # 1. Try Gemini First
         if self.gemini_client:
             try:
-                json_model = genai.GenerativeModel(
-                    'gemini-1.5-pro-001',
-                    generation_config={"response_mime_type": "application/json"}
+                # Use JSON mode with the new client
+                config = GenerateContentConfig(
+                    response_mime_type="application/json"
                 )
-                response = await json_model.generate_content_async(prompt)
+                
+                response = await asyncio.to_thread(
+                    self.gemini_client.models.generate_content,
+                    model=self.model_name,
+                    contents=prompt,
+                    config=config
+                )
+                
                 ai_requests_counter.labels(model="gemini-json", status="success").inc()
                 return json.loads(response.text)
             except Exception as e:
@@ -171,15 +188,34 @@ class AIService:
     # --- Hybrid Visual Search ---
     async def get_keywords_from_image_for_reranking(self, image_bytes: bytes, mime_type: str) -> list[str]:
         """Generates text keywords from an image for re-ranking visual search results."""
-        if not self.gemini_client: return []
+        if not self.gemini_client: 
+            return []
+            
         try:
-            vision_model = genai.GenerativeModel('gemini-1.5-pro-001')
-            image_part = {"mime_type": mime_type, "data": image_bytes}
-            resp = await vision_model.generate_content_async([VISUAL_SEARCH_PROMPT, image_part])
-            text = (resp.text or "").strip().lower()
+            # Create image part for the new API
+            image_data = {
+                'mime_type': mime_type,
+                'data': image_bytes
+            }
+            
+            # Use multimodal content with the new client
+            contents = [
+                VISUAL_SEARCH_PROMPT,
+                image_data
+            ]
+            
+            response = await asyncio.to_thread(
+                self.gemini_client.models.generate_content,
+                model=self.model_name,
+                contents=contents
+            )
+            
+            text = (response.text or "").strip().lower()
             return [k.strip() for k in text.split(',') if k.strip()]
+            
         except Exception as e:
-            logger.error(f"Error getting keywords for reranking: {e}"); return []
+            logger.error(f"Error getting keywords for reranking: {e}")
+            return []
 
     def _calculate_keyword_relevance(self, keywords: list[str], candidate: dict) -> float:
         """Calculates a relevance score based on keyword matches in title and tags."""

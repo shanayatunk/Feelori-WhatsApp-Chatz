@@ -51,38 +51,14 @@ ecdsa==0.19.1
     # via python-jose
 fastapi==0.116.1
     # via -r backend/requirements.in
-google-ai-generativelanguage==0.6.6
-    # via google-generativeai
-google-api-core[grpc]==2.25.1
-    # via
-    #   google-ai-generativelanguage
-    #   google-api-python-client
-    #   google-generativeai
-google-api-python-client==2.177.0
-    # via google-generativeai
 google-auth==2.40.3
-    # via
-    #   google-ai-generativelanguage
-    #   google-api-core
-    #   google-api-python-client
-    #   google-auth-httplib2
-    #   google-generativeai
-google-auth-httplib2==0.2.0
-    # via google-api-python-client
-google-generativeai==0.7.1
+    # via google-genai
+google-genai==1.4.0
     # via -r backend/requirements.in
 googleapis-common-protos==1.59.1
-    # via
-    #   google-api-core
-    #   grpcio-status
-    #   opentelemetry-exporter-jaeger-proto-grpc
+    # via opentelemetry-exporter-jaeger-proto-grpc
 grpcio==1.74.0
-    # via
-    #   google-api-core
-    #   grpcio-status
-    #   opentelemetry-exporter-jaeger-proto-grpc
-grpcio-status==1.62.3
-    # via google-api-core
+    # via opentelemetry-exporter-jaeger-proto-grpc
 gunicorn==23.0.0
     # via -r backend/requirements.in
 h11==0.16.0
@@ -95,13 +71,10 @@ hpack==4.1.0
     # via h2
 httpcore==1.0.9
     # via httpx
-httplib2==0.22.0
-    # via
-    #   google-api-python-client
-    #   google-auth-httplib2
 httpx[http2]==0.28.1
     # via
     #   -r backend/requirements.in
+    #   google-genai
     #   openai
 hyperframe==6.1.0
     # via h2
@@ -180,18 +153,8 @@ pluggy==1.6.0
     # via pytest
 prometheus-client==0.19.0
     # via -r backend/requirements.in
-proto-plus==1.26.1
-    # via
-    #   google-ai-generativelanguage
-    #   google-api-core
 protobuf==4.25.8
-    # via
-    #   google-ai-generativelanguage
-    #   google-api-core
-    #   google-generativeai
-    #   googleapis-common-protos
-    #   grpcio-status
-    #   proto-plus
+    # via googleapis-common-protos
 psutil==5.9.8
     # via -r backend/requirements.in
 pyasn1==0.6.1
@@ -207,7 +170,7 @@ pydantic==2.8.2
     # via
     #   -r backend/requirements.in
     #   fastapi
-    #   google-generativeai
+    #   google-genai
     #   openai
     #   pydantic-settings
 pydantic-core==2.20.1
@@ -216,8 +179,6 @@ pydantic-settings==2.2.1
     # via -r backend/requirements.in
 pymongo==4.8.0
     # via motor
-pyparsing==3.2.3
-    # via httplib2
 pytest==8.3.2
     # via
     #   -r backend/requirements.in
@@ -238,7 +199,7 @@ rapidfuzz==3.13.0
 redis==5.0.8
     # via -r backend/requirements.in
 requests==2.32.4
-    # via google-api-core
+    # via google-genai
 rsa==4.9.1
     # via
     #   google-auth
@@ -262,13 +223,11 @@ tenacity==8.2.3
 thrift==0.22.0
     # via opentelemetry-exporter-jaeger-thrift
 tqdm==4.67.1
-    # via
-    #   google-generativeai
-    #   openai
+    # via openai
 typing-extensions==4.14.1
     # via
     #   fastapi
-    #   google-generativeai
+    #   google-genai
     #   limits
     #   openai
     #   opentelemetry-sdk
@@ -279,14 +238,14 @@ tzdata==2025.2
     # via tzlocal
 tzlocal==5.3.1
     # via apscheduler
-uritemplate==4.2.0
-    # via google-api-python-client
 urllib3==2.5.0
     # via
     #   requests
     #   sentry-sdk
 uvicorn==0.30.1
     # via -r backend/requirements.in
+websockets==14.2
+    # via google-genai
 wrapt==1.17.2
     # via
     #   deprecated

@@ -25,11 +25,9 @@ logger = logging.getLogger(__name__)
 class AIService:
     def __init__(self):
         if settings.gemini_api_key:
-            genai.configure(
-                api_key=settings.gemini_api_key,
-                transport="rest",
-                client_options={"api_version": "v1"},
-            )
+            # The new library automatically uses the v1 API
+            genai.configure(api_key=settings.gemini_api_key)
+            # The model initialization remains the same.
             self.gemini_client = genai.GenerativeModel('gemini-1.5-pro-latest')
         else:
             self.gemini_client = None

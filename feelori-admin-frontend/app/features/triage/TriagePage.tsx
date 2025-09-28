@@ -1,15 +1,11 @@
-// /feelori-admin-frontend/app/features/triage/TriagePage.tsx
-
+// TriagePage.tsx with debugging
 "use client";
 import React from 'react';
-// 1. Import 'mutate' from SWR to refresh data after an update
 import useSWR, { mutate } from 'swr';
 import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/Card';
-// 2. Import the new 'resolveTriageTicket' function
 import { getTriageTickets, TriageTicket, resolveTriageTicket } from '../../../lib/api';
 import { Button } from '../../components/ui/Button';
 
-// A helper to format dates
 const formatDateTime = (isoString: string) => {
   try {
     return new Date(isoString).toLocaleString('en-IN', {
@@ -25,38 +21,60 @@ const formatDateTime = (isoString: string) => {
 };
 
 export const TriagePage = () => {
-  const { data, error, isLoading } = useSWR('triageTickets', getTriageTickets);
+  // Add debugging
+  console.log('Environment check:', {
+    NODE_ENV: process.env.NODE_ENV,
+    API_URL: process.env.NEXT_PUBLIC_API_URL,
+    CURRENT_PROTOCOL: window.location.protocol,
+    CURRENT_HOST: window.location.host
+  });
 
-  // 3. Add the handler function to resolve a ticket
+  const { data, error, isLoading } = useSWR('triageTickets', async () => {
+    console.log('Fetching triage tickets...');
+    try {
+      const result = await getTriageTickets();
+      console.log('Triage tickets fetched successfully:', result);
+      return result;
+    } catch (err) {
+      console.error('Failed to fetch triage tickets:', err);
+      throw err;
+    }
+  });
+
   const handleResolveTicket = async (ticketId: string) => {
     try {
-      // Call the API to mark the ticket as resolved
+      console.log('Resolving ticket:', ticketId);
       await resolveTriageTicket(ticketId);
-      // Tell SWR to re-fetch the data, which will remove the resolved
-      // ticket from the list automatically.
+      console.log('Ticket resolved successfully');
       mutate('triageTickets');
     } catch (err) {
       console.error("Failed to resolve ticket:", err);
-      // Optional: Add a user-facing error notification here
       alert("Could not resolve the ticket. Please try again.");
     }
   };
 
-  // 4. Add a handler for viewing photos (connect to backend later)
   const handleViewPhoto = (mediaId: string) => {
-    // This will open a new tab to the backend endpoint which then redirects
-    // to the temporary WhatsApp media URL.
-    window.open(`/api/triage/media/${mediaId}`, '_blank');
+    const photoUrl = `${process.env.NEXT_PUBLIC_API_URL}/api/triage/media/${mediaId}`;
+    console.log('Opening photo URL:', photoUrl);
+    window.open(photoUrl, '_blank');
   };
-
 
   const renderContent = () => {
     if (isLoading) {
       return <div className="text-center p-8">Loading tickets...</div>;
     }
+    
     if (error) {
-      return <div className="text-center p-8 text-red-600">Failed to load tickets. Please try again later.</div>;
+      console.error('Triage page error:', error);
+      return (
+        <div className="text-center p-8 text-red-600">
+          <p>Failed to load tickets.</p>
+          <p className="text-sm mt-2">Error: {error.message}</p>
+          <p className="text-xs mt-1 text-gray-500">Check console for more details</p>
+        </div>
+      );
     }
+    
     if (!data || data.tickets.length === 0) {
       return <div className="text-center p-8 text-gray-500">No pending triage tickets. All caught up!</div>;
     }
@@ -81,7 +99,6 @@ export const TriagePage = () => {
                 <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700">{ticket.customer_phone}</td>
                 <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-700">{ticket.issue_type}</td>
                 <td className="px-6 py-4 whitespace-nowrap text-sm font-medium space-x-2">
-                  {/* --- 5. THE FIX IS APPLIED HERE --- */}
                   {ticket.image_media_id && ticket.image_media_id !== 'N/A' && (
                     <Button
                       variant="secondary"

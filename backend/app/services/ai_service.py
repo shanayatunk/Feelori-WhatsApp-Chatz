@@ -175,6 +175,7 @@ class AIService:
                     contents=f"{prompt}\n\nPlease respond with valid JSON only.",
                     config=GenerateContentConfig(
                         temperature=0.1,
+                        response_mime_type="application/json",
                         response_schema={
                             "type": "object",
                             "properties": {}

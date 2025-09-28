@@ -37,7 +37,11 @@ class AIService:
     def __init__(self):
         # Gemini client: configure v1 stable API when key present.
         if settings.gemini_api_key:
-            http_options = HttpOptions(api_version="v1", timeout=30.0)  # 30 second timeout
+            # Set reasonable timeouts - connect: 10s, read: 60s
+            http_options = HttpOptions(
+                api_version="v1",
+                timeout=60  # Increase timeout to 60 seconds for model operations
+            )
             # pass api_key explicitly; vertexai usage can be toggled with additional flags if needed
             self.gemini_client = genai.Client(api_key=settings.gemini_api_key, http_options=http_options)
         else:

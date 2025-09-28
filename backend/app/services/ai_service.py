@@ -3,11 +3,12 @@
 import json
 import logging
 import asyncio
-import numpy as np
+import re
+from typing import Optional, Dict, Callable, Any
 from google import genai
-from google.genai.types import GenerateContentConfig, Tool, HttpOptions
+from google.genai.types import GenerateContentConfig, HttpOptions
 from openai import AsyncOpenAI
-from typing import Optional, Dict
+from tenacity import retry, wait_exponential, stop_after_attempt, retry_if_exception_type
 from app.models.domain import Product
 from rapidfuzz import process, fuzz
 from app.config.settings import settings
@@ -22,65 +23,137 @@ from app.services import shopify_service
 
 logger = logging.getLogger(__name__)
 
+# Small retry decorator for synchronous genai calls (used inside asyncio.to_thread)
+def _sync_retry_decorator(fn: Callable[..., Any]) -> Callable[..., Any]:
+    return retry(
+        reraise=True,
+        wait=wait_exponential(multiplier=1, min=1, max=10),
+        stop=stop_after_attempt(3),
+        retry=retry_if_exception_type(Exception),
+    )(fn)
+
+
 class AIService:
     def __init__(self):
+        # Gemini client: configure v1 stable API when key present.
         if settings.gemini_api_key:
-            # Configure the new google-genai client with v1 API (stable endpoints)
-            http_options = HttpOptions(api_version='v1')
+            http_options = HttpOptions(api_version="v1", timeout=30.0)  # 30 second timeout
+            # pass api_key explicitly; vertexai usage can be toggled with additional flags if needed
             self.gemini_client = genai.Client(api_key=settings.gemini_api_key, http_options=http_options)
-            
-            # Get available models and select the best one
-            self.model_name = self._get_available_model()
-            logger.info(f"Using Gemini model: {self.model_name}")
         else:
             self.gemini_client = None
-            self.model_name = None
-        
+
+        # NOTE: lazy model detection — do NOT call models.list() here (avoids network at import)
+        self.model_name: Optional[str] = None
+
+        # OpenAI async client (set to None if no key)
         if settings.openai_api_key:
             self.openai_client = AsyncOpenAI(api_key=settings.openai_api_key)
         else:
             self.openai_client = None
-            
+
         self.circuit_breaker = CircuitBreaker()
         self.openai_breaker = CircuitBreaker()
 
-    def _get_available_model(self) -> str:
-        """Check available models and return the best one for our use case."""
-        try:
-            # List available models
-            models = self.gemini_client.models.list()
-            available_models = [model.name for model in models]
-            logger.info(f"Available Gemini models: {available_models}")
-            
-            # Priority order of models we want to use
+    # ---- Model selection (lazy) ----
+    async def _ensure_model(self):
+        """Lazily discover and set the best available Gemini model."""
+        if self.model_name or not self.gemini_client:
+            return
+
+        def _get_model_sync():
+            try:
+                models_iter = self.gemini_client.models.list()
+                available = [m.name for m in models_iter]
+                logger.info(f"Available Gemini models: {available}")
+            except Exception as ex:
+                logger.exception("Error listing Gemini models: %s", ex)
+                available = []
+
             preferred_models = [
-                'models/gemini-1.5-pro-latest',
-                'models/gemini-1.5-pro',
-                'models/gemini-1.5-flash-latest',
-                'models/gemini-1.5-flash',
-                'models/gemini-2.5-flash',
-                'models/gemini-1.5-pro-001',
-                'models/gemini-1.5-flash-001'
+                "models/gemini-1.5-pro-latest",
+                "models/gemini-1.5-pro",
+                "models/gemini-1.5-flash-latest",
+                "models/gemini-1.5-flash",
+                "models/gemini-2.5-flash",
+                "models/gemini-1.5-pro-001",
+                "models/gemini-1.5-flash-001"
             ]
             
             # Find the first available model from our preferred list
             for model in preferred_models:
-                if model in available_models:
+                if model in available:
                     logger.info(f"Selected model: {model}")
                     return model
             
             # If none of our preferred models are available, use the first available one
-            if available_models:
-                fallback_model = available_models[0]
+            if available:
+                fallback_model = available[0]
                 logger.warning(f"Using fallback model: {fallback_model}")
                 return fallback_model
                 
             raise Exception("No models available")
-            
+
+        try:
+            self.model_name = await asyncio.to_thread(_get_model_sync)
+            logger.info("Gemini model resolved to: %s", self.model_name)
         except Exception as e:
             logger.error(f"Failed to get available models: {e}")
             # Fallback to a common model name
-            return 'models/gemini-1.5-flash'
+            self.model_name = 'models/gemini-1.5-flash'
+
+    def _strip_json_fences(self, text: str) -> str:
+        """Remove JSON markdown fences if present."""
+        # Remove ```json ... ``` or ``` ... ``` blocks
+        json_fence_pattern = r'```(?:json)?\s*\n?(.*?)\n?```'
+        match = re.search(json_fence_pattern, text, re.DOTALL | re.IGNORECASE)
+        if match:
+            return match.group(1).strip()
+        return text.strip()
+
+    # ---- Robust extractor for different response shapes ----
+    def _extract_text_from_genai_response(self, response) -> str:
+        """Extract text from various Gemini response formats."""
+        if not response:
+            return ""
+        # common simple property
+        text = getattr(response, "text", None)
+        if text:
+            return text.strip()
+
+        # try candidates -> content -> parts -> text
+        candidates = getattr(response, "candidates", None)
+        try:
+            if candidates and len(candidates) > 0:
+                first = candidates[0]
+                # candidate.content may be a pydantic/typed object or dict
+                content = getattr(first, "content", None) or (first.get("content") if isinstance(first, dict) else None)
+                if content:
+                    parts = getattr(content, "parts", None) or (content.get("parts") if isinstance(content, dict) else None)
+                    if parts and len(parts) > 0:
+                        p0 = parts[0]
+                        # p0 may be an object with .text or a dict
+                        return (getattr(p0, "text", None) or p0.get("text") if isinstance(p0, dict) else str(p0)).strip()
+                # fallback: candidate.text
+                cand_text = getattr(first, "text", None) or (first.get("text") if isinstance(first, dict) else None)
+                if cand_text:
+                    return cand_text.strip()
+        except Exception:
+            logger.debug("Could not parse candidates from genai response", exc_info=True)
+
+        # as last resort, stringify
+        try:
+            return str(response).strip()
+        except Exception:
+            return ""
+
+    # ---- Helper to call generate_content synchronously with retries (wrapped and called in thread) ----
+    def _sync_generate_with_retry(self, model: str, contents, config: Optional[GenerateContentConfig] = None):
+        """Synchronous wrapper for generate_content with retry logic."""
+        @_sync_retry_decorator
+        def _inner(m, c, cfg):
+            return self.gemini_client.models.generate_content(model=m, contents=c, config=cfg)
+        return _inner(model, contents, config)
 
     async def generate_response(self, message: str, context: dict | None = None) -> str:
         """Generate AI response for general text-based inquiries with failover."""
@@ -132,6 +205,7 @@ class AIService:
             return None # Return None on failure
 
     async def _generate_openai_response(self, message: str, context: dict) -> str:
+        """Generate OpenAI response with conversation context."""
         messages = [{"role": "system", "content": AI_SYSTEM_PROMPT}]
         if context.get("conversation_history"):
             for exchange in context["conversation_history"]:
@@ -148,17 +222,21 @@ class AIService:
         """Generate response using the new google-genai client."""
         if not self.gemini_client:
             raise Exception("Gemini client not available")
-            
+
+        await self._ensure_model()
+        if not self.model_name:
+            raise Exception("No Gemini model available")
+
         full_prompt = f"{AI_SYSTEM_PROMPT}\n\nContext: {json.dumps(context)}\n\nMessage: {message}"
-        
-        # Use the new API format
-        response = await asyncio.to_thread(
-            self.gemini_client.models.generate_content,
-            model=self.model_name,
-            contents=full_prompt
-        )
-        
-        return response.text.strip()
+
+        # Call the sync client inside a thread, with simple retry wrapper
+        try:
+            response = await asyncio.to_thread(self._sync_generate_with_retry, self.model_name, full_prompt, None)
+            text = self._extract_text_from_genai_response(response)
+            return text
+        except Exception as ex:
+            logger.exception("Gemini generate_content failed: %s", ex)
+            raise
 
     async def get_ai_json_response(self, prompt: str, **kwargs) -> dict:
         """
@@ -168,19 +246,24 @@ class AIService:
         # 1. Try Gemini First
         if self.gemini_client:
             try:
-                # Use JSON mode with proper configuration
-                response = await asyncio.to_thread(
-                    self.gemini_client.models.generate_content,
-                    model=self.model_name,
-                    contents=f"{prompt}\n\nPlease respond with valid JSON only.",
-                    config=GenerateContentConfig(
+                await self._ensure_model()
+                if self.model_name:
+                    config = GenerateContentConfig(
                         temperature=0.1,
-                        response_mime_type="application/json"
+                        response_mime_type="application/json",
                     )
-                )
-                
-                ai_requests_counter.labels(model="gemini-json", status="success").inc()
-                return json.loads(response.text)
+                    response = await asyncio.to_thread(
+                        self._sync_generate_with_retry, 
+                        self.model_name, 
+                        f"{prompt}\n\nPlease respond with valid JSON only.", 
+                        config
+                    )
+                    text = self._extract_text_from_genai_response(response)
+                    if text:
+                        # Strip JSON fences if present before parsing
+                        clean_json = self._strip_json_fences(text)
+                        ai_requests_counter.labels(model="gemini-json", status="success").inc()
+                        return json.loads(clean_json)
             except Exception as e:
                 logger.error(f"Gemini JSON response generation failed: {e}. Trying OpenAI fallback.")
                 ai_requests_counter.labels(model="gemini-json", status="error").inc()
@@ -195,7 +278,6 @@ class AIService:
                  logger.error(f"OpenAI JSON fallback also failed: {e}")
 
         # 3. If both AI services fail, raise an exception to trigger the rule-based fallback.
-        # If both services fail, raise an exception to trigger the rule-based fallback.
         raise Exception("Both Gemini and OpenAI failed to generate a JSON response.")
 
     async def get_product_qa(self, query: str, product: Optional[Product] = None) -> str:
@@ -233,6 +315,10 @@ class AIService:
             return []
             
         try:
+            await self._ensure_model()
+            if not self.model_name:
+                return []
+                
             # Create image part for the new API
             image_data = {
                 'mime_type': mime_type,
@@ -246,12 +332,13 @@ class AIService:
             ]
             
             response = await asyncio.to_thread(
-                self.gemini_client.models.generate_content,
-                model=self.model_name,
-                contents=contents
+                self._sync_generate_with_retry,
+                self.model_name,
+                contents,
+                None
             )
             
-            text = (response.text or "").strip().lower()
+            text = (self._extract_text_from_genai_response(response) or "").strip().lower()
             return [k.strip() for k in text.split(',') if k.strip()]
             
         except Exception as e:
@@ -321,5 +408,6 @@ class AIService:
             logger.error(f"Error in hybrid visual search: {e}", exc_info=True)
             return {'success': False, 'error': str(e)}
 
-# Globally accessible instance
+# Globally accessible instance - safe now because __init__ is non-blocking
+# For stricter setups, consider moving this to FastAPI startup event handler
 ai_service = AIService()

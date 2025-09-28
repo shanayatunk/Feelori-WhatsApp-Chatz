@@ -26,7 +26,6 @@ class AIService:
     def __init__(self):
         if settings.gemini_api_key:
             # Configure the new google-genai client with v1 API (stable endpoints)
-            from google.genai.types import HttpOptions
             http_options = HttpOptions(api_version='v1')
             self.gemini_client = genai.Client(api_key=settings.gemini_api_key, http_options=http_options)
             
@@ -55,7 +54,9 @@ class AIService:
             
             # Priority order of models we want to use
             preferred_models = [
+                'models/gemini-1.5-pro-latest',
                 'models/gemini-1.5-pro',
+                'models/gemini-1.5-flash-latest',
                 'models/gemini-1.5-flash',
                 'models/gemini-2.5-flash',
                 'models/gemini-1.5-pro-001',
@@ -167,16 +168,18 @@ class AIService:
         # 1. Try Gemini First
         if self.gemini_client:
             try:
-                # Use JSON mode with the new client
-                config = GenerateContentConfig(
-                    response_mime_type="application/json"
-                )
-                
+                # Use JSON mode with proper configuration
                 response = await asyncio.to_thread(
                     self.gemini_client.models.generate_content,
                     model=self.model_name,
-                    contents=prompt,
-                    config=config
+                    contents=f"{prompt}\n\nPlease respond with valid JSON only.",
+                    config=GenerateContentConfig(
+                        temperature=0.1,
+                        response_schema={
+                            "type": "object",
+                            "properties": {}
+                        }
+                    )
                 )
                 
                 ai_requests_counter.labels(model="gemini-json", status="success").inc()

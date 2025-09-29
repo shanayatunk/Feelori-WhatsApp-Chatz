@@ -11,7 +11,7 @@ services:
     container_name: feelori_backend
     restart: unless-stopped
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     command: gunicorn -w 2 -k uvicorn.workers.UvicornWorker -b 0.0.0.0:8000 -t 120 app.main:app
     depends_on:
       - redis

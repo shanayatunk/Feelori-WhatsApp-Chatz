@@ -58,6 +58,10 @@ class AIService:
 
         self.circuit_breaker = CircuitBreaker()
         self.openai_breaker = CircuitBreaker()
+        self.default_json_config = GenerateContentConfig(
+            temperature=0.1,
+            max_output_tokens=1024
+        )
 
     # ---- Model selection (lazy) ----
     async def _ensure_model(self):
@@ -75,11 +79,11 @@ class AIService:
                 available = []
 
             preferred_models = [
+                "models/gemini-2.5-flash",
                 "models/gemini-1.5-pro-latest",
                 "models/gemini-1.5-pro",
                 "models/gemini-1.5-flash-latest",
                 "models/gemini-1.5-flash",
-                "models/gemini-2.5-flash",
                 "models/gemini-1.5-pro-001",
                 "models/gemini-1.5-flash-001"
             ]
@@ -252,22 +256,47 @@ class AIService:
             try:
                 await self._ensure_model()
                 if self.model_name:
-                    config = GenerateContentConfig(
-                        temperature=0.1,
-                        response_mime_type="application/json",
-                    )
+                    # Enhanced JSON-specific prompt
+                    json_prompt = f"""{prompt}
+
+CRITICAL INSTRUCTIONS:
+1. Respond ONLY with valid JSON - no explanations, no markdown, no code blocks
+2. Ensure all JSON keys are properly quoted
+3. Do not prefix with "json" or wrap in backticks
+4. Verify the JSON is parseable before responding
+
+Example format: {{"key": "value", "items": []}}"""
+
                     response = await asyncio.to_thread(
-                        self._sync_generate_with_retry, 
-                        self.model_name, 
-                        f"{prompt}\n\nPlease respond with valid JSON only.", 
-                        config
+                        self._sync_generate_with_retry,
+                        self.model_name,
+                        json_prompt,
+                        self.default_json_config  # Use reusable config
                     )
+
                     text = self._extract_text_from_genai_response(response)
                     if text:
-                        # Strip JSON fences if present before parsing
+                        # Log raw response for debugging JSON parsing issues
+                        logger.debug(f"Raw Gemini response before cleaning: {text}")
+
+                        # Strip JSON fences and clean the response
                         clean_json = self._strip_json_fences(text)
-                        ai_requests_counter.labels(model="gemini-json", status="success").inc()
-                        return json.loads(clean_json)
+
+                        # Additional cleaning for common AI JSON formatting issues
+                        clean_json = clean_json.strip()
+                        if clean_json.startswith('json'):
+                            clean_json = clean_json[4:].strip()
+
+                        # Validate JSON and soft-fail to OpenAI if malformed
+                        try:
+                            parsed_json = json.loads(clean_json)
+                            ai_requests_counter.labels(model="gemini-json", status="success").inc()
+                            return parsed_json
+                        except json.JSONDecodeError as e:
+                            logger.warning(f"Gemini returned invalid JSON: {e}. Trying OpenAI fallback.")
+                            ai_requests_counter.labels(model="gemini-json", status="error").inc()
+                            # Don't return here - let it fall through to OpenAI fallback
+
             except Exception as e:
                 logger.error(f"Gemini JSON response generation failed: {e}. Trying OpenAI fallback.")
                 ai_requests_counter.labels(model="gemini-json", status="error").inc()
@@ -279,10 +308,11 @@ class AIService:
                 if openai_response:
                     return openai_response
             except Exception as e:
-                 logger.error(f"OpenAI JSON fallback also failed: {e}")
+                logger.error(f"OpenAI JSON fallback also failed: {e}")
 
         # 3. If both AI services fail, raise an exception to trigger the rule-based fallback.
-        raise Exception("Both Gemini and OpenAI failed to generate a JSON response.")
+        raise Exception("Both Gemini and OpenAI failed to generate a valid JSON response.")
+
 
     async def get_product_qa(self, query: str, product: Optional[Product] = None) -> str:
         """

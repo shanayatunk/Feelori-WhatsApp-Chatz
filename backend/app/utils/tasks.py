@@ -2,11 +2,10 @@
 
 import logging
 
+from app.config.settings import settings 
 from app.services.shopify_service import shopify_service
-# Add the new imports needed for the analytics task
 from app.services.db_service import db_service
 from app.config import strings
-from app.services import whatsapp_service
 from app.services.whatsapp_service import whatsapp_service
 
 logger = logging.getLogger(__name__)

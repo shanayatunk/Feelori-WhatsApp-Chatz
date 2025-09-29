@@ -242,28 +242,27 @@ class ShopifyService:
             resp.raise_for_status()
             orders = resp.json().get("orders", []) or []
 
-            # --- Enhanced Diagnostic Logging ---
-            logger.info(f"--- RAW SHOPIFY ORDER DATA CHECK (First 5 of {len(orders)} orders) ---")
-            for i, order in enumerate(orders[:5]):  # Log first 5 to avoid spamming logs
-                order_name = order.get("name", "N/A")
-                customer_info = order.get("customer", {})
-                customer_name = f"{customer_info.get('first_name', '')} {customer_info.get('last_name', '')}".strip()
+            # --- Enhanced Diagnostic Logging (DEBUG only, masked) ---
+            if logger.isEnabledFor(logging.DEBUG):
+                logger.debug(f"--- RAW SHOPIFY ORDER DATA CHECK (First 5 of {len(orders)} orders) ---")
+                for i, order in enumerate(orders[:5]):  # Log first 5 to avoid noise
+                    order_name = order.get("name", "N/A")
+                    customer_info = order.get("customer", {}) or {}
+                    customer_name = f"{customer_info.get('first_name', '')} {customer_info.get('last_name', '')}".strip()
+                    
+                    def _mask(p): 
+                        s = EnhancedSecurityService.sanitize_phone_number(p or "")
+                        return f"***{s[-4:]}" if s else "N/A"
 
-                logger.info(f"Order #{i+1}: {order_name} for Customer: '{customer_name}'")
-                logger.info(f"  -> Top-level 'phone' field: {order.get('phone')}")
-
-                shipping_address = order.get("shipping_address", {})
-                if shipping_address:
-                    logger.info(f"  -> 'shipping_address.phone' field: {shipping_address.get('phone')}")
-                else:
-                    logger.info("  -> 'shipping_address' field: Not present")
-
-                billing_address = order.get("billing_address", {})
-                if billing_address:
-                    logger.info(f"  -> 'billing_address.phone' field: {billing_address.get('phone')}")
-                else:
-                    logger.info("  -> 'billing_address' field: Not present")
-            logger.info("--- END OF RAW SHOPIFY ORDER DATA CHECK ---")
+                    logger.debug(f"Order #{i+1}: {order_name} for Customer: '{customer_name}'")
+                    logger.debug(f"  -> Top-level 'phone': {_mask(order.get('phone'))}")
+                    
+                    shipping_address = order.get("shipping_address", {}) or {}
+                    logger.debug(f"  -> shipping_address.phone: {_mask(shipping_address.get('phone'))}")
+                    
+                    billing_address = order.get("billing_address", {}) or {}
+                    logger.debug(f"  -> billing_address.phone: {_mask(billing_address.get('phone'))}")
+                logger.debug("--- END OF RAW SHOPIFY ORDER DATA CHECK ---")
             # --- End of Logging ---
 
             # --- Security filtering logic ---

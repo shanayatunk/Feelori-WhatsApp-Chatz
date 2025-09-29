@@ -67,7 +67,11 @@ async def update_escalation_analytics():
             {"$out": "human_escalation_analytics"}
         ]
         # Execute the aggregation. The results are written directly to the new collection by MongoDB.
-        await db_service.db.customers.aggregate(pipeline).to_list(length=None)
+        await db_service.db.customers.aggregate(
+            pipeline,
+            allowDiskUse=True,
+            maxTimeMS=60000,
+        ).to_list(length=1) # Fetching 1 document is a way to ensure execution
         logger.info("--- Successfully updated human escalation analytics collection ---")
     except Exception as e:
         logger.error("An error occurred during the escalation analytics update.", exc_info=True)

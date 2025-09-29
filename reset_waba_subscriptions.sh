@@ -3,8 +3,9 @@ set -euo pipefail
 
 # === CONFIG ===
 # Replace with your real tokens
-PROD_APP_ACCESS_TOKEN="YOUR_PROD_APP_ACCESS_TOKEN"
-DEV_APP_ACCESS_TOKEN="YOUR_DEV_APP_ACCESS_TOKEN"
+# Tokens must come from environment
+: "${PROD_APP_ACCESS_TOKEN:?Set PROD_APP_ACCESS_TOKEN in env}"
+: "${DEV_APP_ACCESS_TOKEN:?Set DEV_APP_ACCESS_TOKEN in env}"
 
 # App IDs
 PROD_APP_ID="1062440482164641"    # Feelori Chatz (Prod)

@@ -6,6 +6,11 @@ on:
       - 'main'
       - 'develop'
 
+# ✅ NEW: Add concurrency control to prevent race conditions
+concurrency:
+  group: feelori-backend-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   REGISTRY: docker.io
   BACKEND_IMAGE_NAME: ${{ secrets.DOCKERHUB_USERNAME }}/feelori-backend
@@ -38,6 +43,18 @@ jobs:
         run: |
           pip install --cache-dir ~/.cache/pip --prefer-binary -r backend/requirements.txt
 
+      # ✅ NEW: Add linting step
+      - name: Lint with Ruff
+        run: |
+          pip install ruff
+          ruff check backend
+
+      # ✅ NEW: Add testing step
+      - name: Run Unit Tests with Pytest
+        run: |
+          pip install pytest
+          pytest -q backend
+
       - name: Log in to Docker Hub
         uses: docker/login-action@v3
         with:
@@ -52,16 +69,13 @@ jobs:
         uses: docker/metadata-action@v5
         with:
           images: ${{ env.BACKEND_IMAGE_NAME }}
-          tags: |
-            type=sha,format=long,prefix=
-            type=ref,event=branch
 
       - name: Build and push Docker image
         uses: docker/build-push-action@v5
         with:
           context: ./backend
           push: true
-          tags: ${{ steps.meta.outputs.tags }}
+          tags: ${{ github.sha }} # Simplified tag for clarity
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=registry,ref=${{ env.BACKEND_IMAGE_NAME }}:cache
           cache-to: type=registry,ref=${{ env.BACKEND_IMAGE_NAME }}:cache,mode=max

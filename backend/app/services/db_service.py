@@ -697,7 +697,7 @@ class DatabaseService:
 
 #Packer Perfomance enhancements
 
-async def get_packer_performance_metrics(self, days: int = 7) -> dict:
+    async def get_packer_performance_metrics(self, days: int = 7) -> dict:
         """
         Calculates advanced performance metrics for the packing dashboard using an aggregation pipeline.
         This version is robust and handles both old and new order data.

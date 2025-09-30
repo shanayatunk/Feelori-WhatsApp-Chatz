@@ -161,7 +161,7 @@ async def process_message(phone_number: str, message_text: str, message_type: st
                 return "[Bot is handling triage step 2: issue selection]"
             else:
                 # User said "No," so now we ask for the order number
-                await cache_service.set(f"state:awaiting_triage_order_number:{clean_phone}", "1", ex=900)
+                await cache_service.set(f"state:awaiting_triage_order_number:{clean_phone}", "1", ttl=900)
                 return "No problem. Please reply with the correct order number (e.g., #FO1039)."
 
         # State 2: Check if user is selecting an order from a list
@@ -518,8 +518,11 @@ async def handle_product_search(message: List[str] | str, customer: Dict, **kwar
         config = SearchConfig()
         query_builder = QueryBuilder(config, customer=customer)
 
-        # --- THIS IS THE NEW LOGIC ---
-        # Coerce the input to a list of keywords, whether it's a string or already a list.
+        # --- THIS IS THE CORRECTED LOGIC ---
+        # 1. Preserve the original full message string for price parsing.
+        original_message = message if isinstance(message, str) else " ".join(message)
+
+        # 2. Coerce the input to a list of keywords for other logic.
         if isinstance(message, str):
             keywords = query_builder._extract_keywords(message)
         else:
@@ -527,19 +530,20 @@ async def handle_product_search(message: List[str] | str, customer: Dict, **kwar
 
         # If after processing, there are no keywords, handle it as an unclear request.
         if not keywords:
-            unclear_message = message if isinstance(message, str) else " ".join(message)
-            return await _handle_unclear_request(customer, unclear_message)
-        # --- END OF NEW LOGIC ---
+            return await _handle_unclear_request(customer, original_message)
+        
+        # 3. Build query parts from the ORIGINAL message to keep price filters.
+        text_query, price_filter = query_builder.build_query_parts(original_message)
+        
+        # 4. Use the clean keyword string for logging, display, and cache keys.
+        message_str = " ".join(keywords)
+        # --- END OF CORRECTED LOGIC ---
 
         # Check if any keyword is in our unavailable list.
         for keyword in keywords:
             if keyword in default_rules.UNAVAILABLE_CATEGORIES:
                 # If it is, call the specific handler for unavailable products.
-                return await _handle_no_results(customer, " ".join(keywords))
-
-        # Reconstruct a "message" string from the clean keywords for the query builder
-        message_str = " ".join(keywords)
-        text_query, price_filter = query_builder.build_query_parts(message_str)
+                return await _handle_no_results(customer, message_str)
 
         if not text_query and not price_filter:
             return await _handle_unclear_request(customer, message_str)
@@ -554,7 +558,6 @@ async def handle_product_search(message: List[str] | str, customer: Dict, **kwar
                 price_str = f"under ₹{price_cond['lessThan']}" if "lessThan" in price_cond else f"over ₹{price_cond['greaterThan']}"
                 response = f"I found {unfiltered_count} item(s), but none are {price_str}. 😔\n\nWould you like to see them anyway?"
                 
-                # Use the abstracted cache_service methods for consistency
                 await cache_service.set(f"state:last_search:{customer['phone_number']}", json.dumps({"query": message_str, "page": 1}), ttl=900)
                 await cache_service.set(f"state:last_bot_question:{customer['phone_number']}", "offer_unfiltered_products", ttl=900)
                 
@@ -564,7 +567,7 @@ async def handle_product_search(message: List[str] | str, customer: Dict, **kwar
 
         return await _handle_standard_search(filtered_products, message_str, customer)
     except Exception as e:
-        logger.error(f"Error in product search: {e}", exc_info=True)
+        logger.exception(f"Error in product search for message: {original_message}")
         return await _handle_error(customer)
 
 def _format_single_order(order: Dict, detailed: bool = False) -> str:
@@ -762,7 +765,7 @@ async def handle_product_detail(message: str, customer: Dict, **kwargs) -> Optio
     product_id = message.replace("product_", "")
     product = await shopify_service.get_product_by_id(product_id)
     if product:
-        await cache_service.redis.set(f"state:last_single_product:{customer['phone_number']}", product.json(), ex=900)
+        await cache_service.redis.set(f"state:last_single_product:{customer['phone_number']}", product.json(), ttl=900)
         await whatsapp_service.send_product_detail_with_buttons(customer["phone_number"], product)
         return "[Bot sent product details]"
     return "Sorry, I couldn't find details for that product."
@@ -819,7 +822,7 @@ async def handle_shipping_inquiry(message: str, customer: Dict, **kwargs) -> Opt
 
     cities = ["hyderabad", "delhi", "mumbai", "bangalore", "chennai", "kolkata"]
     found_city = next((city for city in cities if city in message_lower), None)
-    await cache_service.redis.set(f"state:pending_question:{customer['phone_number']}", json.dumps({"question_type": "delivery_time_inquiry", "context": {"city": found_city}}), ex=900)
+    await cache_service.redis.set(f"state:pending_question:{customer['phone_number']}", json.dumps({"question_type": "delivery_time_inquiry", "context": {"city": found_city}}), ttl=900)
     return "To give you an accurate delivery estimate, I need to know which items you're interested in. Could you please search for a product?"
 
 async def handle_visual_search(message: str, customer: Dict, **kwargs) -> Optional[str]:
@@ -972,7 +975,7 @@ async def handle_human_escalation(phone_number: str, customer: Dict, **kwargs) -
         logger.info(f"Triage: Found one order ({order_num}) for {phone_number}. Asking for confirmation.")
         
         # Save the order number to Redis so we know what "yes" means
-        await cache_service.set(f"state:awaiting_triage_order_confirm:{phone_number}", order_num, ex=900)
+        await cache_service.set(f"state:awaiting_triage_order_confirm:{phone_number}", order_num, ttl=900)
         
         options = {"triage_confirm_yes": "Yes, that's it", "triage_confirm_no": "No, it's different"}
         await whatsapp_service.send_quick_replies(
@@ -1049,7 +1052,7 @@ async def _handle_no_results(customer: Dict, original_query: str) -> str:
     if search_category in {"bangles", "rings", "bracelets"}:
         response = f"While we don't carry {search_category} right now, we have stunning **earrings and necklace sets** that would complement your look beautifully.\n\nWould you like me to show you some of our bestselling sets? ✨"
         
-    await cache_service.redis.set(f"state:last_bot_question:{customer['phone_number']}", "offer_bestsellers", ex=900)
+    await cache_service.redis.set(f"state:last_bot_question:{customer['phone_number']}", "offer_bestsellers", ttl=900)
     return response
 
 async def _handle_unclear_request(customer: Dict, original_message: str) -> str:
@@ -1059,8 +1062,8 @@ async def _handle_unclear_request(customer: Dict, original_message: str) -> str:
 async def _handle_standard_search(products: List[Product], message: str, customer: Dict) -> str:
     """Handles standard product search results."""
     phone_number = customer["phone_number"]
-    await cache_service.redis.set(f"state:last_search:{phone_number}", json.dumps({"query": message, "page": 1}), ex=900)
-    await cache_service.redis.set(f"state:last_product_list:{phone_number}", json.dumps([p.dict() for p in products]), ex=900)
+    await cache_service.redis.set(f"state:last_search:{phone_number}", json.dumps({"query": message, "page": 1}), ttl=900)
+    await cache_service.redis.set(f"state:last_product_list:{phone_number}", json.dumps([p.dict() for p in products]), ttl=900)
     
     header_text = f"Found {len(products)} match{'es' if len(products) != 1 else ''} for you ✨"
     await _send_product_card(products=products, customer=customer, header_text=header_text, body_text="Tap any product for details!")

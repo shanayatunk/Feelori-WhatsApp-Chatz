@@ -59,20 +59,27 @@ class DatabaseService:
         our own database, which has the phone_numbers array.
         """
         try:
-            # ✅ FIX: Sanitize the phone number before querying.
+            # 1. Sanitize the phone number before querying.
             cleaned_phone = security_service.EnhancedSecurityService.sanitize_phone_number(phone_number)
             
+            # 2. ✅ NEW: Check if the sanitized phone number is empty and return early.
+            if not cleaned_phone:
+                logger.debug(f"get_recent_orders_by_phone: Invalid phone input '{phone_number}' sanitized to empty string. Aborting query.")
+                return []
+
+            # 3. Use the cleaned_phone in the query.
             cursor = self.db.orders.find(
-                {"phone_numbers": cleaned_phone}, # Use the cleaned phone number
+                {"phone_numbers": cleaned_phone},
                 {"order_number": 1, "created_at": 1, "raw": 1}
             ).sort("created_at", -1).limit(limit)
             
             orders = await cursor.to_list(length=limit)
             return orders
         except Exception:
-            # ✅ FIX: Use logger.exception for a full traceback.
-            logger.exception(f"Failed to get_recent_orders_by_phone for masked number")
+            # Use logger.exception for a full traceback.
+            logger.exception(f"Failed to get_recent_orders_by_phone for a sanitized number.")
             return []
+
 
     async def resolve_triage_ticket(self, ticket_id: str) -> bool:
         """Updates a triage ticket's status to 'resolved'."""

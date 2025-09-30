@@ -16,6 +16,12 @@ from app.services.security_service import EnhancedSecurityService
 
 logger = logging.getLogger(__name__)
 
+
+def _mask_phone_for_log(phone: str) -> str:
+    """Masks phone number for logging, showing only last 4 digits."""
+    sanitized = EnhancedSecurityService.sanitize_phone_number(phone)
+    return f"***{sanitized[-4:]}" if sanitized else "N/A"
+
 class ShopifyService:
     def __init__(self, store_url: str, access_token: str, storefront_token: Optional[str]):
         self.store_url = store_url.replace('https://', '').replace('http://', '')
@@ -285,7 +291,7 @@ class ShopifyService:
             await cache_service.set(
                 cache_key, json.dumps(filtered_orders, default=str), ttl=120
             )
-            logger.info(f"Shopify orders found for {phone_number}: {len(filtered_orders)}")
+            logger.info(f"Shopify orders found for {_mask_phone_for_log(phone_number)}: {len(filtered_orders)}")
             return filtered_orders
 
         except Exception as e:

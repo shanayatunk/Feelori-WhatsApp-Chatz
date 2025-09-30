@@ -146,6 +146,29 @@ async def process_message(phone_number: str, message_text: str, message_type: st
             return string_service.get_string("PACKING_DEPT_REDIRECT", strings.PACKING_DEPT_REDIRECT)
 
         customer = await get_or_create_customer(clean_phone)
+        # --- ✅ NEW SECURITY VERIFICATION BLOCK (MUST BE FIRST) ---
+        # Check if we are waiting for the user to verify an order
+        verification_state_raw = await cache_service.get(f"state:awaiting_order_verification:{clean_phone}")
+        if verification_state_raw:
+            verification_state = json.loads(verification_state_raw)
+            expected_last_4 = verification_state["expected_last_4"]
+            order_name = verification_state["order_name"]
+
+            # Check if the user's reply matches the expected last 4 digits
+            if message_text and message_text.strip() == expected_last_4:
+                # If it matches, mark them as verified and re-trigger the inquiry
+                await cache_service.set(f"state:order_verified:{clean_phone}:{order_name}", "1", ttl=60)
+                await cache_service.delete(f"state:awaiting_order_verification:{clean_phone}")
+                
+                # Re-process the original inquiry now that they are verified
+                response = await handle_order_detail_inquiry(order_name, customer)
+                return response[:4096] if response else None
+
+            else:
+                # If it doesn't match, inform them and clear the state
+                await cache_service.delete(f"state:awaiting_order_verification:{clean_phone}")
+                return "That's not correct. Please try asking for your order status again."
+        # --- END OF NEW SECURITY BLOCK ---        
 
         # --- START: AUTOMATED TRIAGE FLOW ---
         # Check for active triage state *before* anything else
@@ -627,36 +650,54 @@ def _format_single_order(order: Dict, detailed: bool = False) -> str:
     )
 
 
-async def handle_order_detail_inquiry(message: str, customer: Dict, **kwargs) -> Optional[str]:
-    """
-    Handles a request for details about a specific order number.
-    NOTE: The phone number security check has been removed due to Shopify plan limitations.
-    """
-    order_number_match = re.search(r'#?([a-zA-Z]*\d{4,})', message) # Updated regex to find any order number
-    if not order_number_match:
-        return await handle_order_inquiry(customer=customer)
+async def handle_order_detail_inquiry(message: str, customer: Dict, **kwargs) -> str:
+    """Handles a request for order details, including a new security verification step."""
+    order_name_match = re.search(r'#?[a-zA-Z]*\d{4,}', message)
+    if not order_name_match:
+        return await _handle_unclear_request(customer, message)
 
-    order_name = order_number_match.group(1)
+    order_name = order_name_match.group(0).upper()
     if not order_name.startswith('#'):
         order_name = f"#{order_name}"
+
+    # Use the local DB first to get order phone numbers for verification
+    order_from_db = await db_service.db.orders.find_one({"order_number": order_name})
+    if not order_from_db:
+        return await string_service.get_string('ORDER_NOT_FOUND', order_number=order_name)
+
+    # --- ✅ NEW SECURITY LOGIC ---
+    # 1. Check if the user has already been verified for this specific order in the last minute.
+    is_verified = await cache_service.get(f"state:order_verified:{customer['phone_number']}:{order_name}")
     
-    # 1. Fetch from Shopify (we can't rely on cache as much without the security check context)
-    try:
-        order_to_display = await shopify_service.get_order_by_name(order_name)
-    except Exception as e:
-        logger.error(f"Error fetching order {order_name} by name: {e}", exc_info=True)
-        return string_service.get_string("ORDER_API_ERROR")
+    if not is_verified:
+        # 2. If not verified, get the real phone numbers associated with the order from our DB.
+        order_phones = order_from_db.get("phone_numbers", [])
+        if not order_phones:
+            logger.warning(f"Security check failed: No phone numbers found in DB for order {order_name} to verify against.")
+            return await string_service.get_string('ORDER_NOT_FOUND', order_number=order_name)
 
+        # 3. Store the expected last 4 digits and set the user's state to 'awaiting_order_verification'.
+        expected_last_4 = order_phones[0][-4:]
+        await cache_service.set(f"state:awaiting_order_verification:{customer['phone_number']}", json.dumps({
+            "order_name": order_name,
+            "expected_last_4": expected_last_4
+        }), ttl=300) # Give them 5 minutes to respond
+
+        # 4. Send the challenge question to the user instead of the order details.
+        await whatsapp_service.send_message(
+            to_phone=customer["phone_number"],
+            message=f"For your security, please reply with the last 4 digits of the phone number used to place order {order_name}."
+        )
+        return "" # Return an empty string to send no other messages right now.
+
+    # --- END OF NEW SECURITY LOGIC ---
+
+    # 5. If the user IS verified, fetch the full details from Shopify, clear the flag, and show the details.
+    order_to_display = await shopify_service.get_order_by_name(order_name)
     if not order_to_display:
-        base_string = string_service.get_string("ORDER_NOT_FOUND_BY_ID")
-        return base_string.format(order_number=order_name)
-
-    # 2. 🚨 SECURITY CHECK REMOVED 🚨
-    # The original security check that compared phone numbers has been removed.
-    # On the current Shopify plan, the API returns 'null' for the phone number,
-    # causing the check to fail for everyone, including the real customer.
-
-    # 3. Return formatted details
+        return await string_service.get_string('ORDER_NOT_FOUND', order_number=order_name)
+        
+    await cache_service.delete(f"state:order_verified:{customer['phone_number']}:{order_name}")
     return _format_single_order(order_to_display, detailed=True)
 
 async def handle_show_unfiltered_products(customer: Dict, **kwargs) -> Optional[str]:
@@ -765,7 +806,11 @@ async def handle_product_detail(message: str, customer: Dict, **kwargs) -> Optio
     product_id = message.replace("product_", "")
     product = await shopify_service.get_product_by_id(product_id)
     if product:
-        await cache_service.redis.set(f"state:last_single_product:{customer['phone_number']}", product.json(), ttl=900)
+        await cache_service.set(
+            f"state:last_single_product:{customer['phone_number']}", 
+            product.json(), 
+            ttl=900
+        )
         await whatsapp_service.send_product_detail_with_buttons(customer["phone_number"], product)
         return "[Bot sent product details]"
     return "Sorry, I couldn't find details for that product."
@@ -822,7 +867,14 @@ async def handle_shipping_inquiry(message: str, customer: Dict, **kwargs) -> Opt
 
     cities = ["hyderabad", "delhi", "mumbai", "bangalore", "chennai", "kolkata"]
     found_city = next((city for city in cities if city in message_lower), None)
-    await cache_service.redis.set(f"state:pending_question:{customer['phone_number']}", json.dumps({"question_type": "delivery_time_inquiry", "context": {"city": found_city}}), ttl=900)
+    await cache_service.set(
+        f"state:pending_question:{customer['phone_number']}", 
+        json.dumps({
+        "question_type": "delivery_time_inquiry", 
+        "context": {"city": found_city}
+        }), 
+        ttl=900
+    )
     return "To give you an accurate delivery estimate, I need to know which items you're interested in. Could you please search for a product?"
 
 async def handle_visual_search(message: str, customer: Dict, **kwargs) -> Optional[str]:
@@ -1052,7 +1104,7 @@ async def _handle_no_results(customer: Dict, original_query: str) -> str:
     if search_category in {"bangles", "rings", "bracelets"}:
         response = f"While we don't carry {search_category} right now, we have stunning **earrings and necklace sets** that would complement your look beautifully.\n\nWould you like me to show you some of our bestselling sets? ✨"
         
-    await cache_service.redis.set(f"state:last_bot_question:{customer['phone_number']}", "offer_bestsellers", ttl=900)
+    await cache_service.set(f"state:last_bot_question:{customer['phone_number']}", "offer_bestsellers", ttl=900)
     return response
 
 async def _handle_unclear_request(customer: Dict, original_message: str) -> str:
@@ -1062,8 +1114,17 @@ async def _handle_unclear_request(customer: Dict, original_message: str) -> str:
 async def _handle_standard_search(products: List[Product], message: str, customer: Dict) -> str:
     """Handles standard product search results."""
     phone_number = customer["phone_number"]
-    await cache_service.redis.set(f"state:last_search:{phone_number}", json.dumps({"query": message, "page": 1}), ttl=900)
-    await cache_service.redis.set(f"state:last_product_list:{phone_number}", json.dumps([p.dict() for p in products]), ttl=900)
+    await cache_service.set(
+        f"state:last_search:{phone_number}", 
+        json.dumps({"query": message, "page": 1}), 
+        ttl=900
+    )
+    await cache_service.set(
+        f"state:last_product_list:{phone_number}", 
+        json.dumps([p.dict() for p in products]), 
+        ttl=900
+    )
+
     
     header_text = f"Found {len(products)} match{'es' if len(products) != 1 else ''} for you ✨"
     await _send_product_card(products=products, customer=customer, header_text=header_text, body_text="Tap any product for details!")

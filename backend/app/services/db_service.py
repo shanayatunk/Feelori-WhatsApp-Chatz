@@ -697,17 +697,14 @@ class DatabaseService:
 
 #Packer Perfomance enhancements
 
-    async def get_packer_performance_metrics(self, days: int = 7) -> dict:
+async def get_packer_performance_metrics(self, days: int = 7) -> dict:
         """
         Calculates advanced performance metrics for the packing dashboard using an aggregation pipeline.
         This version is robust and handles both old and new order data.
         """
         start_date = datetime.utcnow() - timedelta(days=days)
-
         pipeline = [
             {
-                # --- THIS IS THE FIX ---
-                # Match orders updated, fulfilled, OR created in the time window
                 "$match": {
                     "$or": [
                         {"updated_at": {"$gte": start_date}},
@@ -715,7 +712,6 @@ class DatabaseService:
                         {"created_at": {"$gte": start_date}}
                     ]
                 }
-                # --- END OF FIX ---
             },
             {
                 "$facet": {
@@ -724,12 +720,23 @@ class DatabaseService:
                             "$group": {
                                 "_id": None,
                                 "total_orders": {"$sum": 1},
-                                "completed_orders": {"$sum": {"$cond": [{"$eq": ["$fulfillment_status_internal", "Completed"]}, 1, 0]}},
-                                "on_hold_orders": {"$sum": {"$cond": [{"$eq": ["$fulfillment_status_internal", "On Hold"]}, 1, 0]}},
+                                "completed_orders": {
+                                    "$sum": {"$cond": [{"$eq": ["$fulfillment_status_internal", "Completed"]}, 1, 0]}
+                                },
+                                "on_hold_orders": {
+                                    "$sum": {"$cond": [{"$eq": ["$fulfillment_status_internal", "On Hold"]}, 1, 0]}
+                                },
+                                # ✅ FIX: Use explicit null checks instead of $and with field paths
                                 "avg_time_to_pack_ms": {
                                     "$avg": {
                                         "$cond": {
-                                            "if": {"$and": ["$in_progress_at", "$fulfilled_at"]},
+                                            "if": {
+                                                "$and": [
+                                                    {"$ne": ["$in_progress_at", None]},
+                                                    {"$ne": ["$fulfilled_at", None]},
+                                                    {"$gt": ["$fulfilled_at", "$in_progress_at"]}  # Extra safety
+                                                ]
+                                            },
                                             "then": {"$subtract": ["$fulfilled_at", "$in_progress_at"]},
                                             "else": None
                                         }
@@ -749,7 +756,12 @@ class DatabaseService:
                         {"$sort": {"count": -1}}
                     ],
                     "problem_skus": [
-                        {"$match": {"fulfillment_status_internal": "On Hold", "problem_item_skus": {"$ne": None, "$not": {"$size": 0}}}},
+                        {
+                            "$match": {
+                                "fulfillment_status_internal": "On Hold", 
+                                "problem_item_skus": {"$exists": True, "$ne": [], "$ne": None}
+                            }
+                        },
                         {"$unwind": "$problem_item_skus"},
                         {"$group": {"_id": "$problem_item_skus", "count": {"$sum": 1}}},
                         {"$sort": {"count": -1}},
@@ -758,7 +770,6 @@ class DatabaseService:
                 }
             }
         ]
-
         result = await self.db.orders.aggregate(pipeline).to_list(length=1)
         
         if not result:
@@ -778,7 +789,10 @@ class DatabaseService:
                 "completed_orders": kpis.get("completed_orders", 0),
                 "on_hold_orders": kpis.get("on_hold_orders", 0),
                 "avg_time_to_pack_minutes": avg_time_min,
-                "hold_rate": round(kpis.get("on_hold_orders", 0) / kpis.get("total_orders", 1) * 100, 2)
+                "hold_rate": round(
+                    kpis.get("on_hold_orders", 0) / max(kpis.get("total_orders", 1), 1) * 100, 
+                    2
+                )  # Added max() to prevent division by zero
             },
             "packer_leaderboard": data.get("packer_leaderboard", []),
             "hold_analysis": {
@@ -786,6 +800,5 @@ class DatabaseService:
                 "top_problem_skus": data.get("problem_skus", [])
             }
         }
-
 # Globally accessible instance
 db_service = DatabaseService(settings.mongo_atlas_uri)

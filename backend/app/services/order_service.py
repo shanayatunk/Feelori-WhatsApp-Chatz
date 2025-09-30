@@ -334,7 +334,6 @@ async def process_message(phone_number: str, message_text: str, message_type: st
             ai_keywords = ai_result.get("keywords", []) # Default to an empty list
             if not ai_keywords or isinstance(ai_keywords, str):
                 # If keywords are missing, empty, or a string, extract them from the message
-                from .rule_service import QueryBuilder, SearchConfig # Local import to avoid circular dependency
                 qb = QueryBuilder(SearchConfig())
                 ai_keywords = qb._extract_keywords(message_text) or [message_text]
 
@@ -344,7 +343,6 @@ async def process_message(phone_number: str, message_text: str, message_type: st
             logger.exception(f"AI intent classification failed. Falling back to rule-based.") # Use logger.exception
             ai_intent = "rule_based" # Fallback to your old system
             # Ensure the fallback is also a list
-            from .rule_service import QueryBuilder, SearchConfig
             qb = QueryBuilder(SearchConfig())
             ai_keywords = qb._extract_keywords(message_text) or [message_text]
 

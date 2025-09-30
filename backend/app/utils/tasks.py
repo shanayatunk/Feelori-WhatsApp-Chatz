@@ -1,12 +1,11 @@
 # /app/utils/tasks.py
 
 import logging
-from app.services.visual_search_service import visual_matcher
+
+from app.config.settings import settings 
 from app.services.shopify_service import shopify_service
-# Add the new imports needed for the analytics task
 from app.services.db_service import db_service
 from app.config import strings
-from app.services import whatsapp_service
 from app.services.whatsapp_service import whatsapp_service
 
 logger = logging.getLogger(__name__)
@@ -16,6 +15,14 @@ async def refresh_visual_search_index():
     A scheduled task to periodically rebuild the visual search index by
     fetching all products from Shopify and re-indexing their images.
     """
+    # ADD THIS CHECK: First, check if the feature is enabled.
+    if not settings.VISUAL_SEARCH_ENABLED:
+        logger.info("Visual search is disabled, skipping index refresh.")
+        return
+
+    # MOVE THE IMPORT HERE: Only import the service if the feature is enabled.
+    from app.services.visual_search_service import visual_matcher
+    
     logger.info("--- Starting scheduled visual search index refresh ---")
     try:
         # The logic to index all products is in your VisualProductMatcher.
@@ -25,7 +32,6 @@ async def refresh_visual_search_index():
     except Exception as e:
         # Using exc_info=True will log the full traceback for better debugging.
         logger.error("An error occurred during the scheduled index refresh.", exc_info=True)
-
 
 # This is the new function you need to add
 async def update_escalation_analytics():
@@ -60,7 +66,11 @@ async def update_escalation_analytics():
             {"$out": "human_escalation_analytics"}
         ]
         # Execute the aggregation. The results are written directly to the new collection by MongoDB.
-        await db_service.db.customers.aggregate(pipeline).to_list(length=None)
+        await db_service.db.customers.aggregate(
+            pipeline,
+            allowDiskUse=True,
+            maxTimeMS=60000,
+        ).to_list(length=1) # Fetching 1 document is a way to ensure execution
         logger.info("--- Successfully updated human escalation analytics collection ---")
     except Exception as e:
         logger.error("An error occurred during the escalation analytics update.", exc_info=True)

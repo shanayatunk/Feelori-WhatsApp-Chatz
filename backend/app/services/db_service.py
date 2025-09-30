@@ -53,7 +53,52 @@ class DatabaseService:
             logger.error(f"Failed to create database indexes: {e}")
 
 
+    async def get_recent_orders_by_phone(self, phone_number: str, limit: int = 3) -> List[dict]:
+        """
+        Gets a list of the most recent orders for a customer by querying
+        our own database, which has the phone_numbers array.
+        """
+        try:
+            # 1. Sanitize the phone number before querying.
+            cleaned_phone = security_service.EnhancedSecurityService.sanitize_phone_number(phone_number)
+            
+            # 2. ✅ NEW: Check if the sanitized phone number is empty and return early.
+            if not cleaned_phone:
+                logger.debug(f"get_recent_orders_by_phone: Invalid phone input '{phone_number}' sanitized to empty string. Aborting query.")
+                return []
 
+            # 3. Use the cleaned_phone in the query.
+            cursor = self.db.orders.find(
+                {"phone_numbers": cleaned_phone},
+                {"order_number": 1, "created_at": 1, "raw": 1}
+            ).sort("created_at", -1).limit(limit)
+            
+            orders = await cursor.to_list(length=limit)
+            return orders
+        except Exception:
+            # Use logger.exception for a full traceback.
+            logger.exception(f"Failed to get_recent_orders_by_phone for a sanitized number.")
+            return []
+
+
+    async def resolve_triage_ticket(self, ticket_id: str) -> bool:
+        """Updates a triage ticket's status to 'resolved'."""
+        try:
+            # ✅ FIX: Validate the ObjectId to prevent crashes.
+            if not ObjectId.is_valid(ticket_id):
+                logger.warning(f"Attempted to resolve an invalid ticket_id: {ticket_id}")
+                return False
+
+            result = await self.db.triage_tickets.update_one(
+                {"_id": ObjectId(ticket_id), "status": "pending"},
+                # ✅ FIX: Add a timestamp for when the ticket was resolved.
+                {"$set": {"status": "resolved", "resolved_at": datetime.utcnow()}}
+            )
+            return result.modified_count > 0
+        except Exception:
+            # ✅ FIX: Use logger.exception for a full traceback.
+            logger.exception(f"Failed to resolve triage ticket {ticket_id}")
+            return False
 
     # Scheduler
 
@@ -658,11 +703,8 @@ class DatabaseService:
         This version is robust and handles both old and new order data.
         """
         start_date = datetime.utcnow() - timedelta(days=days)
-
         pipeline = [
             {
-                # --- THIS IS THE FIX ---
-                # Match orders updated, fulfilled, OR created in the time window
                 "$match": {
                     "$or": [
                         {"updated_at": {"$gte": start_date}},
@@ -670,7 +712,6 @@ class DatabaseService:
                         {"created_at": {"$gte": start_date}}
                     ]
                 }
-                # --- END OF FIX ---
             },
             {
                 "$facet": {
@@ -679,12 +720,23 @@ class DatabaseService:
                             "$group": {
                                 "_id": None,
                                 "total_orders": {"$sum": 1},
-                                "completed_orders": {"$sum": {"$cond": [{"$eq": ["$fulfillment_status_internal", "Completed"]}, 1, 0]}},
-                                "on_hold_orders": {"$sum": {"$cond": [{"$eq": ["$fulfillment_status_internal", "On Hold"]}, 1, 0]}},
+                                "completed_orders": {
+                                    "$sum": {"$cond": [{"$eq": ["$fulfillment_status_internal", "Completed"]}, 1, 0]}
+                                },
+                                "on_hold_orders": {
+                                    "$sum": {"$cond": [{"$eq": ["$fulfillment_status_internal", "On Hold"]}, 1, 0]}
+                                },
+                                # ✅ FIX: Use explicit null checks instead of $and with field paths
                                 "avg_time_to_pack_ms": {
                                     "$avg": {
                                         "$cond": {
-                                            "if": {"$and": ["$in_progress_at", "$fulfilled_at"]},
+                                            "if": {
+                                                "$and": [
+                                                    {"$ne": ["$in_progress_at", None]},
+                                                    {"$ne": ["$fulfilled_at", None]},
+                                                    {"$gt": ["$fulfilled_at", "$in_progress_at"]}  # Extra safety
+                                                ]
+                                            },
                                             "then": {"$subtract": ["$fulfilled_at", "$in_progress_at"]},
                                             "else": None
                                         }
@@ -704,7 +756,12 @@ class DatabaseService:
                         {"$sort": {"count": -1}}
                     ],
                     "problem_skus": [
-                        {"$match": {"fulfillment_status_internal": "On Hold", "problem_item_skus": {"$ne": None, "$not": {"$size": 0}}}},
+                        {
+                            "$match": {
+                                "fulfillment_status_internal": "On Hold", 
+                                "problem_item_skus": {"$exists": True, "$ne": [], "$ne": None}
+                            }
+                        },
                         {"$unwind": "$problem_item_skus"},
                         {"$group": {"_id": "$problem_item_skus", "count": {"$sum": 1}}},
                         {"$sort": {"count": -1}},
@@ -713,7 +770,6 @@ class DatabaseService:
                 }
             }
         ]
-
         result = await self.db.orders.aggregate(pipeline).to_list(length=1)
         
         if not result:
@@ -733,7 +789,10 @@ class DatabaseService:
                 "completed_orders": kpis.get("completed_orders", 0),
                 "on_hold_orders": kpis.get("on_hold_orders", 0),
                 "avg_time_to_pack_minutes": avg_time_min,
-                "hold_rate": round(kpis.get("on_hold_orders", 0) / kpis.get("total_orders", 1) * 100, 2)
+                "hold_rate": round(
+                    kpis.get("on_hold_orders", 0) / max(kpis.get("total_orders", 1), 1) * 100, 
+                    2
+                )  # Added max() to prevent division by zero
             },
             "packer_leaderboard": data.get("packer_leaderboard", []),
             "hold_analysis": {
@@ -741,6 +800,5 @@ class DatabaseService:
                 "top_problem_skus": data.get("problem_skus", [])
             }
         }
-
 # Globally accessible instance
 db_service = DatabaseService(settings.mongo_atlas_uri)

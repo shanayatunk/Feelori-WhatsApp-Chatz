@@ -18,7 +18,7 @@ export interface StatsData {
   active_conversations: number;
   human_escalations: number;
   avg_response_time: string;
-  conversation_volume: { _id: string; count: number }[]; // <-- ADD THIS LINE
+  conversation_volume: { _id: string; count: number }[];
 }
 
 export interface Recipient {
@@ -50,9 +50,6 @@ export interface Customer {
   last_interaction: string;
 }
 
-// --- THIS IS THE CORRECTED TYPE ---
-// It now includes the 'response' field in the conversation history, which matches
-// what the CustomerChatPage component expects.
 export interface CustomerDetails extends Customer {
     conversation_history: {
         timestamp: string;
@@ -141,6 +138,11 @@ const makeRequest = async (url: string, options: RequestInit = {}) => {
   return response.json();
 };
 
+export const resolveTriageTicket = async (ticketId: string): Promise<{ message: string }> => {
+  return makeRequest(`${API_BASE_URL}/triage/${ticketId}/resolve`, {
+    method: 'PUT',
+  });
+};
 
 export const apiService = {
   login: async (password: string): Promise<{ access_token: string }> => {
@@ -199,20 +201,20 @@ export const apiService = {
   },
 
   getEscalations: async (): Promise<Escalation[]> => {
-    const result = await makeRequest(`${API_BASE_URL}/dashboard/escalations`);
+    const result = await makeRequest(`${API_BASE_URL}/admin/escalations`);
     return result.data.escalations;
   },
 
   broadcast: async (message: string, target: string, imageUrl?: string): Promise<{ message: string }> => {
     return makeRequest(`${API_BASE_URL}/admin/broadcast`, {
       method: 'POST',
-      body: JSON.stringify({ message, target, image_url: imageUrl }),
+      body: JSON.stringify({ message, target_type: target, image_url: imageUrl }),
     });
   },
 
   getPackingMetrics: async (): Promise<PackingMetrics> => {
-      const result = await makeRequest(`${API_BASE_URL}/dashboard/packing-metrics`);
-      return result.data.metrics;
+      const result = await makeRequest(`${API_BASE_URL}/admin/packer-performance`);
+      return result.data;
   },
 
   getRules: async (): Promise<Rule[]> => {
@@ -249,3 +251,26 @@ export const apiService = {
   },
 };
 
+// ADD THIS NEW TYPE
+export type TriageTicket = {
+  _id: string;
+  customer_phone: string;
+  order_number: string;
+  issue_type: string;
+  image_media_id: string | null;
+  status: 'pending' | 'resolved';
+  created_at: string;
+};
+
+// ADD THIS NEW API FUNCTION
+export const getTriageTickets = async (): Promise<{ tickets: TriageTicket[] }> => {
+  try {
+    // --- THIS IS THE FIX ---
+    // The endpoint has been changed from '/dashboard/triage-tickets' to the correct '/triage'
+    const result = await makeRequest(`${API_BASE_URL}/triage`);
+    return result.data;
+  } catch (error) {
+    console.error("Failed to fetch triage tickets:", error);
+    throw new Error("Failed to fetch triage tickets");
+  }
+};

@@ -5,9 +5,11 @@ import json
 import uuid
 import asyncio
 import logging
+import tenacity
 from datetime import datetime, timedelta
 from dataclasses import dataclass, field
 from typing import Set, Dict, List, Tuple, Optional, Any
+
 
 from rapidfuzz import process, fuzz
 
@@ -133,7 +135,10 @@ class QuestionDetector:
 # --- Core Message Processing Orchestration ---
 
 async def process_message(phone_number: str, message_text: str, message_type: str, quoted_wamid: str | None) -> str | None:
-    """Processes an incoming message and routes it to the correct handler."""
+    """
+    Processes an incoming message, handling triage states before
+    routing to the AI-first intent model.
+    """
     try:
         clean_phone = EnhancedSecurityService.sanitize_phone_number(phone_number)
         
@@ -141,6 +146,128 @@ async def process_message(phone_number: str, message_text: str, message_type: st
             return string_service.get_string("PACKING_DEPT_REDIRECT", strings.PACKING_DEPT_REDIRECT)
 
         customer = await get_or_create_customer(clean_phone)
+        # --- ✅ NEW SECURITY VERIFICATION BLOCK (MUST BE FIRST) ---
+        # Check if we are waiting for the user to verify an order
+        verification_state_raw = await cache_service.get(f"state:awaiting_order_verification:{clean_phone}")
+        if verification_state_raw:
+            verification_state = json.loads(verification_state_raw)
+            expected_last_4 = verification_state["expected_last_4"]
+            order_name = verification_state["order_name"]
+
+            # Check if the user's reply matches the expected last 4 digits
+            if message_text and message_text.strip() == expected_last_4:
+                # If it matches, mark them as verified and re-trigger the inquiry
+                await cache_service.set(f"state:order_verified:{clean_phone}:{order_name}", "1", ttl=60)
+                await cache_service.delete(f"state:awaiting_order_verification:{clean_phone}")
+                
+                # Re-process the original inquiry now that they are verified
+                response = await handle_order_detail_inquiry(order_name, customer)
+                return response[:4096] if response else None
+
+            else:
+                # If it doesn't match, inform them and clear the state
+                await cache_service.delete(f"state:awaiting_order_verification:{clean_phone}")
+                return "That's not correct. Please try asking for your order status again."
+        # --- END OF NEW SECURITY BLOCK ---        
+
+        # --- START: AUTOMATED TRIAGE FLOW ---
+        # Check for active triage state *before* anything else
+        
+        # State 1: Check if user is replying to "Is this your order?"
+        confirm_order_key = f"state:awaiting_triage_order_confirm:{clean_phone}"
+        order_to_confirm = await cache_service.get(confirm_order_key)
+        if order_to_confirm:
+            await cache_service.redis.delete(confirm_order_key)
+            if message_text == "triage_confirm_yes":
+                # User confirmed the order, now send the issue list
+                await _send_triage_issue_list(clean_phone, order_to_confirm)
+                return "[Bot is handling triage step 2: issue selection]"
+            else:
+                # User said "No," so now we ask for the order number
+                await cache_service.set(f"state:awaiting_triage_order_number:{clean_phone}", "1", ttl=900)
+                return "No problem. Please reply with the correct order number (e.g., #FO1039)."
+
+        # State 2: Check if user is selecting an order from a list
+        if message_text.startswith("triage_select_order_"):
+            order_number = message_text.replace("triage_select_order_", "")
+            await _send_triage_issue_list(clean_phone, order_number)
+            return "[Bot is handling triage step 2: issue selection]"
+
+        # State 3: Check if user is replying with an order number manually
+        order_number_key = f"state:awaiting_triage_order_number:{clean_phone}"
+        if await cache_service.get(order_number_key):
+            order_number = message_text.strip() # This is the order number
+            await cache_service.redis.delete(order_number_key)
+            await _send_triage_issue_list(clean_phone, order_number)
+            return "[Bot is handling triage step 2: issue selection]"
+
+        # State 4: Check if user is selecting an issue type
+        # We find the key by searching for the pattern
+        issue_selection_keys = []
+        async for key in cache_service.redis.scan_iter(f"state:awaiting_triage_issue_selection:*:{clean_phone}"):
+            issue_selection_keys.append(key)
+            break # We only need the first one, so we can stop searching
+
+        if issue_selection_keys:
+            key = issue_selection_keys[0].decode()
+            order_number = key.split(":")[2] # Extract order num from the key
+            await cache_service.redis.delete(key) # Clear this state
+
+            if message_text == "triage_issue_damaged":
+                # Ask for a photo
+                await cache_service.set(f"state:awaiting_triage_photo:{order_number}:{clean_phone}", "1", ttl=900)
+                return "I understand. To process this, please reply with a photo of the damaged item. If you can, please also include a photo of the shipping box."
+            else:
+                # For any other issue, create a ticket and escalate
+                issue_text = message_text.replace("triage_issue_", "").replace("_", " ")
+                logger.info(f"Triage: Escalating for {clean_phone}, Order: {order_number}, Issue: {issue_text}")
+                
+                triage_ticket = {
+                    "customer_phone": clean_phone,
+                    "order_number": order_number,
+                    "issue_type": issue_text,
+                    "image_media_id": None, # No image for this issue
+                    "status": "pending",
+                    "created_at": datetime.utcnow()
+                }
+                await db_service.db.triage_tickets.insert_one(triage_ticket)
+                return string_service.get_string("HUMAN_ESCALATION", strings.HUMAN_ESCALATION)
+        
+        # State 5: Check if user is sending a damage photo
+        photo_keys = []
+        async for key in cache_service.redis.scan_iter(f"state:awaiting_triage_photo:*:{clean_phone}"):
+            photo_keys.append(key)
+            break
+        # We must check for "image" type OR your special "visual_search_" text
+        if photo_keys and (message_type == "image" or message_text.startswith("visual_search_")):
+            key = photo_keys[0].decode()
+            order_number = key.split(":")[2]
+            await cache_service.redis.delete(key)
+            
+            image_id = "N/A"
+            if message_text.startswith("visual_search_"):
+                 image_id = message_text.replace("visual_search_", "").split("_caption_")[0]
+            
+            logger.info(f"Triage: Got photo (Media ID: {image_id}) for {clean_phone}, Order: {order_number}. Escalating.")
+
+            # Create the final triage ticket with the photo
+            triage_ticket = {
+                "customer_phone": clean_phone,
+                "order_number": order_number,
+                "issue_type": "damaged_item",
+                "image_media_id": image_id,
+                "status": "pending",
+                "created_at": datetime.utcnow()
+            }
+            await db_service.db.triage_tickets.insert_one(triage_ticket)
+            
+            return string_service.get_string("HUMAN_ESCALATION", strings.HUMAN_ESCALATION)
+        # --- END: AUTOMATED TRIAGE FLOW ---
+
+
+        # --- START: ORIGINAL FUNCTION LOGIC ---
+        # If no triage state was matched, proceed with normal logic
+
         last_question_raw = await cache_service.redis.get(f"state:last_bot_question:{clean_phone}")
         
         if last_question_raw:
@@ -154,9 +281,122 @@ async def process_message(phone_number: str, message_text: str, message_type: st
                 return await handle_show_unfiltered_products(customer=customer)
             if clean_msg in default_rules.NEGATIVE_RESPONSES:
                 return "No problem! Let me know if there's anything else I can help you find. ✨"
+
+        # --- NEW AI INTENT LOGIC ---
+
+        # 1. Handle simple, non-AI intents first (like images or button clicks)
+        if message_type == "interactive" or message_text.startswith("visual_search_"):
+            intent = await analyze_intent(message_text, message_type, customer, quoted_wamid)
+            response = await route_message(intent, clean_phone, message_text, customer, quoted_wamid)
+            return response[:4096] if response else None
+
+        # 1.5. Check for a contextual reply BEFORE classifying with AI
+        if quoted_wamid:
+            # Check if the user is replying to a product we just sent
+            last_product_raw = await cache_service.redis.get(f"state:last_single_product:{clean_phone}")
+            if last_product_raw:
+                # This is a contextual question about a product.
+                logger.info(f"Detected contextual reply (quoted_wamid: {quoted_wamid}) about a product.")
+                intent = "contextual_product_question"
+                response = await route_message(intent, clean_phone, message_text, customer, quoted_wamid)
+                return response[:4096] if response else None
+        # --- END OF NEW BLOCK ---
+
         
-        intent = await analyze_intent(message_text, message_type, customer, quoted_wamid)
-        response = await route_message(intent, clean_phone, message_text, customer, quoted_wamid)
+        # 2. For all other text, use AI to classify
+        logger.debug(f"Classifying intent with AI for: '{message_text}'")
+        
+        # --- REPLACE THE OLD PROMPT WITH THIS NEW ONE ---
+        # Prepare context for intent classification
+        last_product_raw = await cache_service.get(f"state:last_single_product:{clean_phone}")
+        last_product_context = json.loads(last_product_raw) if last_product_raw else None
+        is_reply = bool(quoted_wamid)
+
+        intent_prompt = f"""
+        You are an intelligent AI assistant for an Indian jewelry e-commerce WhatsApp store.
+        Your task is to analyze the user's message and the conversation context, then classify the intent.
+        Your response MUST be a single, valid JSON object with "intent" (string) and "keywords" (array of strings).
+
+        **Conversation Context:**
+        - User's Message: "{message_text}"
+        - Is this a reply to a previous message?: {"Yes" if is_reply else "No"}
+        - Last product shown to the user: {json.dumps(last_product_context)}
+
+        **Possible Intents:**
+        - 'human_escalation': User has a problem, is angry, or wants a person. (e.g., "this is broken", "issue with my order"). **Prioritize this if there is any doubt.**
+        - 'product_search': User is looking for a product/category. Keywords should be product terms (e.g., "show me gold necklaces" -> ["gold", "necklaces"]).
+        - 'product_inquiry': User is asking a specific question about a product. **If the user replies to a product and asks a vague question like "how much?", this is the correct intent.** Keywords should be the full question.
+        - 'order_inquiry': User is asking for the status of an existing order.
+        - 'price_inquiry': User is asking about price *without* referring to a specific product.
+        - 'shipping_inquiry': User is asking about shipping policies or timelines.
+        - 'discount_inquiry': User is asking for a discount or coupon.
+        - 'greeting': A simple greeting.
+        - 'thank_you': The user is expressing thanks.
+        - 'smalltalk': Casual, non-transactional conversation.
+
+        **Classification Rules:**
+        1.  **Context is Key:** If `is_reply` is "Yes" or `last_product_shown` is not "None", the user's message is likely a `product_inquiry`.
+        2.  **Keywords:** Always return an array of strings, even if it's empty. For inquiries, extract key terms (e.g., "shipping", "delhi").
+        3.  **Format:** Always use lowercase intent names.
+
+        Classify the message now based on the message and the context.
+        """
+        # --- END OF NEW PROMPT ---
+
+        ai_result = {}
+        try:
+            # Use your existing ai_service
+            last_product_raw = await cache_service.get(f"state:last_single_product:{clean_phone}")
+            last_product_context = json.loads(last_product_raw) if last_product_raw else None
+
+            ai_result = await ai_service.get_ai_json_response(
+                prompt=intent_prompt
+                 # The context is now part of the prompt, no need to pass it as separate arguments 
+            )
+            ai_intent = ai_result.get("intent", "rule_based")
+            ai_keywords = ai_result.get("keywords", []) # Default to an empty list
+            if not ai_keywords or isinstance(ai_keywords, str):
+                # If keywords are missing, empty, or a string, extract them from the message
+                qb = QueryBuilder(SearchConfig())
+                ai_keywords = qb._extract_keywords(message_text) or [message_text]
+
+            logger.info(f"AI classified intent as '{ai_intent}' with keywords: {ai_keywords}")
+
+        except Exception as e:
+            logger.exception(f"AI intent classification failed. Falling back to rule-based.") # Use logger.exception
+            ai_intent = "rule_based" # Fallback to your old system
+            # Ensure the fallback is also a list
+            qb = QueryBuilder(SearchConfig())
+            ai_keywords = qb._extract_keywords(message_text) or [message_text]
+
+        # 3. Route based on the AI's classification
+        if ai_intent == "product_search":
+            response = await handle_product_search(message=ai_keywords, customer=customer, phone_number=clean_phone, quoted_wamid=quoted_wamid)
+        
+        elif ai_intent == "human_escalation":
+             response = await handle_human_escalation(phone_number=clean_phone, customer=customer)
+
+        elif ai_intent == "product_inquiry":
+            # This is the new flow that fixes your original problem
+            # It uses the AI's Q&A ability instead of searching
+            answer = await ai_service.get_product_qa(
+                query=" ".join(ai_keywords), # Join the list into a string
+                product=None
+            )
+            response = answer
+
+        elif ai_intent == "greeting":
+            response = await handle_greeting(phone_number=clean_phone, customer=customer, message=ai_keywords, quoted_wamid=quoted_wamid)
+
+        elif ai_intent == "smalltalk":
+            response = await handle_general_inquiry(message=ai_keywords, customer=customer, phone_number=clean_phone, quoted_wamid=quoted_wamid)
+
+        else: 
+            # ai_intent is 'rule_based' or a fallback
+            # Now we run your ORIGINAL rule-based logic
+            logger.debug("AI intent not definitive, running rule-based analyzer.")
+            intent = await analyze_intent(message_text, message_type, customer, quoted_wamid)
+            response = await route_message(intent, clean_phone, message_text, customer, quoted_wamid)
         
         return response[:4096] if response else None
         
@@ -295,47 +535,62 @@ async def route_message(intent: str, phone_number: str, message: str, customer: 
 
 # --- Handler Functions ---
 
-async def handle_product_search(message: str, customer: Dict, **kwargs) -> Optional[str]:
+async def handle_product_search(message: List[str] | str, customer: Dict, **kwargs) -> Optional[str]:
     """Handles a product search request with intelligent filtering."""
     try:
         config = SearchConfig()
         query_builder = QueryBuilder(config, customer=customer)
+
+        # --- THIS IS THE CORRECTED LOGIC ---
+        # 1. Preserve the original full message string for price parsing.
+        original_message = message if isinstance(message, str) else " ".join(message)
+
+        # 2. Coerce the input to a list of keywords for other logic.
+        if isinstance(message, str):
+            keywords = query_builder._extract_keywords(message)
+        else:
+            keywords = message
+
+        # If after processing, there are no keywords, handle it as an unclear request.
+        if not keywords:
+            return await _handle_unclear_request(customer, original_message)
         
-        # --- THIS IS THE NEW LOGIC ---
-        # First, extract keywords to check for unavailable items.
-        keywords = query_builder._extract_keywords(message)
+        # 3. Build query parts from the ORIGINAL message to keep price filters.
+        text_query, price_filter = query_builder.build_query_parts(original_message)
         
+        # 4. Use the clean keyword string for logging, display, and cache keys.
+        message_str = " ".join(keywords)
+        # --- END OF CORRECTED LOGIC ---
+
         # Check if any keyword is in our unavailable list.
         for keyword in keywords:
             if keyword in default_rules.UNAVAILABLE_CATEGORIES:
                 # If it is, call the specific handler for unavailable products.
-                return await _handle_no_results(customer, message)
-        # --- END OF NEW LOGIC ---
+                return await _handle_no_results(customer, message_str)
 
-        # If the category is available, proceed with building the query and searching.
-        text_query, price_filter = query_builder.build_query_parts(message)
-        
         if not text_query and not price_filter:
-            return await _handle_unclear_request(customer, message)
+            return await _handle_unclear_request(customer, message_str)
 
         filtered_products, unfiltered_count = await shopify_service.get_products(
             query=text_query, filters=price_filter, limit=config.MAX_SEARCH_RESULTS
         )
-        
+
         if not filtered_products:
             if unfiltered_count > 0 and price_filter:
                 price_cond = price_filter.get("price", {})
                 price_str = f"under ₹{price_cond['lessThan']}" if "lessThan" in price_cond else f"over ₹{price_cond['greaterThan']}"
                 response = f"I found {unfiltered_count} item(s), but none are {price_str}. 😔\n\nWould you like to see them anyway?"
-                await cache_service.redis.set(f"state:last_search:{customer['phone_number']}", json.dumps({"query": message, "page": 1}), ex=900)
-                await cache_service.redis.set(f"state:last_bot_question:{customer['phone_number']}", "offer_unfiltered_products", ex=900)
+                
+                await cache_service.set(f"state:last_search:{customer['phone_number']}", json.dumps({"query": message_str, "page": 1}), ttl=900)
+                await cache_service.set(f"state:last_bot_question:{customer['phone_number']}", "offer_unfiltered_products", ttl=900)
+                
                 return response
             else:
-                return await _handle_no_results(customer, message)
+                return await _handle_no_results(customer, message_str)
 
-        return await _handle_standard_search(filtered_products, message, customer)
+        return await _handle_standard_search(filtered_products, message_str, customer)
     except Exception as e:
-        logger.error(f"Error in product search: {e}", exc_info=True)
+        logger.exception(f"Error in product search for message: {original_message}")
         return await _handle_error(customer)
 
 def _format_single_order(order: Dict, detailed: bool = False) -> str:
@@ -395,36 +650,54 @@ def _format_single_order(order: Dict, detailed: bool = False) -> str:
     )
 
 
-async def handle_order_detail_inquiry(message: str, customer: Dict, **kwargs) -> Optional[str]:
-    """
-    Handles a request for details about a specific order number.
-    NOTE: The phone number security check has been removed due to Shopify plan limitations.
-    """
-    order_number_match = re.search(r'#?([a-zA-Z]*\d{4,})', message) # Updated regex to find any order number
-    if not order_number_match:
-        return await handle_order_inquiry(customer=customer)
+async def handle_order_detail_inquiry(message: str, customer: Dict, **kwargs) -> str:
+    """Handles a request for order details, including a new security verification step."""
+    order_name_match = re.search(r'#?[a-zA-Z]*\d{4,}', message)
+    if not order_name_match:
+        return await _handle_unclear_request(customer, message)
 
-    order_name = order_number_match.group(1)
+    order_name = order_name_match.group(0).upper()
     if not order_name.startswith('#'):
         order_name = f"#{order_name}"
+
+    # Use the local DB first to get order phone numbers for verification
+    order_from_db = await db_service.db.orders.find_one({"order_number": order_name})
+    if not order_from_db:
+        return await string_service.get_string('ORDER_NOT_FOUND', order_number=order_name)
+
+    # --- ✅ NEW SECURITY LOGIC ---
+    # 1. Check if the user has already been verified for this specific order in the last minute.
+    is_verified = await cache_service.get(f"state:order_verified:{customer['phone_number']}:{order_name}")
     
-    # 1. Fetch from Shopify (we can't rely on cache as much without the security check context)
-    try:
-        order_to_display = await shopify_service.get_order_by_name(order_name)
-    except Exception as e:
-        logger.error(f"Error fetching order {order_name} by name: {e}", exc_info=True)
-        return string_service.get_string("ORDER_API_ERROR")
+    if not is_verified:
+        # 2. If not verified, get the real phone numbers associated with the order from our DB.
+        order_phones = order_from_db.get("phone_numbers", [])
+        if not order_phones:
+            logger.warning(f"Security check failed: No phone numbers found in DB for order {order_name} to verify against.")
+            return await string_service.get_string('ORDER_NOT_FOUND', order_number=order_name)
 
+        # 3. Store the expected last 4 digits and set the user's state to 'awaiting_order_verification'.
+        expected_last_4 = order_phones[0][-4:]
+        await cache_service.set(f"state:awaiting_order_verification:{customer['phone_number']}", json.dumps({
+            "order_name": order_name,
+            "expected_last_4": expected_last_4
+        }), ttl=300) # Give them 5 minutes to respond
+
+        # 4. Send the challenge question to the user instead of the order details.
+        await whatsapp_service.send_message(
+            to_phone=customer["phone_number"],
+            message=f"For your security, please reply with the last 4 digits of the phone number used to place order {order_name}."
+        )
+        return "" # Return an empty string to send no other messages right now.
+
+    # --- END OF NEW SECURITY LOGIC ---
+
+    # 5. If the user IS verified, fetch the full details from Shopify, clear the flag, and show the details.
+    order_to_display = await shopify_service.get_order_by_name(order_name)
     if not order_to_display:
-        base_string = string_service.get_string("ORDER_NOT_FOUND_BY_ID")
-        return base_string.format(order_number=order_name)
-
-    # 2. 🚨 SECURITY CHECK REMOVED 🚨
-    # The original security check that compared phone numbers has been removed.
-    # On the current Shopify plan, the API returns 'null' for the phone number,
-    # causing the check to fail for everyone, including the real customer.
-
-    # 3. Return formatted details
+        return await string_service.get_string('ORDER_NOT_FOUND', order_number=order_name)
+        
+    await cache_service.delete(f"state:order_verified:{customer['phone_number']}:{order_name}")
     return _format_single_order(order_to_display, detailed=True)
 
 async def handle_show_unfiltered_products(customer: Dict, **kwargs) -> Optional[str]:
@@ -533,7 +806,11 @@ async def handle_product_detail(message: str, customer: Dict, **kwargs) -> Optio
     product_id = message.replace("product_", "")
     product = await shopify_service.get_product_by_id(product_id)
     if product:
-        await cache_service.redis.set(f"state:last_single_product:{customer['phone_number']}", product.json(), ex=900)
+        await cache_service.set(
+            f"state:last_single_product:{customer['phone_number']}", 
+            product.json(), 
+            ttl=900
+        )
         await whatsapp_service.send_product_detail_with_buttons(customer["phone_number"], product)
         return "[Bot sent product details]"
     return "Sorry, I couldn't find details for that product."
@@ -590,7 +867,14 @@ async def handle_shipping_inquiry(message: str, customer: Dict, **kwargs) -> Opt
 
     cities = ["hyderabad", "delhi", "mumbai", "bangalore", "chennai", "kolkata"]
     found_city = next((city for city in cities if city in message_lower), None)
-    await cache_service.redis.set(f"state:pending_question:{customer['phone_number']}", json.dumps({"question_type": "delivery_time_inquiry", "context": {"city": found_city}}), ex=900)
+    await cache_service.set(
+        f"state:pending_question:{customer['phone_number']}", 
+        json.dumps({
+        "question_type": "delivery_time_inquiry", 
+        "context": {"city": found_city}
+        }), 
+        ttl=900
+    )
     return "To give you an accurate delivery estimate, I need to know which items you're interested in. Could you please search for a product?"
 
 async def handle_visual_search(message: str, customer: Dict, **kwargs) -> Optional[str]:
@@ -621,19 +905,44 @@ async def handle_visual_search(message: str, customer: Dict, **kwargs) -> Option
         return "Something went wrong during the visual search. Please try again. 😔"
 
 async def handle_order_inquiry(phone_number: str, customer: Dict, **kwargs) -> str:
-    """Handles general order status inquiries by asking the user for their order number."""
-    message_lower = (customer.get("conversation_history", [{}])[-1] or {}).get("message", "").lower()
-
-    # This part helps users who ask *how* to find their order number
-    if any(k in message_lower for k in {"where", "find", "how"}) and "order number" in message_lower:
-        return string_service.get_string("ORDER_NUMBER_HELP", strings.ORDER_NUMBER_HELP)
+    """
+    Handles general order status inquiries by proactively searching for the
+    customer's recent orders in the database.
+    """
     
-    # Instead of searching, we now prompt the user for the order number.
-    prompt_message = string_service.get_string(
-        "ORDER_INQUIRY_PROMPT",
-        "I can help with that! Please reply with your order number (e.g., #FO1039), and I'll look it up for you. You can find it in your order confirmation email. 📧"
-    )
-    return prompt_message
+    # 1. Proactively search our database for recent orders
+    recent_orders = await db_service.get_recent_orders_by_phone(phone_number, limit=3)
+
+    if not recent_orders:
+        # 2. NO ORDERS FOUND: Fall back to the original behavior
+        logger.info(f"No orders found for {phone_number}. Asking for order number.")
+        return string_service.get_string(
+            "ORDER_INQUIRY_PROMPT",
+            "I can help with that! Please reply with your order number (e.g., #FO1039), and I'll look it up for you. You can find it in your order confirmation email. 📧"
+        )
+    
+    elif len(recent_orders) == 1:
+        # 3. ONE ORDER FOUND: Give them the status directly
+        logger.info(f"Found one recent order for {phone_number}. Displaying status.")
+        order_data = recent_orders[0].get("raw", {}) # Get the raw payload
+        return _format_single_order(order_data, detailed=False) # Use the existing formatter
+
+    else:
+        # 4. MULTIPLE ORDERS FOUND: List them and ask which one
+        logger.info(f"Found multiple recent orders for {phone_number}. Asking to clarify.")
+        order_list = []
+        for order in recent_orders:
+            order_num = order.get("order_number") or "N/A"
+            order_date = "Unknown Date"
+            try:
+                raw_created_at = order.get("created_at") or order.get("raw", {}).get("created_at", "")
+                order_date = datetime.fromisoformat(raw_created_at.replace("Z", "+00:00")).strftime("%d %b %Y")
+            except Exception:
+                pass # Keep default "Unknown Date"
+            order_list.append(f"• {order_num} (from {order_date})")
+        
+        orders_text = "\n".join(order_list)
+        return f"I found a few recent orders for this number:\n\n{orders_text}\n\nPlease reply with the order number (e.g., #FO1039) you'd like to check."
 
 async def handle_support_request(message: str, customer: Dict, **kwargs) -> str:
     """Handles support requests for damaged items, returns, etc."""
@@ -686,7 +995,7 @@ async def handle_general_inquiry(message: str, customer: Dict, **kwargs) -> str:
         return string_service.get_string("ERROR_AI_GENERAL", strings.ERROR_AI_GENERAL)
 
 # --- Handlers for string constants ---
-async def handle_human_escalation(**kwargs) -> str: return string_service.get_string("HUMAN_ESCALATION", strings.HUMAN_ESCALATION)
+
 async def handle_price_feedback(**kwargs) -> str: return string_service.get_string("PRICE_FEEDBACK_RESPONSE", strings.PRICE_FEEDBACK_RESPONSE)
 async def handle_discount_inquiry(**kwargs) -> str: return string_service.get_string("DISCOUNT_INFO", strings.DISCOUNT_INFO)
 async def handle_review_inquiry(**kwargs) -> str: return string_service.get_string("REVIEW_INFO", strings.REVIEW_INFO)
@@ -696,7 +1005,79 @@ async def handle_contact_inquiry(**kwargs) -> str: return string_service.get_str
 async def handle_thank_you(**kwargs) -> str: return string_service.get_string("THANK_YOU_RESPONSE", strings.THANK_YOU_RESPONSE)
 
 
+async def handle_human_escalation(phone_number: str, customer: Dict, **kwargs) -> str:
+    """
+    STARTS the automated triage flow instead of immediately escalating.
+    It proactively finds the user's orders and asks them to confirm.
+    """
+    logger.info(f"Starting triage flow for {phone_number} instead of escalating.")
+    
+    # 1. Proactively search our database for recent orders
+    recent_orders = await db_service.get_recent_orders_by_phone(phone_number, limit=3)
+
+    if not recent_orders:
+        # 2. NO ORDERS FOUND: Ask for the order number.
+        logger.info(f"Triage: No orders found for {phone_number}. Asking for order number.")
+        await cache_service.set(f"state:awaiting_triage_order_number:{phone_number}", "1", ttl=900)
+        return "I'm sorry to hear you're having an issue. To help, could you please reply with your order number (e.g., #FO1039)?"
+
+    elif len(recent_orders) == 1:
+        # 3. ONE ORDER FOUND: Ask to confirm.
+        order_num = recent_orders[0].get("order_number")
+        logger.info(f"Triage: Found one order ({order_num}) for {phone_number}. Asking for confirmation.")
+        
+        # Save the order number to Redis so we know what "yes" means
+        await cache_service.set(f"state:awaiting_triage_order_confirm:{phone_number}", order_num, ttl=900)
+        
+        options = {"triage_confirm_yes": "Yes, that's it", "triage_confirm_no": "No, it's different"}
+        await whatsapp_service.send_quick_replies(
+            phone_number,
+            f"I'm sorry to hear you're having an issue. I see your most recent order is **{order_num}**. Is this the one you need help with?",
+            options
+        )
+        return "[Bot is asking to confirm order for triage]"
+
+    else:
+        # 4. MULTIPLE ORDERS FOUND: Ask to select.
+        logger.info(f"Triage: Found multiple orders for {phone_number}. Asking to select.")
+        
+        options = {}
+        for order in recent_orders:
+            order_num = order.get("order_number")
+            options[f"triage_select_order_{order_num}"] = f"Order {order_num}"
+        
+        await whatsapp_service.send_quick_replies(
+            phone_number,
+            "I'm sorry to hear you're having an issue. I found a few of your recent orders. Which one do you need help with?",
+            options
+        )
+        return "[Bot is asking to select order for triage]"
+
 # --- Helper Functions for Handlers ---
+
+async def _send_triage_issue_list(phone_number: str, order_number: str):
+    """
+    Sends the list of common issues for the user to select.
+    This is Step 2 of the triage flow.
+    """
+    logger.info(f"Triage: Sending issue list for order {order_number} to {phone_number}.")
+    
+    # We save the selected order number in the state key
+    state_key = f"state:awaiting_triage_issue_selection:{order_number}:{phone_number}"
+    await cache_service.set(state_key, "1", ttl=900)
+    
+    options = {
+        "triage_issue_damaged": "📦 Item is damaged",
+        "triage_issue_wrong_item": "Wrong item received",
+        "triage_issue_return": "I want to return it",
+        "triage_issue_other": "Something else"
+    }
+    
+    await whatsapp_service.send_quick_replies(
+        phone_number,
+        f"Thank you. What is the issue with order **{order_number}**?",
+        options
+    )
 
 def _identify_search_category(keywords: List[str]) -> str:
     """Identifies the primary product category from a list of keywords."""
@@ -723,7 +1104,7 @@ async def _handle_no_results(customer: Dict, original_query: str) -> str:
     if search_category in {"bangles", "rings", "bracelets"}:
         response = f"While we don't carry {search_category} right now, we have stunning **earrings and necklace sets** that would complement your look beautifully.\n\nWould you like me to show you some of our bestselling sets? ✨"
         
-    await cache_service.redis.set(f"state:last_bot_question:{customer['phone_number']}", "offer_bestsellers", ex=900)
+    await cache_service.set(f"state:last_bot_question:{customer['phone_number']}", "offer_bestsellers", ttl=900)
     return response
 
 async def _handle_unclear_request(customer: Dict, original_message: str) -> str:
@@ -733,8 +1114,17 @@ async def _handle_unclear_request(customer: Dict, original_message: str) -> str:
 async def _handle_standard_search(products: List[Product], message: str, customer: Dict) -> str:
     """Handles standard product search results."""
     phone_number = customer["phone_number"]
-    await cache_service.redis.set(f"state:last_search:{phone_number}", json.dumps({"query": message, "page": 1}), ex=900)
-    await cache_service.redis.set(f"state:last_product_list:{phone_number}", json.dumps([p.dict() for p in products]), ex=900)
+    await cache_service.set(
+        f"state:last_search:{phone_number}", 
+        json.dumps({"query": message, "page": 1}), 
+        ttl=900
+    )
+    await cache_service.set(
+        f"state:last_product_list:{phone_number}", 
+        json.dumps([p.dict() for p in products]), 
+        ttl=900
+    )
+
     
     header_text = f"Found {len(products)} match{'es' if len(products) != 1 else ''} for you ✨"
     await _send_product_card(products=products, customer=customer, header_text=header_text, body_text="Tap any product for details!")
@@ -861,34 +1251,40 @@ async def process_webhook_message(message: Dict[str, Any], webhook_data: Dict[st
 
 async def handle_status_update(status_data: Dict):
     """Processes a message status update from WhatsApp using the message_logs collection."""
-    try:
-        wamid, status = status_data.get("id"), status_data.get("status")
-        if not wamid or not status: return
-        
-        from app.services.db_service import db_service
-        
-        # Now we look in the fast, dedicated collection
-        result = await db_service.db.message_logs.update_one(
-            {"wamid": wamid},
-            {"$set": {"status": status}}
-        )
+    wamid, status = status_data.get("id"), status_data.get("status")
+    if not wamid or not status:
+        return
 
-        if result.modified_count > 0:
-            logger.info(f"Message status updated for {wamid} to {status}")
-        else:
-            # It can take a moment for the sent message to be logged, so we retry once.
-            await asyncio.sleep(2)
-            result = await db_service.db.message_logs.update_one(
+    try:
+        from app.services.db_service import db_service
+
+        # Define a retryable update operation
+        @tenacity.retry(
+            stop=tenacity.stop_after_delay(10),  # Stop after 10 seconds
+            wait=tenacity.wait_exponential(multiplier=1, min=0.5, max=3),  # Wait 0.5s, 1s, 2s, 3s, 3s...
+            retry=tenacity.retry_if_result(lambda result: result.modified_count == 0),  # Retry if it didn't update
+            reraise=True  # Reraise the exception if it fails after 10s
+        )
+        async def _update_message_status():
+            """Attempts to update the message status."""
+            return await db_service.db.message_logs.update_one(
                 {"wamid": wamid},
                 {"$set": {"status": status}}
             )
-            if result.modified_count > 0:
-                logger.info(f"Message status updated for {wamid} to {status} after retry.")
-            else:
-                logger.warning(f"Could not find message {wamid} to update status in message_logs.")
-            
+
+        # Call the retryable function
+        result = await _update_message_status()
+
+        if result.modified_count > 0:
+            logger.info(f"Message status updated for {wamid} to {status}")
+
+    except tenacity.RetryError:
+        # This log happens *only* if it fails after all retries
+        logger.warning(f"Could not find message {wamid} to update status in message_logs after 10 seconds.")
     except Exception as e:
         logger.error(f"Error handling status update: {e}", exc_info=True)
+
+
 async def handle_abandoned_checkout(payload: dict):
     """
     Receives an abandoned checkout webhook and saves it to the database.

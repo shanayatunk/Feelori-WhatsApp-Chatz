@@ -180,7 +180,11 @@ async def process_message(phone_number: str, message_text: str, message_type: st
 
         # State 4: Check if user is selecting an issue type
         # We find the key by searching for the pattern
-        issue_selection_keys = await cache_service.redis.keys(f"state:awaiting_triage_issue_selection:*:{clean_phone}")
+        issue_selection_keys = []
+        async for key in cache_service.redis.scan_iter(f"state:awaiting_triage_issue_selection:*:{clean_phone}"):
+            issue_selection_keys.append(key)
+            break # We only need the first one, so we can stop searching
+
         if issue_selection_keys:
             key = issue_selection_keys[0].decode()
             order_number = key.split(":")[2] # Extract order num from the key
@@ -207,7 +211,10 @@ async def process_message(phone_number: str, message_text: str, message_type: st
                 return string_service.get_string("HUMAN_ESCALATION", strings.HUMAN_ESCALATION)
         
         # State 5: Check if user is sending a damage photo
-        photo_keys = await cache_service.redis.keys(f"state:awaiting_triage_photo:*:{clean_phone}")
+        photo_keys = []
+        async for key in cache_service.redis.scan_iter(f"state:awaiting_triage_photo:*:{clean_phone}"):
+            photo_keys.append(key)
+            break
         # We must check for "image" type OR your special "visual_search_" text
         if photo_keys and (message_type == "image" or message_text.startswith("visual_search_")):
             key = photo_keys[0].decode()
@@ -277,6 +284,11 @@ async def process_message(phone_number: str, message_text: str, message_type: st
         logger.debug(f"Classifying intent with AI for: '{message_text}'")
         
         # --- REPLACE THE OLD PROMPT WITH THIS NEW ONE ---
+        # Prepare context for intent classification
+        last_product_raw = await cache_service.get(f"state:last_single_product:{clean_phone}")
+        last_product_context = json.loads(last_product_raw) if last_product_raw else None
+        is_reply = bool(quoted_wamid)
+
         intent_prompt = f"""
         You are an intelligent AI assistant for an Indian jewelry e-commerce WhatsApp store.
         Your task is to analyze the user's message and the conversation context, then classify the intent.
@@ -284,8 +296,8 @@ async def process_message(phone_number: str, message_text: str, message_type: st
 
         **Conversation Context:**
         - User's Message: "{message_text}"
-        - Is this a reply to a previous message?: {"Yes" if 'is_reply' in locals() and is_reply else "No"}
-        - Last product shown to the user: {json.dumps(locals().get('last_product_shown', 'None'))}
+        - Is this a reply to a previous message?: {"Yes" if is_reply else "No"}
+        - Last product shown to the user: {json.dumps(last_product_context)}
 
         **Possible Intents:**
         - 'human_escalation': User has a problem, is angry, or wants a person. (e.g., "this is broken", "issue with my order"). **Prioritize this if there is any doubt.**
@@ -315,21 +327,26 @@ async def process_message(phone_number: str, message_text: str, message_type: st
             last_product_context = json.loads(last_product_raw) if last_product_raw else None
 
             ai_result = await ai_service.get_ai_json_response(
-                prompt=intent_prompt, 
-                message_text=message_text, 
-                client_type="gemini",
-                # Pass our new context variables
-                is_reply=bool(quoted_wamid),
-                last_product_shown=last_product_context
+                prompt=intent_prompt
+                 # The context is now part of the prompt, no need to pass it as separate arguments 
             )
-            ai_intent = ai_result.get("intent", "rule_based") # Default to your old system
-            ai_keywords = ai_result.get("keywords", message_text)
-            logger.info(f"AI classified intent as '{ai_intent}' with keywords: '{ai_keywords}'")
+            ai_intent = ai_result.get("intent", "rule_based")
+            ai_keywords = ai_result.get("keywords", []) # Default to an empty list
+            if not ai_keywords or isinstance(ai_keywords, str):
+                # If keywords are missing, empty, or a string, extract them from the message
+                from .rule_service import QueryBuilder, SearchConfig # Local import to avoid circular dependency
+                qb = QueryBuilder(SearchConfig())
+                ai_keywords = qb._extract_keywords(message_text) or [message_text]
+
+            logger.info(f"AI classified intent as '{ai_intent}' with keywords: {ai_keywords}")
 
         except Exception as e:
-            logger.error(f"AI intent classification failed: {e}. Falling back to rule-based.")
+            logger.exception(f"AI intent classification failed. Falling back to rule-based.") # Use logger.exception
             ai_intent = "rule_based" # Fallback to your old system
-            ai_keywords = message_text
+            # Ensure the fallback is also a list
+            from .rule_service import QueryBuilder, SearchConfig
+            qb = QueryBuilder(SearchConfig())
+            ai_keywords = qb._extract_keywords(message_text) or [message_text]
 
         # 3. Route based on the AI's classification
         if ai_intent == "product_search":
@@ -342,7 +359,7 @@ async def process_message(phone_number: str, message_text: str, message_type: st
             # This is the new flow that fixes your original problem
             # It uses the AI's Q&A ability instead of searching
             answer = await ai_service.get_product_qa(
-                query=ai_keywords,  # This will be the full question
+                query=" ".join(ai_keywords), # Join the list into a string
                 product=None
             )
             response = answer
@@ -497,43 +514,51 @@ async def route_message(intent: str, phone_number: str, message: str, customer: 
 
 # --- Handler Functions ---
 
-async def handle_product_search(message: List[str], customer: Dict, **kwargs) -> Optional[str]:
+async def handle_product_search(message: List[str] | str, customer: Dict, **kwargs) -> Optional[str]:
     """Handles a product search request with intelligent filtering."""
     try:
         config = SearchConfig()
         query_builder = QueryBuilder(config, customer=customer)
-        
-        # The AI now provides a clean list of keywords, so we use it directly.
-        keywords = message
-        
+
+        # --- THIS IS THE NEW LOGIC ---
+        # Coerce the input to a list of keywords, whether it's a string or already a list.
+        if isinstance(message, str):
+            keywords = query_builder._extract_keywords(message)
+        else:
+            keywords = message
+
+        # If after processing, there are no keywords, handle it as an unclear request.
+        if not keywords:
+            unclear_message = message if isinstance(message, str) else " ".join(message)
+            return await _handle_unclear_request(customer, unclear_message)
+        # --- END OF NEW LOGIC ---
+
         # Check if any keyword is in our unavailable list.
         for keyword in keywords:
             if keyword in default_rules.UNAVAILABLE_CATEGORIES:
                 # If it is, call the specific handler for unavailable products.
-                # We join the keywords back into a string for a clean log message.
                 return await _handle_no_results(customer, " ".join(keywords))
 
-        # We need to reconstruct a "message" string for the query builder
+        # Reconstruct a "message" string from the clean keywords for the query builder
         message_str = " ".join(keywords)
         text_query, price_filter = query_builder.build_query_parts(message_str)
-        
+
         if not text_query and not price_filter:
             return await _handle_unclear_request(customer, message_str)
 
         filtered_products, unfiltered_count = await shopify_service.get_products(
             query=text_query, filters=price_filter, limit=config.MAX_SEARCH_RESULTS
         )
-        
+
         if not filtered_products:
             if unfiltered_count > 0 and price_filter:
                 price_cond = price_filter.get("price", {})
                 price_str = f"under ₹{price_cond['lessThan']}" if "lessThan" in price_cond else f"over ₹{price_cond['greaterThan']}"
                 response = f"I found {unfiltered_count} item(s), but none are {price_str}. 😔\n\nWould you like to see them anyway?"
                 
-                # --- FIX: Use ttl instead of ex ---
-                await cache_service.redis.set(f"state:last_search:{customer['phone_number']}", json.dumps({"query": message_str, "page": 1}), ex=900)
-                await cache_service.redis.set(f"state:last_bot_question:{customer['phone_number']}", "offer_unfiltered_products", ex=900)
-                # --- END OF FIX ---
+                # Use the abstracted cache_service methods for consistency
+                await cache_service.set(f"state:last_search:{customer['phone_number']}", json.dumps({"query": message_str, "page": 1}), ttl=900)
+                await cache_service.set(f"state:last_bot_question:{customer['phone_number']}", "offer_unfiltered_products", ttl=900)
                 
                 return response
             else:

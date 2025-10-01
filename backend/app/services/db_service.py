@@ -46,8 +46,7 @@ class DatabaseService:
                 mongo_uri,
                 maxPoolSize=settings.max_pool_size,
                 minPoolSize=settings.min_pool_size,
-                tls=True,
-                tlsAllowInvalidCertificates=False,
+                tls=settings.mongo_ssl,
                 serverSelectionTimeoutMS=5000,
                 connectTimeoutMS=10000
             )

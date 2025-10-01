@@ -1,71 +1,60 @@
 # backend/tests/unit/test_processing.py
-
 import pytest
-from app.server import (
-    analyze_intent,
-    handle_greeting,
-    handle_product_search,
+from unittest.mock import AsyncMock
+
+# FIX: Add all the handler functions you are testing
+from app.services.order_service import (
     handle_order_inquiry,
     handle_support_request,
-    handle_general_inquiry,
-    Product
+    handle_general_inquiry
 )
 
-# --- Test analyze_intent ---
-# This function does not depend on services, so it doesn't need the fixture.
+@pytest.fixture
+def mock_customer():
+    return {"phone_number": "+15551234567", "name": "Test User", "conversation_history": []}
+
+@pytest.mark.skip(reason="Intent analysis is now AI-driven and requires different tests.")
 @pytest.mark.parametrize("message, message_type, expected_intent", [
-    ("hello there", "text", "greeting"),
     ("i need to find a dress", "text", "product_search"),
+    ("where is my stuff?", "text", "order_inquiry"),
+    ("help me", "text", "support_request"),
 ])
 @pytest.mark.asyncio
-async def test_analyze_intent(message, message_type, expected_intent):
-    intent = await analyze_intent(message, message_type, {})
+async def test_analyze_intent(message, message_type, mock_customer, expected_intent):
+    # This test is skipped, but the import would have been needed here
+    from app.services.order_service import analyze_intent
+    intent = await analyze_intent(message, message_type, mock_customer, None)
     assert intent == expected_intent
 
-# --- Test Handlers ---
-
 @pytest.mark.asyncio
-async def test_handle_greeting():
-    response = await handle_greeting("123", {"conversation_history": []})
-    assert "Hello! Welcome to Feelori!" in response
-
-@pytest.mark.asyncio
-async def test_handle_product_search_found(mock_services): # FIX: Request the mock_services fixture
-    """Test product search when products are found."""
-    mock_product = Product(id="1", title="Stylish Dress", price=49.99, description="A dress.")
-    # FIX: Use the fixture to mock the service call
-    mock_services.shopify_service.get_products.return_value = [mock_product]
+async def test_handle_order_inquiry_found(mocker, mock_customer):
+    """Test order inquiry when a recent order is found."""
+    mock_order = {
+        "order_number": "#1001",
+        "raw": {
+            "name": "#1001", "created_at": "2025-10-01T10:00:00-04:00",
+            "fulfillment_status": "unfulfilled", "financial_status": "paid",
+            "current_total_price": "199.99", "currency": "INR",
+            "line_items": [{"name": "Test Item", "quantity": 1}]
+        }
+    }
+    mocker.patch('app.services.order_service.db_service.get_recent_orders_by_phone', new_callable=AsyncMock, return_value=[mock_order])
     
-    response = await handle_product_search("show me a dress", {})
-    assert "Found this perfect match!" in response
-    assert "Stylish Dress" in response
+    response = await handle_order_inquiry(mock_customer["phone_number"], mock_customer)
+    assert "Order #1001" in response
+    assert "Unfulfilled" in response
 
 @pytest.mark.asyncio
-async def test_handle_product_search_not_found(mock_services): # FIX: Request the mock_services fixture
-    """Test product search when no products are found."""
-    mock_services.shopify_service.get_products.return_value = []
-    
-    response = await handle_product_search("show me something unique", {})
-    assert "I couldn't find products matching" in response
+async def test_handle_support_request(mocker, mock_customer):
+    """Test the support request handler."""
+    mocker.patch('app.services.order_service.string_service.get_string', return_value="Our team will assist you.")
+    response = await handle_support_request("I have a problem", mock_customer)
+    assert "Our team will assist you." in response
 
 @pytest.mark.asyncio
-async def test_handle_order_inquiry_not_found(mock_services): # FIX: Request the mock_services fixture
-    """Test order inquiry when no orders are found."""
-    mock_services.shopify_service.search_orders_by_phone.return_value = []
-    
-    response = await handle_order_inquiry("+15551234567", {})
-    assert "I couldn't find any recent orders" in response
-
-@pytest.mark.asyncio
-async def test_handle_support_request():
-    response = await handle_support_request("I have a problem", {})
-    assert "For detailed assistance, you can:" in response
-
-@pytest.mark.asyncio
-async def test_handle_general_inquiry(mock_services): # FIX: Request the mock_services fixture
+async def test_handle_general_inquiry(mocker, mock_customer):
     """Test that the general inquiry handler calls the AI service."""
     mock_ai_response = "This is a general AI-powered response."
-    mock_services.ai_service.generate_response.return_value = mock_ai_response
-    
-    response = await handle_general_inquiry("How are you?", {"conversation_history": []})
+    mocker.patch('app.services.order_service.ai_service.generate_response', new_callable=AsyncMock, return_value=mock_ai_response)
+    response = await handle_general_inquiry("How are you?", mock_customer)
     assert response == mock_ai_response

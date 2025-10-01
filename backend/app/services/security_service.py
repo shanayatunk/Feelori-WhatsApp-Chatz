@@ -4,6 +4,7 @@ import hmac
 import hashlib
 import bcrypt
 import re
+import html
 from fastapi import Request, HTTPException
 
 from app.services.cache_service import cache_service
@@ -69,7 +70,7 @@ class EnhancedSecurityService(SecurityService):
     def validate_message_content(message: str) -> str:
         if len(message) > 4096: 
             raise ValueError("Message too long")
-        return message.strip()
+        return html.escape(message.strip())
 
     @staticmethod
     def validate_admin_session(request: Request, payload: dict):

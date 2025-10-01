@@ -1,6 +1,5 @@
 
-# Now it's safe to import the application and its components
-from app.main import app
+
 import pytest
 from fastapi.testclient import TestClient
 from dotenv import load_dotenv
@@ -11,6 +10,7 @@ from unittest.mock import AsyncMock
 load_dotenv(dotenv_path="backend/.env.test")
 
 # Now it's safe to import the application and its components
+from app.main import app
 
 
 @pytest.fixture

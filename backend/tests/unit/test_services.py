@@ -5,26 +5,35 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from app.services.whatsapp_service import WhatsAppService
 from app.services.shopify_service import ShopifyService
 from app.config.settings import settings
+from app.utils.queue import RedisMessageQueue
 
+# --- WhatsAppService tests ---
 @pytest.mark.asyncio
 async def test_whatsapp_send_message_success(mocker):
-    """Test successful message sending."""
-    # FIX: Patch the log_message method on the actual db_service object at its source.
+    """Test successful WhatsApp message sending and logging."""
+    # FIX: Patch the log_message method on the actual db_service object, where it is defined.
     mock_log = mocker.patch('app.services.db_service.db_service.log_message', new_callable=AsyncMock)
 
-    mock_response = AsyncMock(return_value=MagicMock(status_code=200, json=lambda: {"messages": [{"id": "wamid_123"}]}))
+    mock_response = AsyncMock(return_value=MagicMock(
+        status_code=200, json=lambda: {"messages": [{"id": "wamid_123"}]}
+    ))
     mocker.patch('app.services.whatsapp_service.WhatsAppService.resilient_api_call', mock_response)
-    
-    service = WhatsAppService(settings.whatsapp_access_token, settings.whatsapp_phone_id, settings.whatsapp_business_account_id)
+
+    service = WhatsAppService(
+        settings.whatsapp_access_token,
+        settings.whatsapp_phone_id,
+        settings.whatsapp_business_account_id
+    )
     wamid = await service.send_message("+15551234567", "Hello World")
-    
+
     assert wamid == "wamid_123"
-    mock_log.assert_awaited_once() # Verify the log was called
+    mock_log.assert_awaited_once()
     mock_response.assert_awaited_once()
 
+# --- ShopifyService tests ---
 @pytest.mark.asyncio
 async def test_shopify_get_products_success(mocker):
-    """Test successfully fetching products."""
+    """Test successfully fetching products from Shopify."""
     mock_gql_response = { "data": { "products": { "edges": [{ "node": {
         "id": "gid://shopify/Product/1", "handle": "test-product", "title": "Test Product",
         "description": "A great product", "tags": ["test"], "featuredImage": {"url": "http://example.com/image.png"},
@@ -34,40 +43,74 @@ async def test_shopify_get_products_success(mocker):
         }}]}
     }}]}}}
     
-    with patch('app.services.shopify_service.httpx.AsyncClient') as MockClient:
-        mock_post = AsyncMock(return_value=MagicMock(status_code=200, json=lambda: mock_gql_response))
-        mock_post.return_value.raise_for_status = MagicMock()
-        MockClient.return_value.post = mock_post
-
-        service = ShopifyService(settings.shopify_store_url, settings.shopify_access_token, settings.shopify_storefront_access_token)
-        products, _ = await service.get_products(query="Test", limit=1)
+    # The http_client is an attribute of the service instance. We patch it after creation.
+    service = ShopifyService(settings.shopify_store_url, settings.shopify_access_token, settings.shopify_storefront_access_token)
     
+    # We create a mock that can be awaited and also has the methods we need.
+    async def mock_post(*args, **kwargs):
+        response = MagicMock(status_code=200, json=lambda: mock_gql_response)
+        response.raise_for_status = MagicMock()
+        return response
+
+    mocker.patch.object(service, 'http_client', new_callable=AsyncMock)
+    service.http_client.post = mock_post
+    
+    products, _ = await service.get_products(query="Test", limit=1)
+
     assert len(products) == 1
     assert products[0].title == "Test Product"
 
-# --- AIService Tests ---
+# --- AIService tests ---
 @pytest.mark.asyncio
 async def test_ai_service_generates_response(mocker):
-    """Test that the AI service generates a response."""
-    mock_sync_call = mocker.patch('app.services.ai_service.AIService._sync_generate_with_retry')
-    mock_response = MagicMock()
-    mocker.patch('app.services.ai_service.AIService._extract_text_from_genai_response', return_value="This is an AI response.")
-    mock_sync_call.return_value = mock_response
+    """Test that the AI service generates a response using Gemini."""
+    mock_gen = mocker.patch('app.services.ai_service.AIService._generate_gemini_response', new_callable=AsyncMock)
+    mock_gen.return_value = "This is an AI response."
 
     from app.services.ai_service import ai_service
     response = await ai_service.generate_response("Tell me a joke", {})
-    
+
     assert response == "This is an AI response."
-    mock_sync_call.assert_called_once()
+    mock_gen.assert_awaited_once()
 
 @pytest.mark.asyncio
 async def test_ai_service_fallback_response():
-    """Test the fallback response when no AI clients are configured."""
-    # This test patches the internal clients and is already correct.
+    """Test fallback response when no AI clients are configured."""
     with patch('app.services.ai_service.ai_service.gemini_client', None), \
          patch('app.services.ai_service.ai_service.openai_client', None):
-        
         from app.services.ai_service import ai_service
         response = await ai_service.generate_response("hello", {})
-    
+
     assert "I'm sorry, I'm having trouble connecting" in response
+
+# --- Queue Worker Logic Test ---
+@pytest.mark.asyncio
+async def test_process_message_from_queue_handles_send_failure(mocker):
+    """
+    Ensure _process_message_from_queue continues processing
+    even if sending the WhatsApp message fails.
+    """
+    # FIX: Patch all functions at their original source location.
+    mocker.patch('app.services.order_service.get_or_create_customer', new_callable=AsyncMock, return_value={"name": "Alice"})
+    mocker.patch('app.services.order_service.process_message', new_callable=AsyncMock, return_value="Hello User!")
+    mock_whatsapp = mocker.patch('app.services.whatsapp_service.whatsapp_service.send_message', new_callable=AsyncMock, side_effect=Exception("API failure"))
+    mock_update_history = mocker.patch('app.services.db_service.db_service.update_conversation_history', new_callable=AsyncMock)
+    
+    # FIX: Patch message_counter where it is originally defined, in app.utils.metrics
+    mock_counter_labels = mocker.patch('app.utils.metrics.message_counter.labels')
+    mock_counter_labels.return_value.inc = MagicMock()
+
+    data = {
+        "from_number": "+15551234567",
+        "message_text": "Hi",
+        "message_type": "text",
+        "profile_name": "Alice"
+    }
+
+    queue_instance = RedisMessageQueue(redis_client=AsyncMock())
+    await queue_instance._process_message_from_queue(data)
+
+    mock_whatsapp.assert_awaited_once()
+    mock_update_history.assert_awaited_once()
+    mock_counter_labels.assert_called_with(status="send_failed", message_type="text")
+    mock_counter_labels.return_value.inc.assert_called_once()

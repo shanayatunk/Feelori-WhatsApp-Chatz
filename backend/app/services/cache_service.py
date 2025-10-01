@@ -25,7 +25,8 @@ class CacheService:
             self.redis = None # Ensure redis is None if connection fails
 
     async def get(self, key: str) -> Optional[str]:
-        if not self.redis: return None
+        if not self.redis: 
+            return None
         try:
             result = await self.circuit_breaker.call(self.redis.get, key)
             cache_operations.labels(operation="get", status="hit" if result else "miss").inc()
@@ -36,7 +37,8 @@ class CacheService:
             return None
 
     async def set(self, key: str, value: str, ttl: int = 300):
-        if not self.redis: return
+        if not self.redis: 
+            return
         try:
             await self.circuit_breaker.call(self.redis.setex, key, ttl, value)
             cache_operations.labels(operation="set", status="success").inc()
@@ -47,8 +49,10 @@ class CacheService:
     async def get_or_set(self, key: str, fetch_func, ttl: int = 300):
         cached_value = await self.get(key)
         if cached_value is not None:
-            try: return json.loads(cached_value)
-            except json.JSONDecodeError: return cached_value
+            try: 
+               return json.loads(cached_value)
+            except json.JSONDecodeError: 
+                return cached_value
         
         try:
             fetched_value = await fetch_func()

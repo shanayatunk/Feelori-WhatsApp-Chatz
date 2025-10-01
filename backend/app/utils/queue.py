@@ -25,14 +25,17 @@ class RedisMessageQueue:
         self.running = False
 
     async def initialize(self):
-        if not self.redis: return
+        if not self.redis: 
+            return
         try:
             await self.redis.xgroup_create(self.stream_name, self.consumer_group, id="0", mkstream=True)
         except redis_package.exceptions.ResponseError as e:
-            if "BUSYGROUP" not in str(e): raise
+            if "BUSYGROUP" not in str(e): 
+                raise
 
     async def start_workers(self):
-        if not self.redis: return
+        if not self.redis: 
+            return
         await self.initialize()
         self.running = True
         for i in range(self.max_workers):
@@ -49,7 +52,8 @@ class RedisMessageQueue:
         while self.running:
             try:
                 messages = await self.redis.xreadgroup(self.consumer_group, consumer_name, {self.stream_name: ">"}, count=1, block=1000)
-                if not messages: continue
+                if not messages: 
+                    continue
                 
                 # Note: messages is a list of streams, e.g., [(b'stream_name', [(b'msg_id', {..})])]
                 stream_name, stream_messages = messages[0]
@@ -119,7 +123,8 @@ class RedisMessageQueue:
 
     async def is_duplicate_message(self, message_id: str, phone_number: str) -> bool:
         """Checks for duplicate message IDs to prevent re-processing."""
-        if not self.redis: return False
+        if not self.redis: 
+            return False
         # set with nx=True returns True if the key was set, False if it already existed.
         # We want to return True if it's a duplicate, so we invert the result.
         return not await self.redis.set(f"processed:{phone_number}:{message_id}", "1", ex=300, nx=True)

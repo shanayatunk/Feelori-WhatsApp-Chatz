@@ -219,7 +219,8 @@ class WhatsAppService:
 
         logger.info(f"Using fallback message for {to}")
         for product in fallback_products:
-            if not product.image_url: continue
+            if not product.image_url: 
+                continue
             try:
                 payload = {
                     "messaging_product": "whatsapp", "to": to, "type": "interactive",
@@ -309,7 +310,8 @@ class WhatsAppService:
         """Downloads media bytes and returns (bytes, mime_type)."""
         try:
             url = await self.get_media_url(media_id)
-            if not url: return None, None
+            if not url: 
+                return None, None
             
             headers = {"Authorization": f"Bearer {self.access_token}"}
             resp = await self.http_client.get(url, headers=headers)

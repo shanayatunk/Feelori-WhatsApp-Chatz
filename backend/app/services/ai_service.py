@@ -380,7 +380,8 @@ Example format: {{"key": "value", "items": []}}"""
 
     def _calculate_keyword_relevance(self, keywords: list[str], candidate: dict) -> float:
         """Calculates a relevance score based on keyword matches in title and tags."""
-        if not keywords: return 0.0
+        if not keywords: 
+            return 0.0
         relevance_score, matched_keywords = 0.0, set()
         title_lower = candidate['title'].lower()
         tags_lower = [tag.lower() for tag in candidate.get('tags', [])]
@@ -394,10 +395,15 @@ Example format: {{"key": "value", "items": []}}"""
             matched_keywords.add(primary_category)
 
         for keyword in keywords[1:]:
-            if keyword in title_lower: relevance_score += 0.5; matched_keywords.add(keyword)
-            elif keyword in tags_lower: relevance_score += 0.3; matched_keywords.add(keyword)
+            if keyword in title_lower: 
+                relevance_score += 0.5 
+                matched_keywords.add(keyword)
+            elif keyword in tags_lower: 
+                relevance_score += 0.3 
+                matched_keywords.add(keyword)
         
-        if len(matched_keywords) > 1: relevance_score += 0.5 * (len(matched_keywords) - 1)
+        if len(matched_keywords) > 1: 
+            relevance_score += 0.5 * (len(matched_keywords) - 1)
         return relevance_score
 
     async def find_exact_product_by_image(self, image_bytes: bytes, mime_type: str) -> dict:
@@ -425,14 +431,17 @@ Example format: {{"key": "value", "items": []}}"""
             
             best_match = ranked_products[0]
             match_type = 'similar'
-            if best_match['similarity_score'] >= 0.92 and best_match['relevance_score'] >= 1.0: match_type = 'exact'
-            elif best_match['final_score'] >= 0.8: match_type = 'very_similar'
+            if best_match['similarity_score'] >= 0.92 and best_match['relevance_score'] >= 1.0: 
+                match_type = 'exact'
+            elif best_match['final_score'] >= 0.8: 
+                match_type = 'very_similar'
 
             final_products = []
             for match in ranked_products:
                 if match['final_score'] >= 0.6:
                     product = await shopify_service.get_product_by_handle(match['handle'])
-                    if product: final_products.append(product)
+                    if product: 
+                        final_products.append(product)
             
             if final_products:
                 return {'success': True, 'match_type': match_type, 'products': final_products[:5]}

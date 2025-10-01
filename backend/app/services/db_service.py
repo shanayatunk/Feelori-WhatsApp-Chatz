@@ -156,7 +156,17 @@ class DatabaseService:
     def _now_utc(self) -> datetime:
         """Get current UTC timestamp (Python 3.12+ compatible)."""
         return datetime.now(timezone.utc)
-
+    
+    def _parse_iso_utc(self, value: Optional[str]) -> Optional[datetime]:
+        """Parse Shopify ISO8601 strings to aware UTC datetimes."""
+        if not value or not isinstance(value, str):
+            return None
+        try:
+            # Handle Z suffix and ensure timezone awareness
+            return datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone(timezone.utc)
+        except Exception:
+            logger.warning(f"Failed to parse timestamp: {value}")
+            return None
     # ==================== Index Management ====================
 
     async def create_indexes(self) -> None:
@@ -326,9 +336,11 @@ class DatabaseService:
         if not cleaned_phone:
             return False
 
-        result = await self.db.customers.update_one(
+        result = await self._safe_db_operation(
+            lambda: self.db.customers.update_one(
             {"phone_number": cleaned_phone},
             {"$set": {"name": name}}
+            )
         )
         
         if result.modified_count > 0:
@@ -458,10 +470,17 @@ class DatabaseService:
             logger.warning("Attempted to save checkout without ID")
             return
 
+        # Normalize time fields before saving
+        normalized_data = dict(checkout_data)
+        if "updated_at" in normalized_data:
+            normalized_data["updated_at"] = self._parse_iso_utc(normalized_data.get("updated_at"))
+        if "completed_at" in normalized_data:
+            normalized_data["completed_at"] = self._parse_iso_utc(normalized_data.get("completed_at"))
+
         await self.db.abandoned_checkouts.update_one(
             {"id": checkout_id},
             {
-                "$set": checkout_data,
+                "$set": normalized_data, # <-- Use the normalized data
                 "$setOnInsert": {"reminder_sent": False}
             },
             upsert=True
@@ -1494,7 +1513,7 @@ class DatabaseService:
         order_doc = {
             "id": order_id,
             "order_number": payload.get("order_number"),
-            "created_at": payload.get("created_at"),
+            "created_at": self._parse_iso_utc(payload.get("created_at")), # <-- Use the new helper
             "raw": payload,
             "line_items_with_images": line_items_with_images,
             "phone_numbers": clean_phones,

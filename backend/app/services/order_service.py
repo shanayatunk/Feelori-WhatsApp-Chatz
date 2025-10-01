@@ -588,8 +588,11 @@ async def handle_product_search(message: List[str] | str, customer: Dict, **kwar
 
         return await _handle_standard_search(filtered_products, message_str, customer)
     except Exception:
-        logger.exception(f"Error in product search for message: {original_message}")
+        safe_msg = (original_message if 'original_message' in locals()
+                    else (message if isinstance(message, str) else " ".join(message)))
+        logger.exception(f"Error in product search for message: {safe_msg}")
         return await _handle_error(customer)
+
 
 def _format_single_order(order: Dict, detailed: bool = False) -> str:
     """

@@ -10,7 +10,6 @@ from google.genai.types import GenerateContentConfig, HttpOptions
 from openai import AsyncOpenAI
 from tenacity import retry, wait_exponential, stop_after_attempt, retry_if_exception_type
 from app.models.domain import Product
-from rapidfuzz import process, fuzz
 from app.config.settings import settings
 from app.config.persona import AI_SYSTEM_PROMPT, VISUAL_SEARCH_PROMPT, QA_PROMPT_TEMPLATE
 from app.utils.circuit_breaker import CircuitBreaker

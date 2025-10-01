@@ -5,11 +5,8 @@ import hashlib
 import bcrypt
 import re
 from fastapi import Request, HTTPException
-from typing import Dict
 
 from app.services.cache_service import cache_service
-from app.utils.metrics import auth_attempts_counter
-from app.config.settings import settings
 from app.utils.request_utils import get_remote_address
 
 # This service provides core security functionalities, such as password hashing,

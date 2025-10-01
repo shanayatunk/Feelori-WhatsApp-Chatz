@@ -2,11 +2,10 @@
 
 import re
 import json
-import uuid
 import asyncio
 import logging
 import tenacity
-from datetime import datetime, timedelta
+from datetime import datetime
 from dataclasses import dataclass, field
 from typing import Set, Dict, List, Tuple, Optional, Any
 
@@ -14,7 +13,7 @@ from typing import Set, Dict, List, Tuple, Optional, Any
 from rapidfuzz import process, fuzz
 
 from app.config.settings import settings
-from app.config import strings, rules as default_rules, persona
+from app.config import strings, rules as default_rules
 from app.models.domain import Product
 from app.services.security_service import EnhancedSecurityService
 from app.services.ai_service import ai_service
@@ -26,7 +25,6 @@ from app.services import security_service
 from app.services.string_service import string_service
 from app.services.rule_service import rule_service
 from app.utils.queue import message_queue
-from app.utils.metrics import message_counter, active_customers_gauge
 # from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 
@@ -362,8 +360,8 @@ async def process_message(phone_number: str, message_text: str, message_type: st
 
             logger.info(f"AI classified intent as '{ai_intent}' with keywords: {ai_keywords}")
 
-        except Exception as e:
-            logger.exception(f"AI intent classification failed. Falling back to rule-based.") # Use logger.exception
+        except Exception:
+            logger.exception("AI intent classification failed. Falling back to rule-based.") # Use logger.exception
             ai_intent = "rule_based" # Fallback to your old system
             # Ensure the fallback is also a list
             qb = QueryBuilder(SearchConfig())
@@ -589,7 +587,7 @@ async def handle_product_search(message: List[str] | str, customer: Dict, **kwar
                 return await _handle_no_results(customer, message_str)
 
         return await _handle_standard_search(filtered_products, message_str, customer)
-    except Exception as e:
+    except Exception:
         logger.exception(f"Error in product search for message: {original_message}")
         return await _handle_error(customer)
 

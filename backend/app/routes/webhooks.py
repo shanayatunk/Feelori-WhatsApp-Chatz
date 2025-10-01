@@ -12,11 +12,8 @@ from app.utils.dependencies import (
     verify_shopify_signature,
     get_remote_address
 )
-# --- THIS IS THE FIX ---
-from app.services import security_service, shopify_service, order_service
-from app.services.db_service import db_service  # Import the instance directly
-# --- END OF FIX ---
-from app.utils.queue import message_queue
+from app.services import security_service, order_service
+from app.services.db_service import db_service
 from app.utils.metrics import response_time_histogram
 from app.utils.rate_limiter import limiter
 

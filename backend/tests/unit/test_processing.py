@@ -1,7 +1,6 @@
 # backend/tests/unit/test_processing.py
 
 import pytest
-from unittest.mock import AsyncMock
 from app.server import (
     analyze_intent,
     handle_greeting,

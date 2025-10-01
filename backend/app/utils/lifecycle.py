@@ -8,10 +8,8 @@ from app.utils.logging import setup_logging
 from app.utils.alerting import alerting_service
 from app.utils.queue import message_queue
 from app.services.db_service import db_service
-from app.services import security_service
 from app.services.string_service import string_service
 from app.services.rule_service import rule_service
-from app.config.settings import settings
 
 # This file manages the application's lifespan, handling startup tasks like
 # initializing services and shutdown tasks like cleaning up connections.

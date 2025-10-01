@@ -10,7 +10,7 @@ from unittest.mock import AsyncMock
 load_dotenv(dotenv_path="backend/.env.test")
 
 # Now it's safe to import the application and its components
-from app.main import app
+from app.main import app # noqa: E402
 
 
 @pytest.fixture

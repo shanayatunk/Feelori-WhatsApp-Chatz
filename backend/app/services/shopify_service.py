@@ -137,7 +137,8 @@ class ShopifyService:
         """
         try:
             data = await self._execute_gql_query(gql_query, {"id": product_id})
-            if not data.get("node"): return None
+            if not data.get("node"): 
+                return None
             products = self._parse_products([{"node": data.get("node")}])
             return products[0] if products else None
         except Exception as e:
@@ -353,7 +354,8 @@ class ShopifyService:
             fo_resp.raise_for_status()
             fulfillment_orders = fo_resp.json().get("fulfillment_orders", [])
             open_fo = next((fo for fo in fulfillment_orders if fo.get("status") == "open"), None)
-            if not open_fo: return False, None, None
+            if not open_fo: 
+                return False, None, None
 
             line_items = [{"id": item["id"], "quantity": item["fulfillable_quantity"]} for item in open_fo.get("line_items", []) if item.get("fulfillable_quantity", 0) > 0]
             payload = {
@@ -391,7 +393,8 @@ class ShopifyService:
 
     async def _shopify_search(self, query: str, limit: int, sort_key: str, filters: Optional[Dict]) -> List[Dict]:
         """Executes a GraphQL query against the Shopify Storefront API."""
-        if not self.storefront_token: return []
+        if not self.storefront_token: 
+            return []
         graphql_payload = {
             "query": """
             query ($query: String!, $limit: Int!, $sortKey: ProductSortKeys!) {
@@ -423,7 +426,8 @@ class ShopifyService:
 
     async def _execute_storefront_gql_query(self, query: str, variables: Optional[Dict] = None) -> Dict:
         """Executes a GraphQL query against the Shopify Storefront API."""
-        if not self.storefront_token: return {}
+        if not self.storefront_token: 
+            return {}
         url = f"https://{self.store_url}/api/2025-07/graphql.json"
         headers = {"X-Shopify-Storefront-Access-Token": self.storefront_token, "Content-Type": "application/json"}
         resp = await self.resilient_api_call(self.http_client.post, url, json={"query": query, "variables": variables or {}}, headers=headers)
@@ -435,9 +439,11 @@ class ShopifyService:
         products = []
         for edge in product_edges:
             node = edge.get("node", {})
-            if not node: continue
+            if not node: 
+                continue
             variant_edge = node.get("variants", {}).get("edges", [])
-            if not variant_edge: continue
+            if not variant_edge: 
+                continue
             
             image_edge = node.get("images", {}).get("edges", [])
             # Use `inventoryQuantity` for Admin API results

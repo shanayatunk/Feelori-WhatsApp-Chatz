@@ -18,7 +18,8 @@ class AlertingService:
         self.client = httpx.AsyncClient(timeout=5.0) if webhook_url else None
 
     async def send_critical_alert(self, error: str, context: Dict[str, Any]):
-        if not self.client: return
+        if not self.client: 
+            return
         try:
             alert_data = {
                 "severity": "critical", "service": "feelori-whatsapp-assistant",
@@ -30,7 +31,8 @@ class AlertingService:
             logger.error(f"Failed to send critical alert: {e}")
 
     async def cleanup(self):
-        if self.client: await self.client.aclose()
+        if self.client: 
+            await self.client.aclose()
 
 # Globally accessible instance
 alerting_service = AlertingService(settings.alerting_webhook_url)

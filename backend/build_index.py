@@ -7,7 +7,7 @@ from dotenv import load_dotenv
 load_dotenv(dotenv_path='backend/.env.local')
 # --- END OF FIX ---
 
-from app.server import services, VisualProductMatcher
+from app.server import services, VisualProductMatcher  # noqa: E402
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')

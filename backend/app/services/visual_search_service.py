@@ -84,7 +84,8 @@ class VisualProductMatcher:
     async def _check_and_reload_index(self):
         """Checks if the database file on disk is newer than the in-memory index."""
         try:
-            if not os.path.exists(self.db_path): return
+            if not os.path.exists(self.db_path): 
+                return
             current_mod_time = os.path.getmtime(self.db_path)
             if current_mod_time > self._last_db_mod_time:
                 logger.info("Visual search database has been updated. Reloading index...")
@@ -95,7 +96,8 @@ class VisualProductMatcher:
     async def index_all_products(self):
         """Fetches all products and builds the embedding database. Called by the scheduled task."""
         logger.info("Starting full product re-indexing...")
-        if not self.model: await self._initialize_vision_model()
+        if not self.model: 
+            await self._initialize_vision_model()
 
         products = await shopify_service.get_all_products()
         if not products:
@@ -111,19 +113,22 @@ class VisualProductMatcher:
             conn.commit()
 
             for product in products:
-                if not product.image_url: continue
+                if not product.image_url: 
+                    continue
                 try:
                     response = await client.get(product.image_url, timeout=20.0)
                     response.raise_for_status()
                     embedding = await self.generate_image_embedding(response.content)
-                    if embedding is None: continue
+                    if embedding is None: 
+                        continue
 
                     cursor.execute(
                         "INSERT OR REPLACE INTO product_embeddings VALUES (?, ?, ?, ?, ?, ?)",
                         (str(product.id), product.handle, product.title, product.image_url, json.dumps(product.tags), pickle.dumps(embedding))
                     )
                     count += 1
-                    if count % 50 == 0: conn.commit()
+                    if count % 50 == 0: 
+                        conn.commit()
                 except Exception as e:
                     logger.error(f"Error processing product {product.handle}: {e}")
             
@@ -140,7 +145,8 @@ class VisualProductMatcher:
                 features = self.model.get_image_features(**inputs)
             return features.cpu().numpy()
         except Exception as e:
-            logger.error(f"Failed to generate image embedding: {e}"); return None
+            logger.error(f"Failed to generate image embedding: {e}")
+            return None
 
     async def find_matching_products(self, query_image_bytes: bytes, top_k: int = 15) -> List[Dict]:
         """Finds matches from the in-memory index. ONLY called by the ML worker."""
@@ -148,10 +154,12 @@ class VisualProductMatcher:
         if not self.index:
             logger.warning("Visual search index is empty. Cannot find matches.")
             await self._load_index_from_db()
-            if not self.index: return []
+            if not self.index: 
+                return []
 
         query_embedding = await self.generate_image_embedding(query_image_bytes)
-        if query_embedding is None: return []
+        if query_embedding is None: 
+            return []
         
         handles = list(self.index.keys())
         embeddings = np.array([item['embedding'] for item in self.index.values()])

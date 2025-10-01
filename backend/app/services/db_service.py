@@ -1404,7 +1404,7 @@ class DatabaseService:
                         {
                             "$match": {
                                 "fulfillment_status_internal": OrderStatus.ON_HOLD.value,
-                                "problem_item_skus": {"$exists": True, "$ne": [], "$ne": None}
+                                "problem_item_skus": {"$exists": True, "$nin": [[], None]}
                             }
                         },
                         {"$unwind": "$problem_item_skus"},

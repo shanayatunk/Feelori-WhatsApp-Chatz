@@ -1,14 +1,14 @@
 # backend/tests/conftest.py
 
 import pytest
-from fastapi.testclient import TestClient
+from fastapi.testclient import TestClient # noqa: E402
 from dotenv import load_dotenv
 from unittest.mock import AsyncMock
 
 # Load test environment variables before importing the app
 load_dotenv(dotenv_path=".env.test")
 
-from app.server import app, ServiceContainer
+from app.server import app, ServiceContainer # noqa: E402
 
 @pytest.fixture
 def mock_services(mocker):

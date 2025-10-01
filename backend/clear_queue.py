@@ -6,7 +6,7 @@ import redis.asyncio as redis
 # Load environment variables
 load_dotenv()
 
-from app.config.settings import settings
+from app.config.settings import settings   # noqa: E402
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')

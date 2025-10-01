@@ -67,7 +67,8 @@ class QueryBuilder:
         for kw in keywords:
             match, score, _ = process.extractOne(kw, default_rules.VALID_KEYWORDS, scorer=fuzz.token_sort_ratio)
             if score >= 80:
-                if kw != match: logger.info(f"Fuzzy keyword correction: {kw} -> {match} (Score: {score})")
+                if kw != match: 
+                    logger.info(f"Fuzzy keyword correction: {kw} -> {match} (Score: {score})")
                 corrected.append(match)
             else:
                 corrected.append(kw)
@@ -87,7 +88,8 @@ class QueryBuilder:
         return " AND ".join(keywords)
 
     def _apply_exclusions(self, query: str, keywords: List[str]) -> str:
-        if not query or not keywords: return query
+        if not query or not keywords: 
+            return query
         primary_category = keywords[0]
         exclusions = self.config.CATEGORY_EXCLUSIONS.get(primary_category, [])
         if exclusions:
@@ -486,7 +488,8 @@ def analyze_text_intent(message_lower: str) -> str:
 
 async def analyze_intent(message: str, message_type: str, customer: Dict, quoted_wamid: Optional[str] = None) -> str:
     """Main intent analysis orchestrator."""
-    if not message: return "general"
+    if not message: 
+        return "general"
     message_lower = message.lower().strip()
 
     if message_type == "interactive":
@@ -705,7 +708,8 @@ async def handle_show_unfiltered_products(customer: Dict, **kwargs) -> Optional[
     """Shows products from the last search, ignoring any price filters."""
     phone_number = customer["phone_number"]
     last_search_raw = await cache_service.redis.get(f"state:last_search:{phone_number}")
-    if not last_search_raw: return "I've lost the context of your last search. Could you please search again?"
+    if not last_search_raw: 
+        return "I've lost the context of your last search. Could you please search again?"
     
     last_search = json.loads(last_search_raw)
     original_message = last_search["query"]
@@ -715,14 +719,16 @@ async def handle_show_unfiltered_products(customer: Dict, **kwargs) -> Optional[
     text_query, _ = query_builder.build_query_parts(original_message)
     products, _ = await shopify_service.get_products(query=text_query, filters=None, limit=config.MAX_SEARCH_RESULTS)
 
-    if not products: return f"I'm sorry, I still couldn't find any results for '{original_message}'."
+    if not products: 
+        return f"I'm sorry, I still couldn't find any results for '{original_message}'."
     return await _handle_standard_search(products, original_message, customer)
 
 async def handle_contextual_product_question(message: str, customer: Dict, **kwargs) -> Optional[str]:
     """Handles questions asked in reply to a specific product message."""
     phone_number = customer["phone_number"]
     last_product_raw = await cache_service.redis.get(f"state:last_single_product:{phone_number}")
-    if not last_product_raw: return "I'm sorry, I've lost context. Could you search for the product again?"
+    if not last_product_raw: 
+        return "I'm sorry, I've lost context. Could you search for the product again?"
     last_product = Product.parse_raw(last_product_raw)
 
     config = SearchConfig()
@@ -746,7 +752,6 @@ async def handle_contextual_product_question(message: str, customer: Dict, **kwa
 
 async def handle_interactive_button_response(message: str, customer: Dict, **kwargs) -> Optional[str]:
     """Handles replies from interactive buttons on a product card."""
-    phone_number = customer["phone_number"]
     
     if message.startswith("buy_"):
         product_id = message.replace("buy_", "")
@@ -758,7 +763,8 @@ async def handle_interactive_button_response(message: str, customer: Dict, **kwa
     elif message.startswith("similar_"):
         product_id = message.replace("similar_", "")
         product = await shopify_service.get_product_by_id(product_id)
-        if product and product.tags: return await handle_product_search(product.tags[0], customer)
+        if product and product.tags: 
+            return await handle_product_search(product.tags[0], customer)
         return "What kind of similar items are you looking for?"
     elif message.startswith("option_"):
         variant_id = message.replace("option_", "")
@@ -770,7 +776,8 @@ async def handle_interactive_button_response(message: str, customer: Dict, **kwa
 async def handle_buy_request(product_id: str, customer: Dict) -> Optional[str]:
     """Handles a 'Buy Now' request, checking for product variants."""
     product = await shopify_service.get_product_by_id(product_id)
-    if not product: return "Sorry, that product is no longer available."
+    if not product: 
+        return "Sorry, that product is no longer available."
 
     variants = await shopify_service.get_product_variants(product.id)
     if len(variants) > 1:
@@ -819,14 +826,16 @@ async def handle_product_detail(message: str, customer: Dict, **kwargs) -> Optio
 async def handle_latest_arrivals(customer: Dict, **kwargs) -> Optional[str]:
     """Shows the newest products."""
     products, _ = await shopify_service.get_products(query="", limit=5, sort_key="CREATED_AT")
-    if not products: return "I couldn't fetch the latest arrivals right now. Please try again shortly."
+    if not products: 
+        return "I couldn't fetch the latest arrivals right now. Please try again shortly."
     await _send_product_card(products=products, customer=customer, header_text="Here are our latest arrivals! ✨", body_text="Freshly added to our collection.")
     return "[Sent latest arrival recommendations]"
 
 async def handle_bestsellers(customer: Dict, **kwargs) -> Optional[str]:
     """Shows the top-selling products."""
     products, _ = await shopify_service.get_products(query="", limit=5, sort_key="BEST_SELLING")
-    if not products: return "I couldn't fetch our bestsellers right now. Please try again shortly."
+    if not products: 
+        return "I couldn't fetch our bestsellers right now. Please try again shortly."
     await _send_product_card(products=products, customer=customer, header_text="Check out our bestsellers! 🌟", body_text="These are the items our customers love most.")
     return "[Sent bestseller recommendations]"
 
@@ -851,10 +860,12 @@ async def handle_more_results(message: str, customer: Dict, **kwargs) -> Optiona
             query_builder = QueryBuilder(config)
             search_query, price_filter = query_builder.build_query_parts(raw_query)
 
-    if not search_query: return "More of what? Please search for a product first (e.g., 'show me necklaces')."
+    if not search_query: 
+        return "More of what? Please search for a product first (e.g., 'show me necklaces')."
 
     products, _ = await shopify_service.get_products(search_query, limit=5, filters=price_filter)
-    if not products: return f"I couldn't find any more designs for '{raw_query_for_display}'. Try something else."
+    if not products: 
+        return f"I couldn't find any more designs for '{raw_query_for_display}'. Try something else."
     await _send_product_card(products=products, customer=customer, header_text=header_text, body_text="Here are a few more options.")
     return f"[Sent more results for '{raw_query_for_display}']"
 
@@ -863,7 +874,8 @@ async def handle_shipping_inquiry(message: str, customer: Dict, **kwargs) -> Opt
     message_lower = message.lower()
     if any(k in message_lower for k in {"policy", "cost", "charge", "fee"}):
         city_info = ""
-        if "delhi" in message_lower: city_info = "For Delhi, delivery is typically within **3-5 business days!** 🏙️\n\n"
+        if "delhi" in message_lower: 
+            city_info = "For Delhi, delivery is typically within **3-5 business days!** 🏙️\n\n"
         return string_service.get_string("SHIPPING_POLICY_INFO", strings.SHIPPING_POLICY_INFO).format(city_info=city_info)
 
     cities = ["hyderabad", "delhi", "mumbai", "bangalore", "chennai", "kolkata"]
@@ -883,11 +895,13 @@ async def handle_visual_search(message: str, customer: Dict, **kwargs) -> Option
     try:
         media_id = message.replace("visual_search_", "").strip().split("_caption_")[0]
         phone_number = customer["phone_number"]
-        if not media_id: return "I couldn't read the image. Please try uploading it again."
+        if not media_id: 
+            return "I couldn't read the image. Please try uploading it again."
 
         await whatsapp_service.send_message(phone_number, "🔍 Analyzing your image and searching our catalog... ✨")
         image_bytes, mime_type = await whatsapp_service.get_media_content(media_id)
-        if not image_bytes or not mime_type: return "I had trouble downloading your image. Please try again."
+        if not image_bytes or not mime_type: 
+            return "I had trouble downloading your image. Please try again."
 
         result = await ai_service.find_exact_product_by_image(image_bytes, mime_type)
         if not result.get('success') or not result.get('products'):
@@ -896,8 +910,10 @@ async def handle_visual_search(message: str, customer: Dict, **kwargs) -> Option
         products = result['products']
         match_type = result.get('match_type', 'similar')
         header_text = f"✨ Found {len(products)} Similar Products"
-        if match_type == 'exact': header_text = "🎯 Perfect Match Found!"
-        elif match_type == 'very_similar': header_text = f"🌟 Found {len(products)} Excellent Matches"
+        if match_type == 'exact': 
+            header_text = "🎯 Perfect Match Found!"
+        elif match_type == 'very_similar': 
+            header_text = f"🌟 Found {len(products)} Excellent Matches"
         
         await _send_product_card(products=products, customer=customer, header_text=header_text, body_text="Here are some products matching your style!")
         return "[Sent visual search results]"
@@ -953,11 +969,13 @@ async def handle_support_request(message: str, customer: Dict, **kwargs) -> str:
     return string_service.get_string("SUPPORT_GENERAL_RESPONSE", strings.SUPPORT_GENERAL_RESPONSE)
 
 def get_last_conversation_date(history: list) -> Optional[datetime]:
-    if not history: return None
+    if not history: 
+        return None
     try:
         ts = history[-1]["timestamp"]
         return datetime.fromisoformat(ts.replace('Z', '+00:00')) if isinstance(ts, str) else ts
-    except (KeyError, ValueError, AttributeError): return None
+    except (KeyError, ValueError, AttributeError): 
+        return None
 
 def get_previous_interest(history: list) -> Optional[str]:
     interest_keywords = {"earring", "necklace", "ring", "bracelet", "bangle", "pendant", "chain", "jhumka", "set"}
@@ -965,8 +983,10 @@ def get_previous_interest(history: list) -> Optional[str]:
         for conv in reversed(history[-3:]):
             message = (conv.get("message") or "").lower()
             for keyword in interest_keywords:
-                if keyword in message: return f"{keyword}s"
-    except (KeyError, AttributeError): pass
+                if keyword in message: 
+                    return f"{keyword}s"
+    except (KeyError, AttributeError): 
+        pass
     return None
 
 async def handle_greeting(phone_number: str, customer: Dict, **kwargs) -> str:
@@ -975,8 +995,10 @@ async def handle_greeting(phone_number: str, customer: Dict, **kwargs) -> str:
     name = customer.get("name", "").strip()
     name_greeting = f"{name}, " if name else ""
 
-    if not history: return f"Hello {name_greeting}welcome to FeelOri! 👋 I'm your AI assistant. What are you looking for today?"
-    if len(history) <= 3: return f"Hi {name_greeting}great to see you back! 👋 What can I help you discover?"
+    if not history: 
+        return f"Hello {name_greeting}welcome to FeelOri! 👋 I'm your AI assistant. What are you looking for today?"
+    if len(history) <= 3: 
+        return f"Hi {name_greeting}great to see you back! 👋 What can I help you discover?"
     
     last_convo_date = get_last_conversation_date(history)
     if last_convo_date and (datetime.utcnow() - last_convo_date.replace(tzinfo=None)).days <= 7:
@@ -1088,8 +1110,10 @@ def _identify_search_category(keywords: List[str]) -> str:
         "hair_extensions": {"hair extension", "hair extensions"}
     }
     for cat, terms in specific.items():
-        if any(w in terms for w in keywords): return cat
-    if any(w in {"set", "sets", "matching"} for w in keywords): return "sets"
+        if any(w in terms for w in keywords): 
+            return cat
+    if any(w in {"set", "sets", "matching"} for w in keywords): 
+        return "sets"
     return "unknown"
 
 async def _handle_no_results(customer: Dict, original_query: str) -> str:
@@ -1160,10 +1184,12 @@ def _perform_security_check(phone_number: str, customer: Dict) -> Optional[str]:
     """Checks if a user is asking for order details of another number."""
     latest_message = (customer.get("conversation_history", [{}])[-1] or {}).get("message", "")
     found_numbers = re.findall(r'\b\d{8,15}\b', latest_message)
-    if not found_numbers: return None
+    if not found_numbers: 
+        return None
     
     sanitized_sender_phone = re.sub(r'\D', '', phone_number)
-    if sanitized_sender_phone.startswith('91'): sanitized_sender_phone = sanitized_sender_phone[2:]
+    if sanitized_sender_phone.startswith('91'): 
+        sanitized_sender_phone = sanitized_sender_phone[2:]
     
     for number in found_numbers:
         if not re.sub(r'\D', '', number).endswith(sanitized_sender_phone):

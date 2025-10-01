@@ -3,7 +3,6 @@
 import logging
 
 from app.config.settings import settings 
-from app.services.shopify_service import shopify_service
 from app.services.db_service import db_service
 from app.config import strings
 from app.services.whatsapp_service import whatsapp_service
@@ -29,7 +28,7 @@ async def refresh_visual_search_index():
         # It handles fetching products from Shopify internally.
         await visual_matcher.index_all_products()
         logger.info("--- Successfully completed scheduled visual search index refresh ---")
-    except Exception as e:
+    except Exception:
         # Using exc_info=True will log the full traceback for better debugging.
         logger.error("An error occurred during the scheduled index refresh.", exc_info=True)
 
@@ -72,7 +71,7 @@ async def update_escalation_analytics():
             maxTimeMS=60000,
         ).to_list(length=1) # Fetching 1 document is a way to ensure execution
         logger.info("--- Successfully updated human escalation analytics collection ---")
-    except Exception as e:
+    except Exception:
         logger.error("An error occurred during the escalation analytics update.", exc_info=True)
 
 async def process_abandoned_checkouts():

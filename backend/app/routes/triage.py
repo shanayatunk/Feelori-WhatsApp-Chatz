@@ -1,7 +1,6 @@
 # /app/routes/triage.py
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
-from typing import List
 
 # ✅ 1. Import settings
 from app.config.settings import settings

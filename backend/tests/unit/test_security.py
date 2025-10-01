@@ -1,5 +1,5 @@
 import pytest
-from app.server import EnhancedSecurityService, EnhancedSecurityService as SecurityService # Assuming server.py is in app/
+from app.server import EnhancedSecurityService as SecurityService # Assuming server.py is in app/
 
 class TestEnhancedSecurityService:
 

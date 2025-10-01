@@ -39,7 +39,7 @@ async def clear_redis_stream():
         logger.info(f"Attempting to delete stream key: '{STREAM_NAME}'...")
         result = await redis_client.delete(STREAM_NAME)
         if result > 0:
-            logger.info(f"Successfully deleted the stream. The queue has been cleared.")
+            logger.info("Successfully deleted the stream. The queue has been cleared.")
         else:
             logger.info(f"Stream key '{STREAM_NAME}' did not exist. No action needed.")
     except Exception as e:

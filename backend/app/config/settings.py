@@ -1,6 +1,5 @@
 # /app/config/settings.py
 
-import os
 import sys
 import re
 from pydantic import Field, field_validator

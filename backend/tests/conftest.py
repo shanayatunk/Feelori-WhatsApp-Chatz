@@ -1,7 +1,6 @@
 # backend/tests/conftest.py
 
 import pytest
-import pytest_asyncio
 from fastapi.testclient import TestClient
 from dotenv import load_dotenv
 from unittest.mock import AsyncMock
@@ -9,7 +8,7 @@ from unittest.mock import AsyncMock
 # Load test environment variables before importing the app
 load_dotenv(dotenv_path=".env.test")
 
-from app.server import app, ServiceContainer, services
+from app.server import app, ServiceContainer
 
 @pytest.fixture
 def mock_services(mocker):

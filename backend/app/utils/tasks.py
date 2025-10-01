@@ -2,11 +2,10 @@
 
 import logging
 
+from app.config.settings import settings 
 from app.services.shopify_service import shopify_service
-# Add the new imports needed for the analytics task
 from app.services.db_service import db_service
 from app.config import strings
-from app.services import whatsapp_service
 from app.services.whatsapp_service import whatsapp_service
 
 logger = logging.getLogger(__name__)
@@ -67,7 +66,11 @@ async def update_escalation_analytics():
             {"$out": "human_escalation_analytics"}
         ]
         # Execute the aggregation. The results are written directly to the new collection by MongoDB.
-        await db_service.db.customers.aggregate(pipeline).to_list(length=None)
+        await db_service.db.customers.aggregate(
+            pipeline,
+            allowDiskUse=True,
+            maxTimeMS=60000,
+        ).to_list(length=1) # Fetching 1 document is a way to ensure execution
         logger.info("--- Successfully updated human escalation analytics collection ---")
     except Exception as e:
         logger.error("An error occurred during the escalation analytics update.", exc_info=True)

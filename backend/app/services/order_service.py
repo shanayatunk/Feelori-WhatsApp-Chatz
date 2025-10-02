@@ -452,7 +452,7 @@ def _analyze_interactive_intent(message: str) -> str:
 def analyze_text_intent(message_lower: str) -> str:
     """Analyzes intent for text messages using rules from the database."""
 
-    # --- THIS IS THE FIX ---
+    # --- THIS IS THE FIX --
     # The regex now accepts optional letters (A-Z) between the '#' and the numbers.
     if re.fullmatch(r'#?[a-zA-Z]*\d{4,}', message_lower.strip()):
         return "order_detail_inquiry"

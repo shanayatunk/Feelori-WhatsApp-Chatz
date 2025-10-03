@@ -3,7 +3,7 @@
 import React from 'react';
 import useSWR, { mutate } from 'swr';
 import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/Card';
-import { getTriageTickets, TriageTicket, resolveTriageTicket } from '../../../lib/api';
+import { getTriageTickets, TriageTicket, resolveTriageTicket, getTriageMediaUrl } from '../../../lib/api';
 import { Button } from '../../components/ui/Button';
 
 const formatDateTime = (isoString: string) => {
@@ -54,7 +54,7 @@ export const TriagePage = () => {
   };
 
   const handleViewPhoto = (mediaId: string) => {
-    const photoUrl = `${process.env.NEXT_PUBLIC_API_URL}/api/triage/media/${mediaId}`;
+    const photoUrl = getTriageMediaUrl(mediaId);
     console.log('Opening photo URL:', photoUrl);
     window.open(photoUrl, '_blank');
   };

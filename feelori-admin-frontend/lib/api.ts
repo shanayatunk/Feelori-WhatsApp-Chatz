@@ -144,6 +144,10 @@ export const resolveTriageTicket = async (ticketId: string): Promise<{ message: 
   });
 };
 
+export const getTriageMediaUrl = (mediaId: string): string => {
+  return `${API_BASE_URL}/triage/media/${mediaId}`;
+};
+
 export const apiService = {
   login: async (password: string): Promise<{ access_token: string }> => {
     return makeRequest(`${API_BASE_URL}/auth/login`, {

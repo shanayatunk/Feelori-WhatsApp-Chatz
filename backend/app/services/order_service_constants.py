@@ -31,3 +31,6 @@ class TriageButtons:
     CONFIRM_NO = "triage_confirm_no"
     SELECT_ORDER_PREFIX = "triage_select_order_"
     ISSUE_DAMAGED = "triage_issue_damaged"
+    ISSUE_WRONG = "triage_issue_wrong_item"  
+    ISSUE_RETURN = "triage_issue_return"      
+    ISSUE_OTHER = "triage_issue_other"        

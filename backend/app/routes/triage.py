@@ -1,13 +1,16 @@
 # /app/routes/triage.py
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel
+import logging
 
 # ✅ 1. Import settings
 from app.config.settings import settings
 from app.services.db_service import db_service
+from app.services.whatsapp_service import whatsapp_service
 from app.utils.dependencies import verify_jwt_token
 from app.models.api import APIResponse
 
+logger = logging.getLogger(__name__)
 
 router = APIRouter(
     prefix="/triage",
@@ -54,4 +57,16 @@ async def resolve_ticket(ticket_id: str):
         message="Ticket resolved successfully",
         version=settings.api_version
     )
-# You can also add the GET /media/{media_id} endpoint here later
+
+
+@router.get("/media/{media_id}")
+async def get_media(media_id: str):
+    """Retrieves and returns the media file from WhatsApp."""
+    try:
+        image_bytes, mime_type = await whatsapp_service.get_media_content(media_id)
+        if not image_bytes:
+            raise HTTPException(status_code=404, detail="Media not found")
+        return Response(content=image_bytes, media_type=mime_type)
+    except Exception as e:
+        logger.error(f"Failed to retrieve media {media_id}: {e}")
+        raise HTTPException(status_code=500, detail="Failed to retrieve media")

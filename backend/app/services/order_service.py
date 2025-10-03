@@ -589,8 +589,8 @@ async def handle_product_search(message: List[str] | str, customer: Dict, **kwar
                 price_str = f"under ₹{price_cond['lessThan']}" if "lessThan" in price_cond else f"over ₹{price_cond['greaterThan']}"
                 response = f"I found {unfiltered_count} item(s), but none are {price_str}. 😔\n\nWould you like to see them anyway?"
                 
-                await cache_service.set(f"state:last_search:{customer['phone_number']}", json.dumps({"query": message_str, "page": 1}), ttl=900)
-                await cache_service.set(f"state:last_bot_question:{customer['phone_number']}", "offer_unfiltered_products", ttl=900)
+                await cache_service.set(CacheKeys.LAST_SEARCH.format(phone=customer['phone_number']), json.dumps({"query": message_str, "page": 1}), ttl=900)
+                await cache_service.set(CacheKeys.LAST_BOT_QUESTION.format(phone=customer['phone_number']), "offer_unfiltered_products", ttl=900)
                 
                 return response
             else:
@@ -802,7 +802,7 @@ async def handle_buy_request(product_id: str, customer: Dict) -> Optional[str]:
 
     variants = await shopify_service.get_product_variants(product.id)
     if len(variants) > 1:
-        variant_options = {v['title']: v['id'] for v in variants[:3]}
+        variant_options = {v['id']: v['title'] for v in variants[:3]}
         await whatsapp_service.send_quick_replies(customer["phone_number"], f"Please select an option for *{product.title}*:", variant_options)
         return "[Bot asked for variant selection]"
     elif variants:
@@ -1121,7 +1121,7 @@ async def handle_human_escalation(phone_number: str, customer: Dict, **kwargs) -
 
 # --- Helper Functions for Handlers ---
 
-async def _send_triage_issue_list(phone_number: str, order_number: str):
+async def _send_triage_issue_list(phone_number: str, order_number: str) -> None:
     """
     Sends the list of common issues for the user to select.
     This is Step 2 of the triage flow.
@@ -1172,7 +1172,7 @@ async def _handle_no_results(customer: Dict, original_query: str) -> str:
     if search_category in {"bangles", "rings", "bracelets"}:
         response = f"While we don't carry {search_category} right now, we have stunning **earrings and necklace sets** that would complement your look beautifully.\n\nWould you like me to show you some of our bestselling sets? ✨"
         
-    await cache_service.set(f"state:last_bot_question:{customer['phone_number']}", "offer_bestsellers", ttl=900)
+    await cache_service.set(CacheKeys.LAST_BOT_QUESTION.format(phone=customer['phone_number']), "offer_bestsellers", ttl=900)
     return response
 
 async def _handle_unclear_request(customer: Dict, original_message: str) -> str:

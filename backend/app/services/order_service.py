@@ -1216,7 +1216,12 @@ async def _handle_standard_search(products: List[Product], message: str, custome
 async def _send_product_card(products: List[Product], customer: Dict, header_text: str, body_text: str):
     """Sends a rich multi-product message card."""
     catalog_id = await whatsapp_service.get_catalog_id()
-    product_items = [{"product_retailer_id": p.id.split('/')[-1]} for p in products if p.id]
+    # This is the new, more robust line of code
+    product_items = [
+        {"product_retailer_id": str(p.id).rstrip('/').split('/')[-1]}
+        for p in products
+        if p.id and str(p.id).rstrip('/').split('/')[-1]
+    ]
     await whatsapp_service.send_multi_product_message(
         to=customer["phone_number"], header_text=header_text, body_text=body_text,
         footer_text="Powered by FeelOri", catalog_id=catalog_id,

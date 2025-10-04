@@ -1,14 +1,14 @@
 import asyncio
 import logging
-from motor.motor_asyncio import AsyncIOMotorClient
+from motor.motor_asyncio import AsyncIOMotorClient # noqa: E402
 from dotenv import load_dotenv
 
 # Load environment variables first
 load_dotenv()
 
 # Load application settings and the strings module
-from app.config.settings import settings
-from app.config import strings
+from app.config.settings import settings # noqa: E402
+from app.config import strings # noqa: E402
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')

@@ -18,8 +18,7 @@ from app.config.settings import settings
 from app.utils.lifecycle import lifespan
 from app.utils.metrics import response_time_histogram
 from app.utils.rate_limiter import limiter
-# --- FIX 1: Import the new 'packing' router ---
-from app.routes import auth, admin, webhooks, public, dashboard, packing
+from app.routes import auth, admin, webhooks, public, dashboard, packing, triage
 
 # Initialize the FastAPI application
 app = FastAPI(
@@ -43,21 +42,28 @@ app.mount("/static", StaticFiles(directory=static_dir_path), name="static")
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
-# --- Middleware ---
-cors_origins = []
-if settings.cors_allowed_origins:
-    cors_origins.extend([origin.strip() for origin in settings.cors_allowed_origins.split(",")])
+# --- THIS BLOCK HAS BEEN CORRECTED TO HANDLE CORS WILDCARDS ---
+# Get the comma-separated string from your settings
+origins_str = settings.cors_allowed_origins
+
+# Split the string into a list and remove any extra whitespace
+allowed_origins_list = [origin.strip() for origin in origins_str.split(',')]
+
+# Define a regular expression that matches all your Vercel preview URLs.
+allowed_origin_regex = r"https?://.*\.vercel\.app"
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=cors_origins,
+    allow_origins=allowed_origins_list,      # Handles the exact matches
+    allow_origin_regex=allowed_origin_regex, # Handles the Vercel wildcard pattern
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+# --- END OF CORRECTED BLOCK ---
 
 if settings.environment != "test":
-    allowed_hosts = [host.strip() for host in settings.allowed_hosts.split(",") if host.strip()]
+    allowed_hosts = [host.strip() for host in settings.allowed_hosts.split(",") if host.strip()] #
     if allowed_hosts:
         app.add_middleware(TrustedHostMiddleware, allowed_hosts=allowed_hosts)
 
@@ -86,8 +92,9 @@ app.include_router(auth.router, prefix=f"/api/{settings.api_version}")
 app.include_router(admin.router, prefix=f"/api/{settings.api_version}")
 app.include_router(webhooks.router, prefix=f"/api/{settings.api_version}/webhooks")
 app.include_router(dashboard.router, prefix=f"/api/{settings.api_version}")
-# --- FIX 2: Include the new 'packing' router ---
 app.include_router(packing.router, prefix=f"/api/{settings.api_version}")
+app.include_router(triage.router, prefix=f"/api/{settings.api_version}")
+
 
 # --- Main Entry Point for Uvicorn (for local development) ---
 if __name__ == "__main__":
@@ -98,7 +105,6 @@ if __name__ == "__main__":
         "app.main:app",
         host=host,
         port=port,
-        reload=True if settings.environment == "development" else False,
-        workers=settings.workers if settings.environment == "production" else 1
+        reload=True if settings.environment == "development" else False, #
+        workers=settings.workers if settings.environment == "production" else 1 #
     )
-

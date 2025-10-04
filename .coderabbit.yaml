@@ -1,0 +1,5 @@
+reviews:
+  auto_review:
+    # This is the corrected structure that tells CodeRabbit which
+    # branches to automatically review Pull Requests for.
+    base_branches: ["main", "develop"]

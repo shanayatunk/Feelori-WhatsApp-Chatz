@@ -16,6 +16,12 @@ from app.services.security_service import EnhancedSecurityService
 
 logger = logging.getLogger(__name__)
 
+
+def _mask_phone_for_log(phone: str) -> str:
+    """Masks phone number for logging, showing only last 4 digits."""
+    sanitized = EnhancedSecurityService.sanitize_phone_number(phone)
+    return f"***{sanitized[-4:]}" if sanitized else "N/A"
+
 class ShopifyService:
     def __init__(self, store_url: str, access_token: str, storefront_token: Optional[str]):
         self.store_url = store_url.replace('https://', '').replace('http://', '')
@@ -131,7 +137,8 @@ class ShopifyService:
         """
         try:
             data = await self._execute_gql_query(gql_query, {"id": product_id})
-            if not data.get("node"): return None
+            if not data.get("node"): 
+                return None
             products = self._parse_products([{"node": data.get("node")}])
             return products[0] if products else None
         except Exception as e:
@@ -220,7 +227,6 @@ class ShopifyService:
         """Search for recent orders using a customer's phone number via the REST API.
         Ensures strict filtering to prevent leaking other customers' orders.
         """
-        # Using a sanitized phone number for the cache key is more consistent.
         sanitized_user_phone = EnhancedSecurityService.sanitize_phone_number(phone_number)
         cache_key = f"shopify:orders_by_phone:{sanitized_user_phone}"
         cached = await cache_service.get(cache_key)
@@ -230,7 +236,6 @@ class ShopifyService:
         rest_url = f"https://{self.store_url}/admin/api/2025-07/orders.json"
         headers = {"X-Shopify-Access-Token": self.access_token}
 
-        # Fetch the 50 most recent orders regardless of phone number
         params = {
             "status": "any",
             "limit": max_fetch,
@@ -244,30 +249,34 @@ class ShopifyService:
             resp.raise_for_status()
             orders = resp.json().get("orders", []) or []
 
-            # --- DEBUG LOGGING ---
-            logger.info(f"DEBUG: Input phone_number: '{phone_number}'")
-            logger.info(f"DEBUG: Sanitized user phone: '{sanitized_user_phone}'")
-            logger.info(f"DEBUG: Total orders fetched: {len(orders)}")
+            # --- Enhanced Diagnostic Logging (DEBUG only, masked) ---
+            if logger.isEnabledFor(logging.DEBUG):
+                logger.debug(f"--- RAW SHOPIFY ORDER DATA CHECK (First 5 of {len(orders)} orders) ---")
+                for i, order in enumerate(orders[:5]):  # Log first 5 to avoid noise
+                    order_name = order.get("name", "N/A")
+                    customer_info = order.get("customer", {}) or {}
+                    customer_name = f"{customer_info.get('first_name', '')} {customer_info.get('last_name', '')}".strip()
+                    
+                    def _mask(p): 
+                        s = EnhancedSecurityService.sanitize_phone_number(p or "")
+                        return f"***{s[-4:]}" if s else "N/A"
 
-            for i, o in enumerate(orders):
-                order_name = o.get("name", "Unknown")
-                raw_phone = o.get("phone", "")
-                shipping_phone = (o.get("shipping_address") or {}).get("phone", "")
-                billing_phone = (o.get("billing_address") or {}).get("phone", "")
-                
-                logger.info(f"DEBUG Order {i+1} ({order_name}):")
-                logger.info(f"  - Raw phone: '{raw_phone}'")
-                logger.info(f"  - Shipping phone: '{shipping_phone}'") 
-                logger.info(f"  - Billing phone: '{billing_phone}'")
-                
-                for field_name, phone_value in [("phone", raw_phone), ("shipping", shipping_phone), ("billing", billing_phone)]:
-                    if phone_value:
-                        sanitized = EnhancedSecurityService.sanitize_phone_number(phone_value)
-                        matches = sanitized.endswith(sanitized_user_phone)
-                        logger.info(f"  - {field_name}: '{phone_value}' -> '{sanitized}' -> matches: {matches}")
+                    logger.debug(f"Order #{i+1}: {order_name} for Customer: '{customer_name}'")
+                    logger.debug(f"  -> Top-level 'phone': {_mask(order.get('phone'))}")
+                    
+                    shipping_address = order.get("shipping_address", {}) or {}
+                    logger.debug(f"  -> shipping_address.phone: {_mask(shipping_address.get('phone'))}")
+                    
+                    billing_address = order.get("billing_address", {}) or {}
+                    logger.debug(f"  -> billing_address.phone: {_mask(billing_address.get('phone'))}")
+                logger.debug("--- END OF RAW SHOPIFY ORDER DATA CHECK ---")
+            # --- End of Logging ---
 
             # --- Security filtering logic ---
+            # FIX: Use a more robust comparison of the last 10 digits
+            user_phone_suffix = sanitized_user_phone[-10:]
             filtered_orders = []
+
             for o in orders:
                 order_phone = (
                     o.get("phone")
@@ -276,13 +285,14 @@ class ShopifyService:
                     or ""
                 )
                 sanitized_order_phone = EnhancedSecurityService.sanitize_phone_number(order_phone)
-                if sanitized_order_phone and sanitized_order_phone.endswith(sanitized_user_phone):
+
+                if sanitized_order_phone and sanitized_order_phone.endswith(user_phone_suffix):
                     filtered_orders.append(o)
 
             await cache_service.set(
                 cache_key, json.dumps(filtered_orders, default=str), ttl=120
             )
-            logger.info(f"Shopify orders found for {phone_number}: {len(filtered_orders)}")
+            logger.info(f"Shopify orders found for {_mask_phone_for_log(phone_number)}: {len(filtered_orders)}")
             return filtered_orders
 
         except Exception as e:
@@ -344,7 +354,8 @@ class ShopifyService:
             fo_resp.raise_for_status()
             fulfillment_orders = fo_resp.json().get("fulfillment_orders", [])
             open_fo = next((fo for fo in fulfillment_orders if fo.get("status") == "open"), None)
-            if not open_fo: return False, None, None
+            if not open_fo: 
+                return False, None, None
 
             line_items = [{"id": item["id"], "quantity": item["fulfillable_quantity"]} for item in open_fo.get("line_items", []) if item.get("fulfillable_quantity", 0) > 0]
             payload = {
@@ -382,7 +393,8 @@ class ShopifyService:
 
     async def _shopify_search(self, query: str, limit: int, sort_key: str, filters: Optional[Dict]) -> List[Dict]:
         """Executes a GraphQL query against the Shopify Storefront API."""
-        if not self.storefront_token: return []
+        if not self.storefront_token: 
+            return []
         graphql_payload = {
             "query": """
             query ($query: String!, $limit: Int!, $sortKey: ProductSortKeys!) {
@@ -414,7 +426,8 @@ class ShopifyService:
 
     async def _execute_storefront_gql_query(self, query: str, variables: Optional[Dict] = None) -> Dict:
         """Executes a GraphQL query against the Shopify Storefront API."""
-        if not self.storefront_token: return {}
+        if not self.storefront_token: 
+            return {}
         url = f"https://{self.store_url}/api/2025-07/graphql.json"
         headers = {"X-Shopify-Storefront-Access-Token": self.storefront_token, "Content-Type": "application/json"}
         resp = await self.resilient_api_call(self.http_client.post, url, json={"query": query, "variables": variables or {}}, headers=headers)
@@ -426,9 +439,11 @@ class ShopifyService:
         products = []
         for edge in product_edges:
             node = edge.get("node", {})
-            if not node: continue
+            if not node: 
+                continue
             variant_edge = node.get("variants", {}).get("edges", [])
-            if not variant_edge: continue
+            if not variant_edge: 
+                continue
             
             image_edge = node.get("images", {}).get("edges", [])
             # Use `inventoryQuantity` for Admin API results

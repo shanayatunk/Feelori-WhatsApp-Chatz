@@ -1,0 +1,36 @@
+version: '3.8'
+
+# This file is ONLY for local development and testing.
+# It starts the backing services (database and cache) that your pytest suite needs.
+
+services:
+  # 1. Local MongoDB service for testing
+  mongo:
+    image: mongo:latest
+    container_name: feelori_mongo_local
+    restart: unless-stopped
+    ports:
+      - "27017:27017" # Exposes MongoDB on localhost:27017
+    volumes:
+      - mongo-data:/data/db
+    networks:
+      - feelori-net
+
+  # 2. Redis service for caching and queuing (copied from your production file)
+  redis:
+    image: "redis:7-alpine"
+    container_name: feelori_redis_local
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:6379:6379"
+    volumes:
+      - redis-data:/data
+    networks:
+      - feelori-net
+
+volumes:
+  mongo-data:
+  redis-data:
+
+networks:
+  feelori-net:

@@ -1,6 +1,6 @@
 import asyncio
 import logging
-from motor.motor_asyncio import AsyncIOMotorClient
+from motor.motor_asyncio import AsyncIOMotorClient # noqa: E402
 from dotenv import load_dotenv
 
 # FIX: Explicitly load the .env file from the current directory.
@@ -9,8 +9,8 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # Load application settings and rules AFTER loading the environment
-from app.config.settings import settings
-from app.config.rules import INTENT_RULES
+from app.config.settings import settings # noqa: E402
+from app.config.rules import INTENT_RULES # noqa: E402
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')

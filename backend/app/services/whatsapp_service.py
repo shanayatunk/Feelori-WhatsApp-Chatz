@@ -6,7 +6,7 @@ import re
 import asyncio
 import tenacity
 import json
-from typing import Optional, List, Dict, Tuple
+from typing import Optional, Dict, Tuple
 
 from app.config.settings import settings
 from app.utils.circuit_breaker import RedisCircuitBreaker
@@ -219,7 +219,8 @@ class WhatsAppService:
 
         logger.info(f"Using fallback message for {to}")
         for product in fallback_products:
-            if not product.image_url: continue
+            if not product.image_url: 
+                continue
             try:
                 payload = {
                     "messaging_product": "whatsapp", "to": to, "type": "interactive",
@@ -275,7 +276,7 @@ class WhatsAppService:
     async def send_quick_replies(self, to_phone: str, message: str, options: Dict[str, str]):
         """Sends a message with up to 3 quick reply buttons."""
         try:
-            buttons = [{"type": "reply", "reply": {"id": option_id, "title": title[:20]}} for title, option_id in list(options.items())[:3]]
+            buttons = [{"type": "reply", "reply": {"id": option_id, "title": title[:20]}} for option_id, title in list(options.items())[:3]]
             payload = {
                 "messaging_product": "whatsapp", "to": to_phone, "type": "interactive",
                 "interactive": {"type": "button", "body": {"text": message}, "action": {"buttons": buttons}}
@@ -309,7 +310,8 @@ class WhatsAppService:
         """Downloads media bytes and returns (bytes, mime_type)."""
         try:
             url = await self.get_media_url(media_id)
-            if not url: return None, None
+            if not url: 
+                return None, None
             
             headers = {"Authorization": f"Bearer {self.access_token}"}
             resp = await self.http_client.get(url, headers=headers)

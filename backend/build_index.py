@@ -1,7 +1,5 @@
 import asyncio
 import logging
-import sys
-import signal
 
 # --- THIS BLOCK IS THE FIX ---
 # It explicitly loads the .env.local file for local script execution
@@ -9,7 +7,7 @@ from dotenv import load_dotenv
 load_dotenv(dotenv_path='backend/.env.local')
 # --- END OF FIX ---
 
-from app.server import services, VisualProductMatcher
+from app.server import services, VisualProductMatcher  # noqa: E402
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -35,7 +33,7 @@ async def main():
         
         logger.info("\n--- Indexing complete. You can now start the main server. ---")
 
-    except Exception as e:
+    except Exception:
         logger.error("An error occurred during the indexing process.", exc_info=True)
     finally:
         if builder_services:

@@ -101,7 +101,9 @@ jobs:
     needs: build_backend
     if: github.ref == 'refs/heads/develop'
     runs-on: ubuntu-latest
-    env: # <--- THIS IS THE FIX
+    env:
+      # THIS BLOCK IS THE FIX
+      DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
       DEV_DOPPLER_TOKEN: ${{ secrets.DEV_DOPPLER_TOKEN }}
     steps:
       - name: Deploy to Digital Ocean Dev Server
@@ -147,7 +149,9 @@ jobs:
     if: github.ref == 'refs/heads/main'
     environment: production
     runs-on: ubuntu-latest
-    env: # <--- THIS IS THE FIX
+    env:
+      # THIS BLOCK IS THE FIX
+      DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
       PROD_DOPPLER_TOKEN: ${{ secrets.PROD_DOPPLER_TOKEN }}
     steps:
       - name: Deploy to Digital Ocean Prod Server

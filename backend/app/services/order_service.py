@@ -363,7 +363,7 @@ async def process_message(phone_number: str, message_text: str, message_type: st
             qb = QueryBuilder(SearchConfig())
             ai_keywords = qb._extract_keywords(message_text) or [message_text]
 
-        # 3. Route based on the AI's classification
+        # 3. Route based on the AI's classifications
         if ai_intent == "product_search":
             response = await handle_product_search(message=ai_keywords, customer=customer, phone_number=clean_phone, quoted_wamid=quoted_wamid)
         

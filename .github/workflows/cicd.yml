@@ -128,7 +128,7 @@ jobs:
                 curl -Ls --tlsv1.2 --proto "=https" --retry 3 https://cli.doppler.com/install.sh | sudo sh
             fi
 
-            doppler run --token="$DOPPLER_TOKEN" -- docker compose -f docker-compose.yml up -d --pull always
+            doppler run --token="$DOPPLER_TOKEN" -- docker compose -f docker-compose.yml up -d --pull always --no-build
             docker image prune -af
 
         env:
@@ -167,7 +167,7 @@ jobs:
                 curl -Ls --tlsv1.2 --proto "=https" --retry 3 https://cli.doppler.com/install.sh | sudo sh
             fi
 
-            doppler run --token="$DOPPLER_TOKEN" -- docker compose -f docker-compose.yml up -d --pull always
+            doppler run --token="$DOPPLER_TOKEN" -- docker compose -f docker-compose.yml up -d --pull always --no-build
             docker image prune -af
 
         env:

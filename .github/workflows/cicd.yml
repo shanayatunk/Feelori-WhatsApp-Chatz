@@ -13,7 +13,7 @@ concurrency:
 env:
   REGISTRY: docker.io
   BACKEND_IMAGE_NAME: ${{ secrets.DOCKERHUB_USERNAME }}/feelori-backend
-  IMAGE_TAG: ${{ github.sha }} # <--- CHANGE: IMAGE_TAG is now a global variable
+  IMAGE_TAG: ${{ github.sha }}
 
 jobs:
   #########################################
@@ -101,6 +101,8 @@ jobs:
     needs: build_backend
     if: github.ref == 'refs/heads/develop'
     runs-on: ubuntu-latest
+    env: # <--- THIS IS THE FIX
+      DEV_DOPPLER_TOKEN: ${{ secrets.DEV_DOPPLER_TOKEN }}
     steps:
       - name: Deploy to Digital Ocean Dev Server
         uses: appleboy/ssh-action@v1.0.3
@@ -120,7 +122,7 @@ jobs:
             fi
 
             echo "Fetching secrets from Doppler..."
-            doppler secrets download --no-file --format=env --token="$DEV_DOPPLER_TOKEN" > .env # <--- CHANGE: Using --format=env
+            doppler secrets download --no-file --format=env --token="$DEV_DOPPLER_TOKEN" > .env
 
             echo "Injecting build variables..."
             echo "IMAGE_TAG=${IMAGE_TAG}" >> .env
@@ -145,6 +147,8 @@ jobs:
     if: github.ref == 'refs/heads/main'
     environment: production
     runs-on: ubuntu-latest
+    env: # <--- THIS IS THE FIX
+      PROD_DOPPLER_TOKEN: ${{ secrets.PROD_DOPPLER_TOKEN }}
     steps:
       - name: Deploy to Digital Ocean Prod Server
         uses: appleboy/ssh-action@v1.0.3
@@ -164,7 +168,7 @@ jobs:
             fi
 
             echo "Fetching secrets from Doppler..."
-            doppler secrets download --no-file --format=env --token="$PROD_DOPPLER_TOKEN" > .env # <--- CHANGE: Using --format=env
+            doppler secrets download --no-file --format=env --token="$PROD_DOPPLER_TOKEN" > .env
 
             echo "Injecting build variables..."
             echo "IMAGE_TAG=${IMAGE_TAG}" >> .env

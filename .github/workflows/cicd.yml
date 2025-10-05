@@ -167,8 +167,8 @@ jobs:
                 curl -Ls --tlsv1.2 --proto "=https" --retry 3 https://cli.doppler.com/install.sh | sudo sh
             fi
 
-            doppler run --token="$DOPPLER_TOKEN" -- docker compose -f docker-compose.yml up -d --pull always
-            docker image prune -af
+            doppler run --token="$DOPPLER_TOKEN" -- docker-compose -f docker-compose.yml up -d --pull always
+            docker image prune -a -f
 
         env:
           DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}

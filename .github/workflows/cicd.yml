@@ -154,6 +154,10 @@ jobs:
       DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
       PROD_DOPPLER_TOKEN: ${{ secrets.PROD_DOPPLER_TOKEN }}
     steps:
+      - name: Debug Environment Variables
+        run: |
+          echo "DOCKERHUB_USERNAME is: ${{ env.DOCKERHUB_USERNAME }}"
+          echo "IMAGE_TAG is: ${{ env.IMAGE_TAG }}"
       - name: Deploy to Digital Ocean Prod Server
         uses: appleboy/ssh-action@v1.0.3
         with:

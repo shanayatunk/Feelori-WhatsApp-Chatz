@@ -102,7 +102,6 @@ jobs:
     if: github.ref == 'refs/heads/develop'
     runs-on: ubuntu-latest
     env:
-      # THIS BLOCK IS THE FIX
       DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
       DEV_DOPPLER_TOKEN: ${{ secrets.DEV_DOPPLER_TOKEN }}
     steps:
@@ -123,14 +122,12 @@ jobs:
                 (curl -Ls --tlsv1.2 --proto "=https" --retry 3 https://cli.doppler.com/install.sh || wget -t 3 -qO- https://cli.doppler.com/install.sh) | sudo sh
             fi
 
-            echo "Fetching secrets from Doppler..."
+            echo "Fetching application secrets from Doppler..."
             doppler secrets download --no-file --format=env --token="$DEV_DOPPLER_TOKEN" > .env
 
-            echo "Injecting build variables..."
-            echo "IMAGE_TAG=${IMAGE_TAG}" >> .env
-            echo "DOCKERHUB_USERNAME=${DOCKERHUB_USERNAME}" >> .env
-
-            echo "Pulling the new Docker image..."
+            echo "Exporting build variables and pulling the new Docker image..."
+            export IMAGE_TAG=${IMAGE_TAG}
+            export DOCKERHUB_USERNAME=${DOCKERHUB_USERNAME}
             docker compose --env-file .env -f docker-compose.yml pull
 
             echo "Restarting services with the new image..."
@@ -150,14 +147,9 @@ jobs:
     environment: production
     runs-on: ubuntu-latest
     env:
-      # THIS BLOCK IS THE FIX
       DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
       PROD_DOPPLER_TOKEN: ${{ secrets.PROD_DOPPLER_TOKEN }}
     steps:
-      - name: Debug Environment Variables
-        run: |
-          echo "DOCKERHUB_USERNAME is: ${{ env.DOCKERHUB_USERNAME }}"
-          echo "IMAGE_TAG is: ${{ env.IMAGE_TAG }}"
       - name: Deploy to Digital Ocean Prod Server
         uses: appleboy/ssh-action@v1.0.3
         with:
@@ -166,7 +158,6 @@ jobs:
           key: ${{ secrets.PROD_DO_SSH_KEY }}
           envs: DOCKERHUB_USERNAME,IMAGE_TAG,PROD_DOPPLER_TOKEN
           script: |
-            echo "Value of DOCKERHUB_USERNAME on the server is: '$DOCKERHUB_USERNAME'"
             cd /root/Feelori-WhatsApp-Chatz
             git fetch origin
             git checkout main
@@ -176,14 +167,12 @@ jobs:
                 (curl -Ls --tlsv1.2 --proto "=https" --retry 3 https://cli.doppler.com/install.sh || wget -t 3 -qO- https://cli.doppler.com/install.sh) | sudo sh
             fi
 
-            echo "Fetching secrets from Doppler..."
+            echo "Fetching application secrets from Doppler..."
             doppler secrets download --no-file --format=env --token="$PROD_DOPPLER_TOKEN" > .env
 
-            echo "Injecting build variables..."
-            echo "IMAGE_TAG=${IMAGE_TAG}" >> .env
-            echo "DOCKERHUB_USERNAME=${DOCKERHUB_USERNAME}" >> .env
-
-            echo "Pulling the new Docker image..."
+            echo "Exporting build variables and pulling the new Docker image..."
+            export IMAGE_TAG=${IMAGE_TAG}
+            export DOCKERHUB_USERNAME=${DOCKERHUB_USERNAME}
             docker compose --env-file .env -f docker-compose.yml pull
 
             echo "Restarting services with the new image..."

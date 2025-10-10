@@ -166,6 +166,7 @@ jobs:
           key: ${{ secrets.PROD_DO_SSH_KEY }}
           envs: DOCKERHUB_USERNAME,IMAGE_TAG,PROD_DOPPLER_TOKEN
           script: |
+            echo "Value of DOCKERHUB_USERNAME on the server is: '$DOCKERHUB_USERNAME'"
             cd /root/Feelori-WhatsApp-Chatz
             git fetch origin
             git checkout main

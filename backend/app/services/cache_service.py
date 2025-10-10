@@ -61,6 +61,17 @@ class CacheService:
         except Exception as e:
             logger.error(f"Cache get_or_set error for key {key}: {e}")
             return None
+    
+    async def delete(self, key: str):
+        """Deletes a key from the Redis cache."""
+        if not self.redis:
+            return
+        try:
+            await self.circuit_breaker.call(self.redis.delete, key)
+            cache_operations.labels(operation="delete", status="success").inc()
+        except Exception as e:
+            cache_operations.labels(operation="delete", status="error").inc()
+            logger.warning(f"Cache delete failed for key {key}: {e}")
 
 # Globally accessible instance
 cache_service = CacheService(settings.redis_url)

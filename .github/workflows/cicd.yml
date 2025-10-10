@@ -103,6 +103,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+      DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
       DEV_DOPPLER_TOKEN: ${{ secrets.DEV_DOPPLER_TOKEN }}
     steps:
       - name: Deploy to Digital Ocean Dev Server
@@ -111,31 +112,59 @@ jobs:
           host: ${{ secrets.DEV_DO_HOST }}
           username: ${{ secrets.DEV_DO_USERNAME }}
           key: ${{ secrets.DEV_DO_SSH_KEY }}
-          envs: DOCKERHUB_USERNAME,IMAGE_TAG,DEV_DOPPLER_TOKEN
+          envs: DOCKERHUB_USERNAME,DOCKERHUB_TOKEN,IMAGE_TAG,DEV_DOPPLER_TOKEN
           script: |
+            set -Eeuo pipefail
+
             cd /root/Feelori-WhatsApp-Chatz
             git fetch origin
             git checkout develop
             git pull origin develop
 
+            TMP_ENV="$(mktemp)"
+            cleanup() {
+              rm -f "$TMP_ENV"
+              echo "Logging out of Docker Hub..."
+              docker logout >/dev/null 2>&1 || true
+            }
+            trap cleanup EXIT
+
             if ! command -v doppler &> /dev/null; then
                 (curl -Ls --tlsv1.2 --proto "=https" --retry 3 https://cli.doppler.com/install.sh || wget -t 3 -qO- https://cli.doppler.com/install.sh) | sudo sh
             fi
 
-            echo "Fetching application secrets from Doppler..."
-            doppler secrets download --no-file --format=env --token="$DEV_DOPPLER_TOKEN" > .env
+            echo "Authenticating with Docker Hub..."
+            echo "${DOCKERHUB_TOKEN}" | docker login -u "${DOCKERHUB_USERNAME}" --password-stdin
 
-            echo "Exporting build variables and pulling the new Docker image..."
-            export IMAGE_TAG=${IMAGE_TAG}
-            export DOCKERHUB_USERNAME=${DOCKERHUB_USERNAME}
-            docker compose --env-file .env -f docker-compose.yml pull
+            echo "Preparing temporary env file..."
+            doppler secrets download --no-file --format=env --token="$DEV_DOPPLER_TOKEN" > "$TMP_ENV"
+            {
+              echo "IMAGE_TAG=${IMAGE_TAG}"
+              echo "DOCKERHUB_USERNAME=${DOCKERHUB_USERNAME}"
+            } >> "$TMP_ENV"
+
+            if [ ! -s "$TMP_ENV" ]; then
+              echo "ERROR: Temporary env file is empty. Aborting."
+              exit 1
+            fi
+
+            if docker compose version >/dev/null 2>&1; then
+              DC="docker compose"
+            elif command -v docker-compose >/dev/null 2>&1; then
+              DC="docker-compose"
+            else
+              echo "ERROR: Docker Compose not installed."
+              exit 1
+            fi
+
+            echo "Pulling the new Docker image using '$DC'..."
+            $DC --env-file "$TMP_ENV" -f docker-compose.yml pull
 
             echo "Restarting services with the new image..."
-            docker compose --env-file .env -f docker-compose.yml up -d --no-build
+            $DC --env-file "$TMP_ENV" -f docker-compose.yml up -d --no-build
 
-            echo "Cleaning up..."
+            echo "Cleaning up Docker images..."
             docker image prune -af
-            rm .env
 
   #########################################
   #      DEPLOY TO PRODUCTION             #
@@ -148,6 +177,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+      DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
       PROD_DOPPLER_TOKEN: ${{ secrets.PROD_DOPPLER_TOKEN }}
     steps:
       - name: Deploy to Digital Ocean Prod Server
@@ -156,28 +186,56 @@ jobs:
           host: ${{ secrets.PROD_DO_HOST }}
           username: ${{ secrets.PROD_DO_USERNAME }}
           key: ${{ secrets.PROD_DO_SSH_KEY }}
-          envs: DOCKERHUB_USERNAME,IMAGE_TAG,PROD_DOPPLER_TOKEN
+          envs: DOCKERHUB_USERNAME,DOCKERHUB_TOKEN,IMAGE_TAG,PROD_DOPPLER_TOKEN
           script: |
+            set -Eeuo pipefail
+
             cd /root/Feelori-WhatsApp-Chatz
             git fetch origin
             git checkout main
             git pull origin main
 
+            TMP_ENV="$(mktemp)"
+            cleanup() {
+              rm -f "$TMP_ENV"
+              echo "Logging out of Docker Hub..."
+              docker logout >/dev/null 2>&1 || true
+            }
+            trap cleanup EXIT
+            
             if ! command -v doppler &> /dev/null; then
                 (curl -Ls --tlsv1.2 --proto "=https" --retry 3 https://cli.doppler.com/install.sh || wget -t 3 -qO- https://cli.doppler.com/install.sh) | sudo sh
             fi
 
-            echo "Fetching application secrets from Doppler..."
-            doppler secrets download --no-file --format=env --token="$PROD_DOPPLER_TOKEN" > .env
+            echo "Authenticating with Docker Hub..."
+            echo "${DOCKERHUB_TOKEN}" | docker login -u "${DOCKERHUB_USERNAME}" --password-stdin
 
-            echo "Exporting build variables and pulling the new Docker image..."
-            export IMAGE_TAG=${IMAGE_TAG}
-            export DOCKERHUB_USERNAME=${DOCKERHUB_USERNAME}
-            docker compose --env-file .env -f docker-compose.yml pull
+            echo "Preparing temporary env file..."
+            doppler secrets download --no-file --format=env --token="$PROD_DOPPLER_TOKEN" > "$TMP_ENV"
+            {
+              echo "IMAGE_TAG=${IMAGE_TAG}"
+              echo "DOCKERHUB_USERNAME=${DOCKERHUB_USERNAME}"
+            } >> "$TMP_ENV"
+
+            if [ ! -s "$TMP_ENV" ]; then
+              echo "ERROR: Temporary env file is empty. Aborting."
+              exit 1
+            fi
+
+            if docker compose version >/dev/null 2>&1; then
+              DC="docker compose"
+            elif command -v docker-compose >/dev/null 2>&1; then
+              DC="docker-compose"
+            else
+              echo "ERROR: Docker Compose not installed."
+              exit 1
+            fi
+
+            echo "Pulling the new Docker image using '$DC'..."
+            $DC --env-file "$TMP_ENV" -f docker-compose.yml pull
 
             echo "Restarting services with the new image..."
-            docker compose --env-file .env -f docker-compose.yml up -d --no-build
+            $DC --env-file "$TMP_ENV" -f docker-compose.yml up -d --no-build
 
-            echo "Cleaning up..."
+            echo "Cleaning up Docker images..."
             docker image prune -af
-            rm .env

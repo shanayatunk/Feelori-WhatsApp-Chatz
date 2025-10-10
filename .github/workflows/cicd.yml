@@ -149,6 +149,7 @@ jobs:
     env:
       DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
       PROD_DOPPLER_TOKEN: ${{ secrets.PROD_DOPPLER_TOKEN }}
+      DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
     steps:
       - name: Deploy to Digital Ocean Prod Server
         uses: appleboy/ssh-action@v1.0.3
@@ -156,28 +157,32 @@ jobs:
           host: ${{ secrets.PROD_DO_HOST }}
           username: ${{ secrets.PROD_DO_USERNAME }}
           key: ${{ secrets.PROD_DO_SSH_KEY }}
-          envs: DOCKERHUB_USERNAME,IMAGE_TAG,PROD_DOPPLER_TOKEN
+          envs: DOCKERHUB_USERNAME,IMAGE_TAG,PROD_DOPPLER_TOKEN,DOCKERHUB_TOKEN
           script: |
             cd /root/Feelori-WhatsApp-Chatz
             git fetch origin
-            git checkout main
             git pull origin main
 
             if ! command -v doppler &> /dev/null; then
                 (curl -Ls --tlsv1.2 --proto "=https" --retry 3 https://cli.doppler.com/install.sh || wget -t 3 -qO- https://cli.doppler.com/install.sh) | sudo sh
             fi
 
-            echo "Fetching application secrets from Doppler..."
-            doppler secrets download --no-file --format=env --token="$PROD_DOPPLER_TOKEN" > .env
+            echo "Authenticating with Docker Hub..."
+            echo "${DOCKERHUB_TOKEN}" | docker login -u "${DOCKERHUB_USERNAME}" --password-stdin
 
-            echo "Exporting build variables and pulling the new Docker image..."
-            export IMAGE_TAG=${IMAGE_TAG}
-            export DOCKERHUB_USERNAME=${DOCKERHUB_USERNAME}
-            docker compose --env-file .env -f docker-compose.yml pull
+            echo "Combining secrets and build variables..."
+            # Create a string with all variables
+            ALL_VARS=$(doppler secrets download --no-file --format=env --token="$PROD_DOPPLER_TOKEN" && \
+            echo "IMAGE_TAG=${IMAGE_TAG}" && \
+            echo "DOCKERHUB_USERNAME=${DOCKERHUB_USERNAME}")
+
+            echo "Pulling the new Docker image..."
+            # Pipe the variables directly into docker compose
+            echo "$ALL_VARS" | docker compose -f docker-compose.yml --env-file - pull
 
             echo "Restarting services with the new image..."
-            docker compose --env-file .env -f docker-compose.yml up -d --no-build
+            echo "$ALL_VARS" | docker compose -f docker-compose.yml --env-file - up -d --no-build
 
             echo "Cleaning up..."
             docker image prune -af
-            rm .env
+            docker logout

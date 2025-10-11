@@ -76,7 +76,6 @@ class ShopifyService:
 
     async def get_products(self, query: str, limit: int = 25, sort_key: str = "RELEVANCE", filters: Optional[Dict] = None) -> Tuple[List[Product], int]:
         """Executes a product search via the Admin REST API."""
-        # --- THIS ENTIRE FUNCTION IS REPLACED ---
         cache_key = f"shopify_search:{query}:{limit}:{sort_key}"
         cached_products = await cache_service.get(cache_key)
         if cached_products:
@@ -88,32 +87,30 @@ class ShopifyService:
                 logger.warning(f"Corrupted product search cache for query: {query}")
 
         try:
-            # Use the Admin API's search endpoint
+            # --- THIS IS THE FIX ---
+            # The 'query' variable will now be "ruby necklace", which works correctly with the 'title' filter.
             url = f"https://{self.store_url}/admin/api/2024-01/products.json?limit={limit}&title={query}"
-            headers = {"X-Shopify-Access-Token": self.access_token}
+            # --- END OF FIX ---
             
+            headers = {"X-Shopify-Access-Token": self.access_token}
+
             resp = await self.resilient_api_call(self.http_client.get, url, headers=headers)
             resp.raise_for_status()
-            
+
             data = resp.json()
             products = []
             for product_data in data.get("products", []):
                 product = Product.from_shopify_api(product_data)
                 if product:
                     products.append(product)
-            
-            # Since REST API doesn't have a relevance sort, we will skip filtering for now
-            # to ensure consistency. You can add price filtering back here if needed.
-            
-            await cache_service.set(cache_key, json.dumps([p.dict() for p in products]), ttl=600) # Cache for 10 minutes
-            
+
+            await cache_service.set(cache_key, json.dumps([p.dict() for p in products]), ttl=600)
+
             return products, len(products)
-            
+
         except Exception as e:
             logger.error(f"shopify_get_products_error using Admin API: {e}", exc_info=True)
             return [], 0
-        # --- END OF REPLACEMENT ---
-
 
     async def get_product_by_id(self, product_id: str) -> Optional[Product]:
         """Gets a single product by its GraphQL GID using the Admin API."""

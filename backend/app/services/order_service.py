@@ -82,11 +82,12 @@ class QueryBuilder:
 
     # --- THIS IS THE CORRECTED FUNCTION ---
     def _build_prioritized_query(self, keywords: List[str]) -> str:
-        """Builds a simple AND-based search query."""
+        """Builds a simple space-separated search query for the Admin API."""
         if not keywords:
             return ""
-        # This creates a simpler, more effective query like "ruby AND necklace"
-        return " AND ".join(keywords)
+        # The Admin API's `title` filter works best with space-separated terms.
+        # This will correctly create a query like "ruby necklace".
+        return " ".join(keywords)
 
     def _apply_exclusions(self, query: str, keywords: List[str]) -> str:
         if not query or not keywords: 

@@ -1,4 +1,4 @@
-# /app/config/settings.py
+#  /app/config/settings.py
 
 import sys
 import re

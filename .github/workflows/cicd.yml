@@ -35,6 +35,10 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
+      - name: Generate cache key
+        id: cache-key
+        run: echo "key=$(echo -n ${{ runner.os }}-pip-${{ hashFiles('backend/requirements.txt') }}-${{ hashFiles('backend/app/**') }} | sha256sum | cut -d ' ' -f 1)" >> $GITHUB_OUTPUT
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
@@ -44,7 +48,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.cache/pip
-          key: ${{ runner.os }}-pip-${{ hashFiles('backend/requirements.txt') }}
+          key: ${{ steps.cache-key.outputs.key }}
           restore-keys: |
             ${{ runner.os }}-pip-
 

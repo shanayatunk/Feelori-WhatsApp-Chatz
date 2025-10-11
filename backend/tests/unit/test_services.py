@@ -11,7 +11,6 @@ from app.utils.queue import RedisMessageQueue
 @pytest.mark.asyncio
 async def test_whatsapp_send_message_success(mocker):
     """Test successful WhatsApp message sending and logging."""
-    # FIX: Patch the log_message method on the actual db_service object, where it is defined.
     mock_log = mocker.patch('app.services.db_service.db_service.log_message', new_callable=AsyncMock)
 
     mock_response = AsyncMock(return_value=MagicMock(
@@ -34,31 +33,35 @@ async def test_whatsapp_send_message_success(mocker):
 @pytest.mark.asyncio
 async def test_shopify_get_products_success(mocker):
     """Test successfully fetching products from Shopify."""
-    mock_gql_response = { "data": { "products": { "edges": [{ "node": {
-        "id": "gid://shopify/Product/1", "handle": "test-product", "title": "Test Product",
-        "description": "A great product", "tags": ["test"], "featuredImage": {"url": "http://example.com/image.png"},
-        "variants": {"edges": [{"node": {
-            "id": "gid://shopify/ProductVariant/1", "sku": "SKU123",
-            "priceV2": {"amount": "19.99", "currencyCode": "INR"}, "quantityAvailable": 10
-        }}]}
-    }}]}}}
+    # --- THIS IS THE FIX ---
+    # 1. Mock the REST API response, not GraphQL
+    mock_rest_response = { "products": [{
+        "id": 1, "title": "Test Product", "handle": "test-product",
+        "body_html": "A great product", "tags": "test",
+        "images": [{"src": "http://example.com/image.png"}],
+        "variants": [{
+            "id": 1, "price": "19.99", "sku": "SKU123", "inventory_quantity": 10
+        }]
+    }]}
     
-    # The http_client is an attribute of the service instance. We patch it after creation.
+    # 2. The http_client is an attribute of the service instance. We patch it after creation.
     service = ShopifyService(settings.shopify_store_url, settings.shopify_access_token, settings.shopify_storefront_access_token)
     
-    # We create a mock that can be awaited and also has the methods we need.
-    async def mock_post(*args, **kwargs):
-        response = MagicMock(status_code=200, json=lambda: mock_gql_response)
+    # 3. Create a mock that can be awaited and has the correct methods
+    async def mock_get(*args, **kwargs):
+        response = MagicMock(status_code=200, json=lambda: mock_rest_response)
         response.raise_for_status = MagicMock()
         return response
 
     mocker.patch.object(service, 'http_client', new_callable=AsyncMock)
-    service.http_client.post = mock_post
+    # 4. Mock the 'get' method, not 'post'
+    service.http_client.get = mock_get
     
     products, _ = await service.get_products(query="Test", limit=1)
 
     assert len(products) == 1
     assert products[0].title == "Test Product"
+    # --- END OF FIX ---
 
 # --- AIService tests ---
 @pytest.mark.asyncio
@@ -90,13 +93,11 @@ async def test_process_message_from_queue_handles_send_failure(mocker):
     Ensure _process_message_from_queue continues processing
     even if sending the WhatsApp message fails.
     """
-    # FIX: Patch all functions at their original source location.
     mocker.patch('app.services.order_service.get_or_create_customer', new_callable=AsyncMock, return_value={"name": "Alice"})
     mocker.patch('app.services.order_service.process_message', new_callable=AsyncMock, return_value="Hello User!")
     mock_whatsapp = mocker.patch('app.services.whatsapp_service.whatsapp_service.send_message', new_callable=AsyncMock, side_effect=Exception("API failure"))
     mock_update_history = mocker.patch('app.services.db_service.db_service.update_conversation_history', new_callable=AsyncMock)
     
-    # FIX: Patch message_counter where it is originally defined, in app.utils.metrics
     mock_counter_labels = mocker.patch('app.utils.metrics.message_counter.labels')
     mock_counter_labels.return_value.inc = MagicMock()
 

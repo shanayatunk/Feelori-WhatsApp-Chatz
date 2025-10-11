@@ -837,16 +837,25 @@ async def handle_price_inquiry(message: str, customer: Dict, **kwargs) -> Option
 
 async def handle_product_detail(message: str, customer: Dict, **kwargs) -> Optional[str]:
     """Shows a detailed card for a specific product."""
-    product_id = message.replace("product_", "")
-    product = await shopify_service.get_product_by_id(product_id)
+    numeric_product_id = message.replace("product_", "")
+
+    # --- THIS IS THE FIX ---
+    # Construct the full GraphQL GID that the Shopify API expects.
+    graphql_gid = f"gid://shopify/Product/{numeric_product_id}"
+    # --- END OF FIX ---
+
+    # Pass the correctly formatted GID to the service.
+    product = await shopify_service.get_product_by_id(graphql_gid)
+
     if product:
         await cache_service.set(
             CacheKeys.LAST_SINGLE_PRODUCT.format(phone=customer['phone_number']),
-            product.json(), 
+            product.json(),
             ttl=900
         )
         await whatsapp_service.send_product_detail_with_buttons(customer["phone_number"], product)
         return "[Bot sent product details]"
+
     return "Sorry, I couldn't find details for that product."
 
 async def handle_latest_arrivals(customer: Dict, **kwargs) -> Optional[str]:
@@ -1219,19 +1228,26 @@ async def _send_product_card(products: List[Product], customer: Dict, header_tex
     catalog_id = await whatsapp_service.get_catalog_id()
     
     # --- THIS IS THE FIX ---
-    # This new, more robust list comprehension splits the full GID and takes only the last part (the numeric ID).
-    # It also adds a check to ensure the ID is not empty before adding it to the list.
+    # Filter the list to include only products that are in stock before preparing the payload.
+    # Also, ensure the product ID is valid.
+    available_products = [p for p in products if p.availability == "in_stock" and p.id]
+
+    # If after filtering there are no products, we can't send the message.
+    # You might want to handle this case, but for now, we'll proceed.
+    # The fallback logic will still catch it if the list becomes empty.
+    
     product_items = [
         {"product_retailer_id": str(p.id).rstrip('/').split('/')[-1]}
-        for p in products
-        if p.id and str(p.id).rstrip('/').split('/')[-1]
+        for p in available_products
+        if str(p.id).rstrip('/').split('/')[-1] # Extra check for safety
     ]
     # --- END OF FIX ---
 
+    # Pass the filtered list to the fallback as well.
     await whatsapp_service.send_multi_product_message(
         to=customer["phone_number"], header_text=header_text, body_text=body_text,
         footer_text="Powered by FeelOri", catalog_id=catalog_id,
-        section_title="Products", product_items=product_items, fallback_products=products
+        section_title="Products", product_items=product_items, fallback_products=available_products
     )
 
 async def _handle_error(customer: Dict) -> str:

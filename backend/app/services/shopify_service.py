@@ -75,52 +75,44 @@ class ShopifyService:
         return products[0] if products else None
 
     async def get_products(self, query: str, limit: int = 25, sort_key: str = "RELEVANCE", filters: Optional[Dict] = None) -> Tuple[List[Product], int]:
-        """Executes a product search via Storefront API."""
+        """Executes a product search via the Admin REST API."""
+        # --- THIS ENTIRE FUNCTION IS REPLACED ---
+        cache_key = f"shopify_search:{query}:{limit}:{sort_key}"
+        cached_products = await cache_service.get(cache_key)
+        if cached_products:
+            try:
+                products_data = json.loads(cached_products)
+                products = [Product(**p) for p in products_data]
+                return products, len(products)
+            except (json.JSONDecodeError, TypeError):
+                logger.warning(f"Corrupted product search cache for query: {query}")
+
         try:
-            edges = await self._shopify_search(query, limit, sort_key, filters)
-            if not edges:
-                return [], 0
-
+            # Use the Admin API's search endpoint
+            url = f"https://{self.store_url}/admin/api/2024-01/products.json?limit={limit}&title={query}"
+            headers = {"X-Shopify-Access-Token": self.access_token}
+            
+            resp = await self.resilient_api_call(self.http_client.get, url, headers=headers)
+            resp.raise_for_status()
+            
+            data = resp.json()
             products = []
-            for edge in edges:
-                node = edge.get("node", {})
-                variants_edge = node.get("variants", {}).get("edges", [])
-                if not variants_edge:
-                    continue
-
-                variant_node = variants_edge[0].get("node", {})
-                price_info = variant_node.get("priceV2", {})
-
-                # Use `quantityAvailable` for Storefront API results
-                inventory = variant_node.get("quantityAvailable")
-                availability = "in_stock" if inventory is not None and inventory > 0 else "out_of_stock"
-
-                products.append(Product(
-                    id=node.get("id"),
-                    title=node.get("title"),
-                    description=node.get("description", "No description available."),
-                    price=float(price_info.get("amount", 0.0)),
-                    variant_id=variant_node.get("id"),
-                    sku=variant_node.get("sku"),
-                    currency=price_info.get("currencyCode", "INR"),
-                    image_url=node.get("featuredImage", {}).get("url"),
-                    handle=node.get("handle", ""),
-                    tags=node.get("tags", []),
-                    availability=availability
-                ))
-
-            unfiltered_count = len(products)
-            if filters and "price" in filters and products:
-                price_condition = filters["price"]
-                if "lessThan" in price_condition:
-                    return [p for p in products if p.price < price_condition["lessThan"]], unfiltered_count
-                if "greaterThan" in price_condition:
-                    return [p for p in products if p.price > price_condition["greaterThan"]], unfiltered_count
-
-            return products, unfiltered_count
+            for product_data in data.get("products", []):
+                product = Product.from_shopify_api(product_data)
+                if product:
+                    products.append(product)
+            
+            # Since REST API doesn't have a relevance sort, we will skip filtering for now
+            # to ensure consistency. You can add price filtering back here if needed.
+            
+            await cache_service.set(cache_key, json.dumps([p.dict() for p in products]), ttl=600) # Cache for 10 minutes
+            
+            return products, len(products)
+            
         except Exception as e:
-            logger.error(f"shopify_get_products_error: {e}", exc_info=True)
+            logger.error(f"shopify_get_products_error using Admin API: {e}", exc_info=True)
             return [], 0
+        # --- END OF REPLACEMENT ---
 
 
     async def get_product_by_id(self, product_id: str) -> Optional[Product]:

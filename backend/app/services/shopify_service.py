@@ -89,7 +89,7 @@ class ShopifyService:
         try:
             # --- THIS IS THE FIX ---
             # The 'query' variable will now be "ruby necklace", which works correctly with the 'title' filter.
-            url = f"https://{self.store_url}/admin/api/2024-01/products.json?limit={limit}&title={query}"
+            url = f"https://{self.store_url}/admin/api/2024-01/products.json?limit={limit}&query={query}"
             # --- END OF FIX ---
             
             headers = {"X-Shopify-Access-Token": self.access_token}

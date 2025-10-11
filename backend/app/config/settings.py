@@ -127,3 +127,6 @@ def validate_environment(settings_obj: Settings):
 settings = Settings()
 validate_environment(settings)
 
+# Add this debug line
+print(f"--- DEBUG: Loaded Admin Password Hash is: {settings.admin_password} ---")
+

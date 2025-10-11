@@ -30,7 +30,7 @@ from app.services.order_service_constants import CacheKeys, TriageStates, Triage
 
 
 logger = logging.getLogger(__name__)
-# scheduler = AsyncIOScheduler()
+#  scheduler = AsyncIOScheduler()
 
 @dataclass
 class SearchConfig:

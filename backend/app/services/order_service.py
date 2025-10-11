@@ -87,7 +87,7 @@ class QueryBuilder:
             return ""
         # The Admin API's `title` filter works best with space-separated terms.
         # This will correctly create a query like "ruby necklace".
-        return " ".join(keywords)
+        return " AND ".join(f"title:{kw}" for kw in keywords)
 
     def _apply_exclusions(self, query: str, keywords: List[str]) -> str:
         if not query or not keywords: 

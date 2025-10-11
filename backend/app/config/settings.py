@@ -1,7 +1,8 @@
-#  /app/config/settings.py
+# /app/config/settings.py
 
 import sys
 import re
+import base64  # Import the base64 library
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings
 
@@ -58,7 +59,6 @@ class Settings(BaseSettings):
     ssl_cert_path: str | None = None
     ssl_key_path: str | None = None
     workers: int = 4
-    # --- THIS IS THE CHANGE ---
     # Default to production for safety. Must be explicitly set to 'development' to enable debug features.
     environment: str = Field(default="production", env="ENVIRONMENT")
 
@@ -89,12 +89,26 @@ class Settings(BaseSettings):
             raise ValueError("JWT/Session secret keys must be at least 32 characters long")
         return v
 
+    # --- THIS VALIDATOR IS REPLACED ---
     @field_validator('admin_password')
     @classmethod
-    def password_must_be_strong(cls, v):
-        if len(v) < 12:
-            raise ValueError("ADMIN_PASSWORD must be at least 12 characters long")
-        return v
+    def decode_password_from_base64_and_validate(cls, v: str) -> str:
+        """
+        Decodes the admin password from Base64 and validates its length.
+        The password in the .env/Doppler MUST be Base64 encoded.
+        """
+        try:
+            # Decode the Base64 string from the environment variable
+            decoded_password = base64.b64decode(v).decode('utf-8')
+        except Exception:
+            raise ValueError("ADMIN_PASSWORD is not valid Base64. Please encode your password hash.")
+        
+        # Now, validate the length of the DECODED password hash
+        if len(decoded_password) < 12:
+            raise ValueError("The decoded ADMIN_PASSWORD must be at least 12 characters long.")
+        
+        # Return the original, decoded hash for the application to use
+        return decoded_password
     
     @field_validator('whatsapp_phone_id')
     @classmethod
@@ -126,7 +140,3 @@ def validate_environment(settings_obj: Settings):
 
 settings = Settings()
 validate_environment(settings)
-
-# Add this debug line
-print(f"--- DEBUG: Loaded Admin Password Hash is: {settings.admin_password} ---")
-

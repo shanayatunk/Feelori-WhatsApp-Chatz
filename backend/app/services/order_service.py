@@ -1216,12 +1216,17 @@ async def _handle_standard_search(products: List[Product], message: str, custome
 async def _send_product_card(products: List[Product], customer: Dict, header_text: str, body_text: str):
     """Sends a rich multi-product message card."""
     catalog_id = await whatsapp_service.get_catalog_id()
-    # This is the new, more robust line of code
+    
+    # --- THIS IS THE FIX ---
+    # This new, more robust list comprehension splits the full GID and takes only the last part (the numeric ID).
+    # It also adds a check to ensure the ID is not empty before adding it to the list.
     product_items = [
         {"product_retailer_id": str(p.id).rstrip('/').split('/')[-1]}
         for p in products
         if p.id and str(p.id).rstrip('/').split('/')[-1]
     ]
+    # --- END OF FIX ---
+
     await whatsapp_service.send_multi_product_message(
         to=customer["phone_number"], header_text=header_text, body_text=body_text,
         footer_text="Powered by FeelOri", catalog_id=catalog_id,
@@ -1337,7 +1342,8 @@ async def handle_status_update(status_data: Dict):
     try:
         from app.services.db_service import db_service
 
-        # Define a retryable update operation
+        # --- THIS IS THE FIX ---
+        # Define a retryable update operation using tenacity
         @tenacity.retry(
             stop=tenacity.stop_after_delay(10),  # Stop after 10 seconds
             wait=tenacity.wait_exponential(multiplier=1, min=0.5, max=3),  # Wait 0.5s, 1s, 2s, 3s, 3s...
@@ -1356,6 +1362,7 @@ async def handle_status_update(status_data: Dict):
 
         if result.modified_count > 0:
             logger.info(f"Message status updated for {wamid} to {status}")
+        # --- END OF FIX ---
 
     except tenacity.RetryError:
         # This log happens *only* if it fails after all retries

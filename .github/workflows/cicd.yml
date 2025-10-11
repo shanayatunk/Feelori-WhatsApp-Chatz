@@ -66,7 +66,7 @@ jobs:
           # --- ADD THIS ENTIRE BLOCK ---
           ENVIRONMENT: 'development'
           MONGO_ATLAS_URI: 'mongodb://mongo:27017/testdb'
-          REDIS_URL: 'redis://redis:6379'
+          REDIS_URL: 'redis://localhost:6379'
           ADMIN_PASSWORD: 'dGVzdF9wYXNzd29yZA==' # Base64 for 'test_password'
           JWT_SECRET_KEY: 'test-secret-key-must-be-at-least-32-characters-long'
           SESSION_SECRET_KEY: 'test-session-key-must-be-at-least-32-characters-long'

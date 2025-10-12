@@ -1,3 +1,4 @@
+
 // TriagePage.tsx with debugging
 "use client";
 import React from 'react';
@@ -29,17 +30,7 @@ export const TriagePage = () => {
     CURRENT_HOST: window.location.host
   });
 
-  const { data, error, isLoading } = useSWR('triageTickets', async () => {
-    console.log('Fetching triage tickets...');
-    try {
-      const result = await getTriageTickets();
-      console.log('Triage tickets fetched successfully:', result);
-      return result;
-    } catch (err) {
-      console.error('Failed to fetch triage tickets:', err);
-      throw err;
-    }
-  });
+  const { data, error, isLoading } = useSWR('triageTickets', getTriageTickets);
 
   const handleResolveTicket = async (ticketId: string) => {
     try {

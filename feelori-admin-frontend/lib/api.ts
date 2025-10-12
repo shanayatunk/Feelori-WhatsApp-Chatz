@@ -271,7 +271,7 @@ export const getTriageTickets = async (): Promise<{ tickets: TriageTicket[] }> =
   try {
     // --- THIS IS THE FIX ---
     // The endpoint has been changed from '/dashboard/triage-tickets' to the correct '/triage'
-    const result = await makeRequest(`${API_BASE_URL}/triage`);
+    const result = await makeRequest('https://api.feelori.com/api/v1/triage');
     return result.data;
   } catch (error) {
     console.error("Failed to fetch triage tickets:", error);

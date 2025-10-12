@@ -76,6 +76,7 @@ jobs:
           WHATSAPP_APP_SECRET: 'test-secret'
           SHOPIFY_ACCESS_TOKEN: 'test-token'
           GEMINI_API_KEY: 'test-key' # Provide at least one AI key
+          CORS_ALLOWED_ORIGINS: "http://testserver,http://localhost"
         run: |
           pip install pytest pytest-asyncio anyio httpx pytest-mock
           pytest -q backend

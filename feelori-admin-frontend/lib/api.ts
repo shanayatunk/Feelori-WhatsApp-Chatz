@@ -124,6 +124,8 @@ export interface BroadcastDetails extends BroadcastJob {
 
 // --- API Service ---
 const makeRequest = async (url: string, options: RequestInit = {}) => {
+  console.log('🌐 makeRequest called with URL:', url);
+  
   const token = typeof window !== 'undefined' ? localStorage.getItem('feelori_admin_token') : null;
 
   const headers = {
@@ -272,9 +274,11 @@ export type TriageTicket = {
 // ADD THIS NEW API FUNCTION
 export const getTriageTickets = async (): Promise<{ tickets: TriageTicket[] }> => {
   try {
-    // --- THIS IS THE FIX ---
-    // The endpoint has been changed from '/dashboard/triage-tickets' to the correct '/triage'
-    const result = await makeRequest(`${API_BASE_URL}/triage`);
+    const fullUrl = `${API_BASE_URL}/triage`;
+    console.log('🔍 Full URL being requested:', fullUrl);
+    console.log('🔍 URL protocol:', new URL(fullUrl).protocol);
+    
+    const result = await makeRequest(fullUrl);
     return result.data;
   } catch (error) {
     console.error("Failed to fetch triage tickets:", error);

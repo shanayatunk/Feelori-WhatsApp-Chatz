@@ -1422,6 +1422,12 @@ class DatabaseService:
 
         data = result[0]
         kpis = data.get("kpi_metrics", [{}])[0]
+
+        # --- THIS IS THE FIX ---
+        # Check if kpi_metrics has data before trying to access it.
+        # If it's empty, use an empty dictionary as a default.
+        kpis = data.get("kpi_metrics")[0] if data.get("kpi_metrics") else {}
+        # --- END OF FIX ---
         
         # Convert milliseconds to minutes
         avg_time_ms = kpis.get("avg_time_to_pack_ms")

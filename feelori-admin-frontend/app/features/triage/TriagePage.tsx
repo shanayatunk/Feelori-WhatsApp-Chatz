@@ -1,5 +1,4 @@
-
-// TriagePage.tsx with debugging
+// TriagePage.tsx
 "use client";
 import React from 'react';
 import useSWR, { mutate } from 'swr';
@@ -22,13 +21,7 @@ const formatDateTime = (isoString: string) => {
 };
 
 export const TriagePage = () => {
-  // Add debugging
-  console.log('Environment check:', {
-    NODE_ENV: process.env.NODE_ENV,
-    API_URL: process.env.NEXT_PUBLIC_API_URL,
-    CURRENT_PROTOCOL: window.location.protocol,
-    CURRENT_HOST: window.location.host
-  });
+  const [selectedImage, setSelectedImage] = React.useState<string | null>(null);
 
   const { data, error, isLoading } = useSWR('triageTickets', getTriageTickets);
 
@@ -44,10 +37,33 @@ export const TriagePage = () => {
     }
   };
 
-  const handleViewPhoto = (mediaId: string) => {
-    const photoUrl = getTriageMediaUrl(mediaId);
-    console.log('Opening photo URL:', photoUrl);
-    window.open(photoUrl, '_blank');
+  const handleViewPhoto = async (mediaId: string) => {
+    try {
+      const token = localStorage.getItem('feelori_admin_token');
+      const photoUrl = getTriageMediaUrl(mediaId);
+      
+      const response = await fetch(photoUrl, {
+        headers: {
+          'Authorization': `Bearer ${token}`
+        }
+      });
+      
+      if (!response.ok) throw new Error('Failed to fetch image');
+      
+      const blob = await response.blob();
+      const imageUrl = URL.createObjectURL(blob);
+      setSelectedImage(imageUrl);
+    } catch (err) {
+      console.error("Failed to load image:", err);
+      alert("Could not load the image. Please try again.");
+    }
+  };
+
+  const closeImageModal = () => {
+    if (selectedImage) {
+      URL.revokeObjectURL(selectedImage);
+      setSelectedImage(null);
+    }
   };
 
   const renderContent = () => {
@@ -124,6 +140,29 @@ export const TriagePage = () => {
           {renderContent()}
         </CardContent>
       </Card>
+
+      {/* Image Modal */}
+      {selectedImage && (
+        <div 
+          className="fixed inset-0 bg-black bg-opacity-75 flex items-center justify-center z-50"
+          onClick={closeImageModal}
+        >
+          <div className="relative max-w-4xl max-h-screen p-4">
+            <button
+              onClick={closeImageModal}
+              className="absolute top-2 right-2 bg-white rounded-full w-8 h-8 flex items-center justify-center hover:bg-gray-200 text-gray-700 font-bold"
+            >
+              ✕
+            </button>
+            <img 
+              src={selectedImage} 
+              alt="Ticket photo" 
+              className="max-w-full max-h-screen object-contain"
+              onClick={(e) => e.stopPropagation()}
+            />
+          </div>
+        </div>
+      )}
     </div>
   );
 };

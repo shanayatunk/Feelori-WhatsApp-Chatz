@@ -67,8 +67,8 @@ class Settings(BaseSettings):
     redis_ssl: bool = False
 
     # CORS & Hosts
-    cors_allowed_origins: str = Field(default="https://feelori.com,https://admin.feelori.com", env="CORS_ALLOWED_ORIGINS")
-    allowed_hosts: str = Field(default="feelori.com,*.feelori.com", env="ALLOWED_HOSTS")
+    cors_allowed_origins: list[str] = Field(default=["https://feelori.com", "https://admin.feelori.com"], env="CORS_ALLOWED_ORIGINS")
+    allowed_hosts: list[str] = Field(default=["feelori.com", "*.feelori.com"], env="ALLOWED_HOSTS")
 
     # Observability & Alerting
     sentry_dsn: str | None = None

@@ -1,4 +1,7 @@
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'https://api.feelori.com/api/v1';
+const API_BASE_URL = 'https://api.feelori.com/api/v1';
+
+console.log('API_BASE_URL being used:', API_BASE_URL);
+console.log('Environment variable was:', process.env.NEXT_PUBLIC_API_URL);
 
 // --- Type Definitions ---
 export type Rule = {
@@ -271,7 +274,7 @@ export const getTriageTickets = async (): Promise<{ tickets: TriageTicket[] }> =
   try {
     // --- THIS IS THE FIX ---
     // The endpoint has been changed from '/dashboard/triage-tickets' to the correct '/triage'
-    const result = await makeRequest('https://api.feelori.com/api/v1/triage');
+    const result = await makeRequest(`${API_BASE_URL}/triage`);
     return result.data;
   } catch (error) {
     console.error("Failed to fetch triage tickets:", error);

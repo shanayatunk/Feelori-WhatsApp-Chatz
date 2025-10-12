@@ -1,7 +1,4 @@
-const API_BASE_URL = 'https://api.feelori.com/api/v1';
-
-console.log('API_BASE_URL being used:', API_BASE_URL);
-console.log('Environment variable was:', process.env.NEXT_PUBLIC_API_URL);
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'https://api.feelori.com/api/v1';
 
 // --- Type Definitions ---
 export type Rule = {
@@ -124,7 +121,6 @@ export interface BroadcastDetails extends BroadcastJob {
 
 // --- API Service ---
 const makeRequest = async (url: string, options: RequestInit = {}) => {
-  console.log('🌐 makeRequest called with URL:', url);
   
   const token = typeof window !== 'undefined' ? localStorage.getItem('feelori_admin_token') : null;
 
@@ -275,8 +271,6 @@ export type TriageTicket = {
 export const getTriageTickets = async (): Promise<{ tickets: TriageTicket[] }> => {
   try {
     const fullUrl = `${API_BASE_URL}/triage`;
-    console.log('🔍 Full URL being requested:', fullUrl);
-    console.log('🔍 URL protocol:', new URL(fullUrl).protocol);
     
     const result = await makeRequest(fullUrl);
     return result.data;

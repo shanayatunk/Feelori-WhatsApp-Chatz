@@ -13,8 +13,6 @@ Sai Nidhi, Plot 9, Krishnapuri Colony,
 Lakshmi Nagar, West Marredpally,
 Secunderabad, Hyderabad, Telangana 500026, India
 
-*Please note: This is our registered business address. We are an online-only store and do not offer in-person shopping or order pickups.*
-
 📧 **Email Support:**
 support@feelori.com
 
@@ -96,14 +94,11 @@ What would you prefer?
 
 # Order and Support
 HUMAN_ESCALATION = """
-Of course. I understand you'd like to speak with a person. 🧑‍💻
+Thank you for bringing this to our attention. A support ticket has been created, and our team will get in touch with you shortly to resolve this. 🙏
 
-You can reach our dedicated customer support team here:
+Our support hours are **Monday–Saturday, 11:00 AM – 8:00 PM IST**.
 
-📞 **Call/WhatsApp:** +91 9967680579
-📧 **Email:** support@feelori.com
-
-Our support hours are **Monday–Saturday, 10 AM – 7 PM IST**. Our team will be happy to assist you!
+If you need to provide more details, you can reply to this message, or alternatively, you can email us at support@feelori.com or call us at +91 9967680579.
 """
 
 ORDER_NUMBER_HELP = """

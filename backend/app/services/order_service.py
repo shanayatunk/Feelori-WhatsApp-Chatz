@@ -802,12 +802,32 @@ async def handle_buy_request(product_id: str, customer: Dict) -> Optional[str]:
 
     variants = await shopify_service.get_product_variants(product.id)
     if len(variants) > 1:
-        variant_options = {v['id']: v['title'] for v in variants[:3]}
-        await whatsapp_service.send_quick_replies(customer["phone_number"], f"Please select an option for *{product.title}*:", variant_options)
+        variant_options = {f"option_{v['id']}": v['title'] for v in variants[:3]}
+        await whatsapp_service.send_quick_replies(
+            customer["phone_number"],
+            f"Please select an option for *{product.title}*:",
+            variant_options
+        )
         return "[Bot asked for variant selection]"
     elif variants:
+        # --- THIS IS THE FIX ---
+        # Instead of a marketing template, we use a simpler utility template.
         cart_url = shopify_service.get_add_to_cart_url(variants[0]["id"])
-        return f"Great choice! Add *{product.title}* to your cart here:\n{cart_url}"
+
+        # Extract the dynamic part of the URL for the template's button
+        button_param = ""
+        if '/cart/' in cart_url:
+            button_param = cart_url.split('/cart/')[1]
+
+        # Send a pre-approved UTILITY template message
+        await whatsapp_service.send_template_message(
+            to=customer["phone_number"],
+            template_name="complete_purchase_v1",  # A new, cheaper template
+            body_params=[product.title],
+            button_url_param=button_param
+        )
+        return f"[Sent 'Complete Purchase' button for {product.title}]"
+        # --- END OF FIX ---
     else:
         product_url = shopify_service.get_product_page_url(product.handle)
         return f"This product is currently unavailable. You can view it here: {product_url}"

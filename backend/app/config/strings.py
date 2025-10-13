@@ -107,6 +107,8 @@ You can find your order number in the confirmation email and SMS we sent you rig
 It typically looks like #12345. If you can't find it, I can try to look up your recent orders for you!
 """
 
+ORDER_NOT_FOUND_SPECIFIC = "I couldn't find any details for order number {order_number}. Please double-check the number and try again."
+
 NO_ORDERS_FOUND = """
 I couldn't find any recent orders for this number. If you have an order number, please reply with it (e.g. #12345) or contact support@feelori.com for assistance.
 """

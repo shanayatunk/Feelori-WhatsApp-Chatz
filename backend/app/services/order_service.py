@@ -675,7 +675,12 @@ async def handle_order_detail_inquiry(message: str, customer: Dict, **kwargs) ->
     # Use the local DB first to get order phone numbers for verification
     order_from_db = await db_service.db.orders.find_one({"order_number": order_name})
     if not order_from_db:
-        return await string_service.get_string('ORDER_NOT_FOUND', order_number=order_name)
+        # --- THIS IS THE FIX ---
+        # 1. Get the string template first.
+        error_template = string_service.get_string('ORDER_NOT_FOUND_SPECIFIC')
+        # 2. Then, format it with the order name.
+        return error_template.format(order_number=order_name)
+        # --- END OF FIX ---
 
     # --- ✅ NEW SECURITY LOGIC ---
     # 1. Check if the user has already been verified for this specific order in the last minute.
@@ -686,7 +691,9 @@ async def handle_order_detail_inquiry(message: str, customer: Dict, **kwargs) ->
         order_phones = order_from_db.get("phone_numbers", [])
         if not order_phones:
             logger.warning(f"Security check failed: No phone numbers found in DB for order {order_name} to verify against.")
-            return await string_service.get_string('ORDER_NOT_FOUND', order_number=order_name)
+            # Use the corrected string here as well
+            error_template = string_service.get_string('ORDER_NOT_FOUND_SPECIFIC')
+            return error_template.format(order_number=order_name)
 
         # 3. Store the expected last 4 digits and set the user's state to 'awaiting_order_verification'.
         if not order_phones or not isinstance(order_phones[0], str) or len(order_phones[0]) < 4:
@@ -710,10 +717,13 @@ async def handle_order_detail_inquiry(message: str, customer: Dict, **kwargs) ->
     # 5. If the user IS verified, fetch the full details from Shopify, clear the flag, and show the details.
     order_to_display = await shopify_service.get_order_by_name(order_name)
     if not order_to_display:
-        return await string_service.get_string('ORDER_NOT_FOUND', order_number=order_name)
+        # And use the corrected string here one last time for safety
+        error_template = string_service.get_string('ORDER_NOT_FOUND_SPECIFIC')
+        return error_template.format(order_number=order_name)
         
     await cache_service.delete(CacheKeys.ORDER_VERIFIED.format(phone=customer['phone_number'], order_name=order_name))
     return _format_single_order(order_to_display, detailed=True)
+
 
 async def handle_show_unfiltered_products(customer: Dict, **kwargs) -> Optional[str]:
     """Shows products from the last search, ignoring any price filters."""

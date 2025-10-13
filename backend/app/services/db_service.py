@@ -1313,161 +1313,162 @@ class DatabaseService:
         status_counts = {item['_id']: item['count'] for item in results if item['_id']}
         return {"status_counts": status_counts}
 
-async def get_packer_performance_metrics(self, days: int = 7) -> Dict[str, Any]:
-    """
-    Calculate advanced packer performance metrics.
-    
-    Args:
-        days: Number of days to include in analysis
+    async def get_packer_performance_metrics(self, days: int = 7) -> Dict[str, Any]:
+        """
+        Calculate advanced packer performance metrics.
         
-    Returns:
-        Dictionary with KPIs, leaderboard, and hold analysis
-    """
-    start_date = self._now_utc() - timedelta(days=days)
-    
-    pipeline = [
-        {
-            "$match": {
-                "$or": [
-                    {"updated_at": {"$gte": start_date}},
-                    {"fulfilled_at": {"$gte": start_date}},
-                    {"created_at": {"$gte": start_date}}
-                ]
-            }
-        },
-        {
-            "$facet": {
-                "kpi_metrics": [
-                    {
-                        "$group": {
-                            "_id": None,
-                            "total_orders": {"$sum": 1},
-                            "completed_orders": {
-                                "$sum": {
-                                    "$cond": [
-                                        {"$eq": ["$fulfillment_status_internal", OrderStatus.COMPLETED.value]},
-                                        1,
-                                        0
-                                    ]
-                                }
-                            },
-                            "on_hold_orders": {
-                                "$sum": {
-                                    "$cond": [
-                                        {"$eq": ["$fulfillment_status_internal", OrderStatus.ON_HOLD.value]},
-                                        1,
-                                        0
-                                    ]
-                                }
-                            },
-                            "avg_time_to_pack_ms": {
-                                "$avg": {
-                                    "$cond": {
-                                        "if": {
-                                            "$and": [
-                                                {"$ne": ["$in_progress_at", None]},
-                                                {"$ne": ["$fulfilled_at", None]},
-                                                {"$gt": ["$fulfilled_at", "$in_progress_at"]}
-                                            ]
-                                        },
-                                        "then": {"$subtract": ["$fulfilled_at", "$in_progress_at"]},
-                                        "else": None
+        Args:
+            days: Number of days to include in analysis
+            
+        Returns:
+            Dictionary with KPIs, leaderboard, and hold analysis
+        """
+        start_date = self._now_utc() - timedelta(days=days)
+        
+        pipeline = [
+            {
+                "$match": {
+                    "$or": [
+                        {"updated_at": {"$gte": start_date}},
+                        {"fulfilled_at": {"$gte": start_date}},
+                        {"created_at": {"$gte": start_date}}
+                    ]
+                }
+            },
+            {
+                "$facet": {
+                    "kpi_metrics": [
+                        {
+                            "$group": {
+                                "_id": None,
+                                "total_orders": {"$sum": 1},
+                                "completed_orders": {
+                                    "$sum": {
+                                        "$cond": [
+                                            {"$eq": ["$fulfillment_status_internal", OrderStatus.COMPLETED.value]},
+                                            1,
+                                            0
+                                        ]
+                                    }
+                                },
+                                "on_hold_orders": {
+                                    "$sum": {
+                                        "$cond": [
+                                            {"$eq": ["$fulfillment_status_internal", OrderStatus.ON_HOLD.value]},
+                                            1,
+                                            0
+                                        ]
+                                    }
+                                },
+                                "avg_time_to_pack_ms": {
+                                    "$avg": {
+                                        "$cond": {
+                                            "if": {
+                                                "$and": [
+                                                    {"$ne": ["$in_progress_at", None]},
+                                                    {"$ne": ["$fulfilled_at", None]},
+                                                    {"$gt": ["$fulfilled_at", "$in_progress_at"]}
+                                                ]
+                                            },
+                                            "then": {"$subtract": ["$fulfilled_at", "$in_progress_at"]},
+                                            "else": None
+                                        }
                                     }
                                 }
                             }
                         }
-                    }
-                ],
-                "packer_leaderboard": [
-                    {
-                        "$match": {
-                            "fulfillment_status_internal": OrderStatus.COMPLETED.value,
-                            "packed_by": {"$ne": None}
-                        }
-                    },
-                    {"$group": {"_id": "$packed_by", "orders_packed": {"$sum": 1}}},
-                    {"$sort": {"orders_packed": -1}},
-                    {"$limit": 10}
-                ],
-                "hold_reasons": [
-                    {
-                        "$match": {
-                            "fulfillment_status_internal": OrderStatus.ON_HOLD.value,
-                            "hold_reason": {"$ne": None}
-                        }
-                    },
-                    {"$group": {"_id": "$hold_reason", "count": {"$sum": 1}}},
-                    {"$sort": {"count": -1}}
-                ],
-                "problem_skus": [
-                    {
-                        "$match": {
-                            "fulfillment_status_internal": OrderStatus.ON_HOLD.value,
-                            "problem_item_skus": {"$exists": True, "$nin": [[], None]}
-                        }
-                    },
-                    {"$unwind": "$problem_item_skus"},
-                    {"$group": {"_id": "$problem_item_skus", "count": {"$sum": 1}}},
-                    {"$sort": {"count": -1}},
-                    {"$limit": 5}
-                ]
+                    ],
+                    "packer_leaderboard": [
+                        {
+                            "$match": {
+                                "fulfillment_status_internal": OrderStatus.COMPLETED.value,
+                                "packed_by": {"$ne": None}
+                            }
+                        },
+                        {"$group": {"_id": "$packed_by", "orders_packed": {"$sum": 1}}},
+                        {"$sort": {"orders_packed": -1}},
+                        {"$limit": 10}
+                    ],
+                    "hold_reasons": [
+                        {
+                            "$match": {
+                                "fulfillment_status_internal": OrderStatus.ON_HOLD.value,
+                                "hold_reason": {"$ne": None}
+                            }
+                        },
+                        {"$group": {"_id": "$hold_reason", "count": {"$sum": 1}}},
+                        {"$sort": {"count": -1}}
+                    ],
+                    "problem_skus": [
+                        {
+                            "$match": {
+                                "fulfillment_status_internal": OrderStatus.ON_HOLD.value,
+                                "problem_item_skus": {"$exists": True, "$nin": [[], None]}
+                            }
+                        },
+                        {"$unwind": "$problem_item_skus"},
+                        {"$group": {"_id": "$problem_item_skus", "count": {"$sum": 1}}},
+                        {"$sort": {"count": -1}},
+                        {"$limit": 5}
+                    ]
+                }
+            }
+        ]
+        
+        result = await self.db.orders.aggregate(pipeline).to_list(length=1)
+        
+        if not result:
+            return self._empty_performance_metrics()
+
+        data = result[0]
+        
+        # --- FIXED: Properly handle empty kpi_metrics ---
+        kpi_list = data.get("kpi_metrics", [])
+        if kpi_list and len(kpi_list) > 0:
+            kpis = kpi_list[0]
+        else:
+            kpis = {}
+        # --- END OF FIX ---
+        
+        # Convert milliseconds to minutes
+        avg_time_ms = kpis.get("avg_time_to_pack_ms")
+        avg_time_min = round(avg_time_ms / 60000, 2) if avg_time_ms else 0
+        
+        total = max(kpis.get("total_orders", 1), 1)  # Prevent division by zero
+        on_hold = kpis.get("on_hold_orders", 0)
+
+        return {
+            "kpis": {
+                "total_orders": kpis.get("total_orders", 0),
+                "completed_orders": kpis.get("completed_orders", 0),
+                "on_hold_orders": on_hold,
+                "avg_time_to_pack_minutes": avg_time_min,
+                "hold_rate": round(on_hold / total * 100, 2)
+            },
+            "packer_leaderboard": data.get("packer_leaderboard", []),
+            "hold_analysis": {
+                "by_reason": data.get("hold_reasons", []),
+                "top_problem_skus": data.get("problem_skus", [])
             }
         }
-    ]
-    
-    result = await self.db.orders.aggregate(pipeline).to_list(length=1)
-    
-    if not result:
-        return self._empty_performance_metrics()
 
-    data = result[0]
-    
-    # --- FIXED: Properly handle empty kpi_metrics ---
-    kpi_list = data.get("kpi_metrics", [])
-    if kpi_list and len(kpi_list) > 0:
-        kpis = kpi_list[0]
-    else:
-        kpis = {}
-    # --- END OF FIX ---
-    
-    # Convert milliseconds to minutes
-    avg_time_ms = kpis.get("avg_time_to_pack_ms")
-    avg_time_min = round(avg_time_ms / 60000, 2) if avg_time_ms else 0
-    
-    total = max(kpis.get("total_orders", 1), 1)  # Prevent division by zero
-    on_hold = kpis.get("on_hold_orders", 0)
-
-    return {
-        "kpis": {
-            "total_orders": kpis.get("total_orders", 0),
-            "completed_orders": kpis.get("completed_orders", 0),
-            "on_hold_orders": on_hold,
-            "avg_time_to_pack_minutes": avg_time_min,
-            "hold_rate": round(on_hold / total * 100, 2)
-        },
-        "packer_leaderboard": data.get("packer_leaderboard", []),
-        "hold_analysis": {
-            "by_reason": data.get("hold_reasons", []),
-            "top_problem_skus": data.get("problem_skus", [])
+    def _empty_performance_metrics(self) -> Dict[str, Any]:
+        """Return empty metrics structure."""
+        return {
+            "kpis": {
+                "total_orders": 0,
+                "completed_orders": 0,
+                "on_hold_orders": 0,
+                "avg_time_to_pack_minutes": 0,
+                "hold_rate": 0
+            },
+            "packer_leaderboard": [],
+            "hold_analysis": {
+                "by_reason": [],
+                "top_problem_skus": []
+            }
         }
-    }
 
-def _empty_performance_metrics(self) -> Dict[str, Any]:
-    """Return empty metrics structure."""
-    return {
-        "kpis": {
-            "total_orders": 0,
-            "completed_orders": 0,
-            "on_hold_orders": 0,
-            "avg_time_to_pack_minutes": 0,
-            "hold_rate": 0
-        },
-        "packer_leaderboard": [],
-        "hold_analysis": {
-            "by_reason": [],
-            "top_problem_skus": []
-        }
-    }
 
     # ==================== Message Logging ====================
 

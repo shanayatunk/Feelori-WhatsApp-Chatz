@@ -276,6 +276,15 @@ async def process_message(phone_number: str, message_text: str, message_type: st
             response = await route_message(intent, clean_phone, message_text, customer, quoted_wamid)
             return response[:4096] if response else None
 
+        # --- THIS IS THE FIX ---
+        # 1. Check for an order number format BEFORE calling the AI.
+        if re.fullmatch(r'#?[A-Z]{0,3}\d{4,6}', message_text.strip(), re.IGNORECASE):
+            logger.info("Order number format detected. Routing directly to order_detail_inquiry.")
+            # 2. If it matches, bypass the AI and route directly.
+            response = await route_message("order_detail_inquiry", clean_phone, message_text, customer, quoted_wamid)
+            return response[:4096] if response else None
+        # --- END OF FIX ---
+
         if quoted_wamid:
             last_product_raw = await cache_service.redis.get(CacheKeys.LAST_SINGLE_PRODUCT.format(phone=clean_phone))
             if last_product_raw:
@@ -324,11 +333,9 @@ async def process_message(phone_number: str, message_text: str, message_type: st
 
         Classify the message now based on the message and the context.
         """
-        # --- END OF NEW PROMPT ---
 
         ai_result = {}
         try:
-            # Use your existing ai_service
             last_product_raw = await cache_service.get(CacheKeys.LAST_SINGLE_PRODUCT.format(phone=clean_phone))
             last_product_context = None
             if last_product_raw:
@@ -341,11 +348,10 @@ async def process_message(phone_number: str, message_text: str, message_type: st
                 ai_service.get_ai_json_response(prompt=intent_prompt),
                 timeout=15.0
             )
-            ai_result = ai_response or {} # Ensure ai_result is a dict
+            ai_result = ai_response or {}
             ai_intent = ai_result.get("intent", "rule_based")
-            ai_keywords = ai_result.get("keywords", []) # Default to an empty list
+            ai_keywords = ai_result.get("keywords", [])
             if not ai_keywords or isinstance(ai_keywords, str):
-                # If keywords are missing, empty, or a string, extract them from the message
                 qb = QueryBuilder(SearchConfig())
                 ai_keywords = qb._extract_keywords(message_text) or [message_text]
 
@@ -357,13 +363,11 @@ async def process_message(phone_number: str, message_text: str, message_type: st
             qb = QueryBuilder(SearchConfig())
             ai_keywords = qb._extract_keywords(message_text) or [message_text]
         except Exception:
-            logger.exception("AI intent classification failed. Falling back to rule-based.") # Use logger.exception
-            ai_intent = "rule_based" # Fallback to your old system
-            # Ensure the fallback is also a list
+            logger.exception("AI intent classification failed. Falling back to rule-based.")
+            ai_intent = "rule_based"
             qb = QueryBuilder(SearchConfig())
             ai_keywords = qb._extract_keywords(message_text) or [message_text]
 
-        # 3. Route based on the AI's classifications
         if ai_intent == "product_search":
             response = await handle_product_search(message=ai_keywords, customer=customer, phone_number=clean_phone, quoted_wamid=quoted_wamid)
         
@@ -371,12 +375,10 @@ async def process_message(phone_number: str, message_text: str, message_type: st
              response = await handle_human_escalation(phone_number=clean_phone, customer=customer)
 
         elif ai_intent == "product_inquiry":
-            # This is the new flow that fixes your original problem
-            # It uses the AI's Q&A ability instead of searching
             try:
                 answer = await asyncio.wait_for(
                     ai_service.get_product_qa(
-                        query=" ".join(ai_keywords), # Join the list into a string
+                        query=" ".join(ai_keywords),
                         product=None
                     ),
                     timeout=15.0
@@ -396,8 +398,6 @@ async def process_message(phone_number: str, message_text: str, message_type: st
             response = await handle_general_inquiry(message=ai_keywords, customer=customer, phone_number=clean_phone, quoted_wamid=quoted_wamid)
 
         else: 
-            # ai_intent is 'rule_based' or a fallback
-            # Now we run your ORIGINAL rule-based logic
             logger.debug("AI intent not definitive, running rule-based analyzer.")
             intent = await analyze_intent(message_text, message_type, customer, quoted_wamid)
             response = await route_message(intent, clean_phone, message_text, customer, quoted_wamid)
@@ -407,6 +407,7 @@ async def process_message(phone_number: str, message_text: str, message_type: st
     except Exception as e:
         logger.error(f"Message processing error for {phone_number}: {e}", exc_info=True)
         return string_service.get_string("ERROR_GENERAL", strings.ERROR_GENERAL)
+
 
 # --- Helper function to get or create a customer ---
 async def get_or_create_customer(phone_number: str, profile_name: str = None) -> Dict[str, Any]:

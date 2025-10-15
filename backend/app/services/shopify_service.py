@@ -88,8 +88,10 @@ class ShopifyService:
 
         try:
             # --- THIS IS THE FIX ---
-            # The 'query' variable will now be "ruby necklace", which works correctly with the 'title' filter.
-            url = f"https://{self.store_url}/admin/api/2024-01/products.json?limit={limit}&query={query}"
+            # We now construct a more specific query that targets only the product title.
+            # This prevents matches in the description or tags from appearing.
+            search_query = f'title:"*{query}*"'
+            url = f"https://{self.store_url}/admin/api/2025-07/products.json?limit={limit}&query={search_query}"
             # --- END OF FIX ---
             
             headers = {"X-Shopify-Access-Token": self.access_token}
@@ -156,7 +158,7 @@ class ShopifyService:
     async def get_all_products(self) -> List[Product]:
         """Fetches all published products from Shopify, handling pagination."""
         products = []
-        url = f"https://{self.store_url}/admin/api/2024-01/products.json?status=active&limit=250"
+        url = f"https://{self.store_url}/admin/api/2025-07/products.json?status=active&limit=250"
         
         logger.info("Starting to fetch all products from Shopify...")
         

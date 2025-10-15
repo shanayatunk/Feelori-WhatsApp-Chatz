@@ -433,6 +433,27 @@ async def get_or_create_customer(phone_number: str, profile_name: str = None) ->
     await cache_service.set(CacheKeys.CUSTOMER_DATA_V2.format(phone=phone_number), json.dumps(customer, default=str), ttl=1800)
     return customer
 
+def _get_whatsapp_product_id(product: Product) -> str:
+    """
+    Extracts the numeric product ID from a GID for WhatsApp Catalog,
+    with added resilience and logging.
+    """
+    if not product or not product.id:
+        logger.warning("Attempted to get WhatsApp product ID from an invalid product object.")
+        return ""
+    
+    product_id_str = str(product.id)
+    
+    if 'gid://' in product_id_str:
+        # Handle edge cases like trailing slashes before splitting
+        numeric_id = product_id_str.rstrip('/').split('/')[-1]
+        logger.debug(f"Converted GraphQL ID {product_id_str} to numeric ID {numeric_id}")
+        return numeric_id
+    
+    logger.debug(f"Using existing numeric ID: {product_id_str}")
+    return product_id_str
+
+
 # --- Helper function to extract text from any message type ---
 def get_message_text(message: Dict[str, Any]) -> str:
     """Extracts the textual content from various WhatsApp message types."""
@@ -1257,23 +1278,16 @@ async def _send_product_card(products: List[Product], customer: Dict, header_tex
     """Sends a rich multi-product message card."""
     catalog_id = await whatsapp_service.get_catalog_id()
     
-    # --- THIS IS THE FIX ---
-    # Filter the list to include only products that are in stock before preparing the payload.
-    # Also, ensure the product ID is valid.
     available_products = [p for p in products if p.availability == "in_stock" and p.id]
 
-    # If after filtering there are no products, we can't send the message.
-    # You might want to handle this case, but for now, we'll proceed.
-    # The fallback logic will still catch it if the list becomes empty.
-    
+    # --- THIS IS THE FIX ---
+    # Use the new helper function to ensure all IDs are numeric.
     product_items = [
-        {"product_retailer_id": str(p.id).rstrip('/').split('/')[-1]}
+        {"product_retailer_id": _get_whatsapp_product_id(p)}
         for p in available_products
-        if str(p.id).rstrip('/').split('/')[-1] # Extra check for safety
     ]
     # --- END OF FIX ---
 
-    # Pass the filtered list to the fallback as well.
     await whatsapp_service.send_multi_product_message(
         to=customer["phone_number"], header_text=header_text, body_text=body_text,
         footer_text="Powered by FeelOri", catalog_id=catalog_id,

@@ -74,7 +74,7 @@ class ShopifyService:
         products, _ = await self.get_products(f'handle:"{handle}"', limit=1)
         return products[0] if products else None
 
-async def get_products(self, query: str, limit: int = 25, sort_key: str = "RELEVANCE", filters: Optional[Dict] = None) -> Tuple[List[Product], int]:
+    async def get_products(self, query: str, limit: int = 25, sort_key: str = "RELEVANCE", filters: Optional[Dict] = None) -> Tuple[List[Product], int]:
         """Executes a product search via the Admin REST API."""
         # The cache key remains the same
         cache_key = f"shopify_search:{query}:{limit}:{sort_key}"

@@ -114,7 +114,7 @@ class WhatsAppService:
         return await self.send_whatsapp_request(payload)
 
     # --- THIS FUNCTION IS NOW CORRECTED ---
-async def send_template_message(
+    async def send_template_message(
         self,
         to: str,
         template_name: str,

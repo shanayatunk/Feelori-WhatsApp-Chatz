@@ -865,7 +865,7 @@ async def handle_buy_request(product_id: str, customer: Dict) -> Optional[str]:
         product_url = shopify_service.get_product_page_url(product.handle)
         return f"This product is currently unavailable. You can view it here: {product_url}"
 
-async def handle_price_inquiry(message: str, customer: Dict, **kwargs) -> Optional[str]:4
+async def handle_price_inquiry(message: str, customer: Dict, **kwargs) -> Optional[str]:
     """Handles direct questions about price, considering context."""
     phone_number = customer["phone_number"]
     product_list_raw = await cache_service.redis.get(CacheKeys.LAST_PRODUCT_LIST.format(phone=phone_number))

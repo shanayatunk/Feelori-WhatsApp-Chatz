@@ -99,26 +99,23 @@ async def process_abandoned_checkouts():
 
             customer_name = customer.get("first_name", "there")
             checkout_url = checkout.get("abandoned_checkout_url")
-            line_items = checkout.get("line_items", [])
             
-            first_item_image_url = None
-            if line_items and line_items[0].get("variant", {}).get("image", {}).get("src"):
-                 first_item_image_url = line_items[0]["variant"]["image"]["src"]
-
             # --- THIS IS THE FIX ---
-            # Correctly parse the URL to include the unique checkout token
+            # 1. Remove all logic related to getting an image URL.
+            # 2. Prepare the button parameter.
             button_param = ""
             if checkout_url and "checkouts/" in checkout_url:
                 button_param = checkout_url.split("checkouts/", 1)[1]
-            # --- END OF FIX ---
 
+            # 3. Call the service using the new 'header_text_param'.
             await whatsapp_service.send_template_message(
                 to=phone,
                 template_name="abandoned_cart_reminder_v1",
-                header_image_url=first_item_image_url,
-                body_params=[customer_name],
+                header_text_param=customer_name, # Pass the customer's name to the header
+                body_params=[customer_name], # The body still needs its own parameters
                 button_url_param=button_param
             )
+            # --- END OF FIX ---
             
             await db_service.mark_reminder_as_sent(checkout_id)
             logger.info(f"Successfully sent abandoned cart reminder for checkout ID {checkout_id}.")

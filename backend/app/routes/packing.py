@@ -125,6 +125,27 @@ async def requeue_order(order_id: str, request: Request, current_user: dict = De
     return APIResponse(success=True, message="Order moved back to pending.", version="v1")
 # --- END OF NEW FUNCTION ---
 
+# --- NEW ENDPOINT FOR REACT PERFORMANCE PAGE ---
+@router.get("/packer-performance", response_model=APIResponse)
+@limiter.limit("10/minute")
+async def get_packer_performance_metrics(
+    request: Request,
+    days: int = 7, # Add a query parameter for the number of days
+    current_user: dict = Depends(verify_jwt_token)
+):
+    """Provides advanced packer performance metrics for the React dashboard."""
+    security_service.EnhancedSecurityService.validate_admin_session(request, current_user)
+    
+    # Call the correct, advanced metrics function from the database service
+    metrics = await db_service.get_packer_performance_metrics(days=days)
+    
+    return APIResponse(
+        success=True,
+        message=f"Packer performance for the last {days} days retrieved.",
+        data=metrics
+    )
+# --- END OF NEW ENDPOINT ---
+
 # API endpoint for packing metrics
 @router.get("/metrics", response_model=APIResponse)
 @limiter.limit("10/minute")
@@ -137,3 +158,5 @@ async def get_packing_metrics(request: Request, current_user: dict = Depends(ver
         message="Packing metrics retrieved successfully.",
         data=metrics
     )
+
+

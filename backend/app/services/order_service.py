@@ -826,6 +826,7 @@ async def handle_interactive_button_response(message: str, customer: Dict, **kwa
     
     return "I didn't understand that selection. How can I help?"
 
+
 async def handle_buy_request(product_id: str, customer: Dict) -> Optional[str]:
     """Handles a 'Buy Now' request, checking for product variants."""
     product = await shopify_service.get_product_by_id(product_id)
@@ -843,28 +844,28 @@ async def handle_buy_request(product_id: str, customer: Dict) -> Optional[str]:
         return "[Bot asked for variant selection]"
     elif variants:
         # --- THIS IS THE FIX ---
-        # Instead of a marketing template, we use a simpler utility template.
+        # 1. Get the direct add-to-cart URL.
         cart_url = shopify_service.get_add_to_cart_url(variants[0]["id"])
 
-        # Extract the dynamic part of the URL for the template's button
-        button_param = ""
-        if '/cart/' in cart_url:
-            button_param = cart_url.split('/cart/')[1]
-
-        # Send a pre-approved UTILITY template message
-        await whatsapp_service.send_template_message(
-            to=customer["phone_number"],
-            template_name="complete_purchase_v1",  # A new, cheaper template
-            body_params=[product.title],
-            button_url_param=button_param
+        # 2. Create a simple text message.
+        response_text = (
+            f"Perfect! I've added the *{product.title}* to your cart. "
+            f"Complete your purchase here:\n{cart_url}"
         )
-        return f"[Sent 'Complete Purchase' button for {product.title}]"
+        
+        # 3. Send the plain text message instead of a template.
+        await whatsapp_service.send_message(
+            to_phone=customer["phone_number"],
+            message=response_text
+        )
+        
+        return f"[Sent plain text checkout link for {product.title}]"
         # --- END OF FIX ---
     else:
         product_url = shopify_service.get_product_page_url(product.handle)
         return f"This product is currently unavailable. You can view it here: {product_url}"
 
-async def handle_price_inquiry(message: str, customer: Dict, **kwargs) -> Optional[str]:
+async def handle_price_inquiry(message: str, customer: Dict, **kwargs) -> Optional[str]:4
     """Handles direct questions about price, considering context."""
     phone_number = customer["phone_number"]
     product_list_raw = await cache_service.redis.get(CacheKeys.LAST_PRODUCT_LIST.format(phone=phone_number))

@@ -114,13 +114,14 @@ class WhatsAppService:
         return await self.send_whatsapp_request(payload)
 
     # --- THIS FUNCTION IS NOW CORRECTED ---
-    async def send_template_message(
-        self, 
-        to: str, 
-        template_name: str, 
-        body_params: list, 
-        header_image_url: str | None = None,
-        button_url_param: str | None = None
+async def send_template_message(
+        self,
+        to: str,
+        template_name: str,
+        body_params: list,
+        header_image_url: Optional[str] = None,
+        header_text_param: Optional[str] = None, # <-- ADD THIS NEW PARAMETER
+        button_url_param: Optional[str] = None
     ) -> Optional[str]:
         """Sends a pre-approved WhatsApp message template with optional header and button parameters."""
         clean_phone = re.sub(r"[^\d+]", "", to)
@@ -128,13 +129,23 @@ class WhatsAppService:
             clean_phone = "+" + clean_phone.lstrip("+")
 
         components = []
-        
-        # --- NEW: Add header component if an image URL is provided ---
+
+        # --- REVISED LOGIC TO HANDLE BOTH HEADER TYPES ---
+        if header_image_url and header_text_param:
+            logger.error(f"Template message for '{template_name}' cannot have both an image and text header.")
+            return None
+
         if header_image_url:
             components.append({
                 "type": "header",
                 "parameters": [{"type": "image", "image": {"link": header_image_url}}]
             })
+        elif header_text_param:
+            components.append({
+                "type": "header",
+                "parameters": [{"type": "text", "text": str(header_text_param)}]
+            })
+        # --- END OF REVISED LOGIC ---
 
         # Add body component
         if body_params:
@@ -142,7 +153,7 @@ class WhatsAppService:
                 "type": "body",
                 "parameters": [{"type": "text", "text": str(p)} for p in body_params]
             })
-        
+
         # Add button component
         if button_url_param:
             components.append({

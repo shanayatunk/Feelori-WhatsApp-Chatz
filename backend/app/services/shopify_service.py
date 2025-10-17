@@ -74,8 +74,9 @@ class ShopifyService:
         products, _ = await self.get_products(f'handle:"{handle}"', limit=1)
         return products[0] if products else None
 
-    async def get_products(self, query: str, limit: int = 25, sort_key: str = "RELEVANCE", filters: Optional[Dict] = None) -> Tuple[List[Product], int]:
+async def get_products(self, query: str, limit: int = 25, sort_key: str = "RELEVANCE", filters: Optional[Dict] = None) -> Tuple[List[Product], int]:
         """Executes a product search via the Admin REST API."""
+        # The cache key remains the same
         cache_key = f"shopify_search:{query}:{limit}:{sort_key}"
         cached_products = await cache_service.get(cache_key)
         if cached_products:
@@ -87,12 +88,24 @@ class ShopifyService:
                 logger.warning(f"Corrupted product search cache for query: {query}")
 
         try:
-            # --- THIS IS THE FIX ---
-            # We now construct a more specific query that targets only the product title.
-            # This prevents matches in the description or tags from appearing.
-            search_query = f'title:"*{query}*"'
+            # --- THIS IS THE NEW, MORE POWERFUL SEARCH LOGIC ---
+            # 1. Split the user's query into individual keywords.
+            keywords = query.split(' AND ')
+            
+            # 2. For each keyword, build a sub-query that searches across multiple fields.
+            query_parts = []
+            for keyword in keywords:
+                # We wrap each keyword in wildcards (*) to find partial matches.
+                keyword_with_wildcard = f"*{keyword}*"
+                # This sub-query searches title, product_type, and tags for the keyword.
+                part = f'(title:"{keyword_with_wildcard}" OR product_type:"{keyword_with_wildcard}" OR tag:"{keyword_with_wildcard}")'
+                query_parts.append(part)
+            
+            # 3. Join the sub-queries with AND to ensure all conditions are met.
+            search_query = " AND ".join(query_parts)
+            
             url = f"https://{self.store_url}/admin/api/2025-07/products.json?limit={limit}&query={search_query}"
-            # --- END OF FIX ---
+            # --- END OF NEW LOGIC ---
             
             headers = {"X-Shopify-Access-Token": self.access_token}
 
@@ -363,12 +376,18 @@ class ShopifyService:
                 fulfillment = resp.json().get("fulfillment", {})
                 fulfillment_id = fulfillment.get("id")
                 tracking_url = (fulfillment.get("tracking_urls") or [""])[0]
-                # --- FIX: Return the tracking_url ---
                 return True, fulfillment_id, tracking_url
+            
+            # --- THIS IS THE FIX ---
+            # Explicitly return the failure tuple if the status code is not 201.
+            logger.error(f"Shopify fulfillment failed for order {order_id} with status {resp.status_code}: {resp.text}")
             return False, None, None
+            # --- END OF FIX ---
+
         except Exception as e:
             logger.error(f"Shopify fulfill_order exception for {order_id}: {e}", exc_info=True)
             return False, None, None
+
             
     # --- URL Generation Helpers ---
 

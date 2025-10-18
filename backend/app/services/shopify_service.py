@@ -76,7 +76,6 @@ class ShopifyService:
 
     async def get_products(self, query: str, limit: int = 25, sort_key: str = "RELEVANCE", filters: Optional[Dict] = None) -> Tuple[List[Product], int]:
         """Executes a product search via the Admin REST API."""
-        # The cache key remains the same
         cache_key = f"shopify_search:{query}:{limit}:{sort_key}"
         cached_products = await cache_service.get(cache_key)
         if cached_products:
@@ -88,24 +87,20 @@ class ShopifyService:
                 logger.warning(f"Corrupted product search cache for query: {query}")
 
         try:
-            # --- THIS IS THE NEW, MORE POWERFUL SEARCH LOGIC ---
-            # 1. Split the user's query into individual keywords.
             keywords = query.split(' AND ')
             
-            # 2. For each keyword, build a sub-query that searches across multiple fields.
             query_parts = []
             for keyword in keywords:
-                # We wrap each keyword in wildcards (*) to find partial matches.
-                keyword_with_wildcard = f"*{keyword}*"
-                # This sub-query searches title, product_type, and tags for the keyword.
-                part = f'(title:"{keyword_with_wildcard}" OR product_type:"{keyword_with_wildcard}" OR tag:"{keyword_with_wildcard}")'
+                # --- THIS IS THE FIX ---
+                # We remove the wildcards (*) to make the search more precise.
+                # A search for "earring" is better than "*earring*".
+                part = f'(title:"{keyword}" OR product_type:"{keyword}" OR tag:"{keyword}")'
+                # --- END OF FIX ---
                 query_parts.append(part)
             
-            # 3. Join the sub-queries with AND to ensure all conditions are met.
             search_query = " AND ".join(query_parts)
             
             url = f"https://{self.store_url}/admin/api/2025-07/products.json?limit={limit}&query={search_query}"
-            # --- END OF NEW LOGIC ---
             
             headers = {"X-Shopify-Access-Token": self.access_token}
 

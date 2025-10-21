@@ -119,9 +119,17 @@ export interface BroadcastDetails extends BroadcastJob {
   image_url?: string;
 }
 
+// Add Type for Broadcast Group
+export interface BroadcastGroup {
+  id: string; // Corresponds to _id from backend
+  name: string;
+  phone_count: number;
+}
+
+
 // --- API Service ---
 const makeRequest = async (url: string, options: RequestInit = {}) => {
-  
+
   const token = typeof window !== 'undefined' ? localStorage.getItem('feelori_admin_token') : null;
 
   const headers = {
@@ -139,15 +147,20 @@ const makeRequest = async (url: string, options: RequestInit = {}) => {
   return response.json();
 };
 
+// ADDED from previous step if missing
 export const resolveTriageTicket = async (ticketId: string): Promise<{ message: string }> => {
   return makeRequest(`${API_BASE_URL}/triage/${ticketId}/resolve`, {
     method: 'PUT',
   });
 };
 
+// ADDED from previous step if missing
 export const getTriageMediaUrl = (mediaId: string): string => {
-  return `${API_BASE_URL}/triage/media/${mediaId}`;
+   const token = typeof window !== 'undefined' ? localStorage.getItem('feelori_admin_token') : null;
+   // Assuming the media endpoint is directly under /triage and needs auth
+   return `${API_BASE_URL}/triage/media/${mediaId}`; // Token will be added by makeRequest header
 };
+
 
 export const apiService = {
   login: async (password: string): Promise<{ access_token: string }> => {
@@ -162,8 +175,59 @@ export const apiService = {
       return result.data.stats;
   },
 
+  // --- NEW Broadcast Group Functions ---
+  createBroadcastGroup: async (name: string, phoneNumbers: string[]): Promise<{ group_id: string }> => {
+    const result = await makeRequest(`${API_BASE_URL}/admin/broadcast-groups`, {
+      method: 'POST',
+      body: JSON.stringify({ name, phone_numbers: phoneNumbers }),
+    });
+    // Ensure the backend response structure matches if needed, e.g., result.data.group_id
+    return result.data;
+  },
+
+  getBroadcastGroups: async (): Promise<BroadcastGroup[]> => {
+    const result = await makeRequest(`${API_BASE_URL}/admin/broadcast-groups`);
+    // Map backend _id to frontend id
+    return result.data.groups.map((g: any) => ({ ...g, id: g._id }));
+  },
+  // --- END NEW ---
+
+  // --- UPDATED Broadcast Function ---
+  broadcast: async (
+      message: string,
+      targetType: string,
+      imageUrl?: string,
+      targetPhones?: string[], // Kept for potential future use
+      targetGroupId?: string   // Add group ID parameter
+    ): Promise<{ message: string; job_id: string }> => { // Return job_id too
+
+    let body: any = { message, target_type: targetType, image_url: imageUrl };
+
+    if (targetType === 'custom_group' && targetGroupId) {
+        body.target_group_id = targetGroupId;
+    } else if (targetType === 'custom' && targetPhones) { // Renamed targetType for clarity if using phone list
+        body.target_phones = targetPhones;
+        // Backend expects 'custom' for phone list based on current structure, adjust if needed
+    } else if (['all', 'active', 'inactive', 'recent'].includes(targetType)) {
+        // No extra body params needed for standard types
+    } else if (targetType !== 'custom_group') { // Avoid error if custom_group is selected but ID is missing initially
+         throw new Error(`Invalid target type or missing required parameters for broadcast: ${targetType}`);
+    }
+    // If targetType is custom_group but targetGroupId is missing, the backend should handle validation
+
+    const result = await makeRequest(`${API_BASE_URL}/admin/broadcast`, {
+      method: 'POST',
+      body: JSON.stringify(body),
+    });
+    // Assuming backend returns job_id in data
+    return { message: result.message, job_id: result.data?.job_id };
+  },
+  // --- END UPDATED ---
+
   getBroadcastRecipients: async (jobId: string, page: number, search: string): Promise<{ recipients: Recipient[], pagination: Pagination }> => {
-    const result = await makeRequest(`${API_BASE_URL}/admin/broadcasts/${jobId}/recipients?page=${page}&limit=20&search=${search}`);
+    // Ensure search parameter is properly encoded if it contains special characters
+    const searchParam = search ? `&search=${encodeURIComponent(search)}` : '';
+    const result = await makeRequest(`${API_BASE_URL}/admin/broadcasts/${jobId}/recipients?page=${page}&limit=20${searchParam}`);
     return result.data;
   },
 
@@ -210,15 +274,10 @@ export const apiService = {
     return result.data.escalations;
   },
 
-  broadcast: async (message: string, target: string, imageUrl?: string): Promise<{ message: string }> => {
-    return makeRequest(`${API_BASE_URL}/admin/broadcast`, {
-      method: 'POST',
-      body: JSON.stringify({ message, target_type: target, image_url: imageUrl }),
-    });
-  },
-
   getPackingMetrics: async (): Promise<PackingMetrics> => {
-      const result = await makeRequest(`${API_BASE_URL}/admin/packer-performance`);
+      // Assuming this should point to the performance endpoint now? Or a different one?
+      // Using packer-performance as per previous context. Adjust if there's a specific /packing/metrics still.
+      const result = await makeRequest(`${API_BASE_URL}/admin/packer-performance`); // Or /packing/metrics if that exists
       return result.data;
   },
 
@@ -251,7 +310,7 @@ export const apiService = {
   updateStrings: async (strings: StringResource[]): Promise<{ message: string }> => {
     return makeRequest(`${API_BASE_URL}/admin/strings`, {
       method: 'PUT',
-      body: JSON.stringify({ strings }),
+      body: JSON.stringify({ strings }), // Ensure body structure matches backend Pydantic model
     });
   },
 };
@@ -271,11 +330,13 @@ export type TriageTicket = {
 export const getTriageTickets = async (): Promise<{ tickets: TriageTicket[] }> => {
   try {
     const fullUrl = `${API_BASE_URL}/triage`;
-    
+
     const result = await makeRequest(fullUrl);
     return result.data;
   } catch (error) {
     console.error("Failed to fetch triage tickets:", error);
+    // Rethrow or return an empty structure
     throw new Error("Failed to fetch triage tickets");
+    // return { tickets: [] }; // Alternative: return empty list on error
   }
 };

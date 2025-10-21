@@ -17,9 +17,28 @@ class TokenResponse(BaseModel):
 
 class BroadcastRequest(BaseModel):
     message: str
-    target_type: str = Field(default="all", pattern="^(all|active|recent)$")
+    target_type: str = Field(default="all", pattern="^(all|active|recent|inactive|custom_group)$") # Add custom_group
     target_phones: Optional[List[str]] = None
+    target_group_id: Optional[str] = None # New field for group ID
     image_url: Optional[str] = None
+
+class BroadcastGroupCreateRequest(BaseModel):
+    name: str = Field(..., min_length=3, max_length=50)
+    phone_numbers: List[str]
+
+    @validator('phone_numbers')
+    def check_phone_numbers(cls, v):
+        if not v:
+            raise ValueError('At least one phone number is required')
+        # Add basic validation if needed, e.g., check format
+        # For simplicity, we assume numbers are pre-validated/sanitized on the frontend
+        # or rely on the db_service sanitization.
+        return v
+
+class BroadcastGroupResponse(BaseModel):
+    id: str = Field(..., alias='_id')
+    name: str
+    phone_count: int
 
 class APIResponse(BaseModel):
     success: bool

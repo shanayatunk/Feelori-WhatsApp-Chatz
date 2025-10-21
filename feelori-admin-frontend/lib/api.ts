@@ -166,6 +166,8 @@ const makeRequest = async (url: string, options: RequestInit = {}) => {
     try {
         const error = await response.json();
         errorDetail = error.detail || `Request failed with status ${response.status}`;
+    // FIX: Disable the eslint warning for the unused 'e' in the catch block
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     } catch (e) {
         // If parsing error response fails, use status text
         errorDetail = `Request failed with status ${response.status}: ${response.statusText}`;
@@ -273,6 +275,7 @@ export const apiService = {
   // --- END UPDATED ---
 
   getBroadcastRecipients: async (jobId: string, page: number, search: string): Promise<{ recipients: Recipient[], pagination: Pagination }> => {
+    // Ensure search parameter is properly encoded if it contains special characters
     const searchParam = search ? `&search=${encodeURIComponent(search)}` : '';
     const result = await makeRequest(`${API_BASE_URL}/admin/broadcasts/${jobId}/recipients?page=${page}&limit=20${searchParam}`);
      if (!result || !result.data) {
@@ -350,16 +353,16 @@ export const apiService = {
 
   getPackingMetrics: async (): Promise<PackingMetrics> => {
       const result = await makeRequest(`${API_BASE_URL}/admin/packer-performance`); // Assuming this endpoint provides necessary metrics
-       if (!result || !result.data) {
+       if (!result || !result.data || !result.data.kpis) { // Check for kpis specifically
            throw new Error("Invalid packing metrics data received from API");
        }
-      // Adapt if the structure is different from PackerPerformanceData
-      return result.data.kpis ? { status_counts: { // Example adaptation
+      // Adapt structure based on PackerPerformanceData
+      return { status_counts: {
           'Pending': result.data.kpis.total_orders - (result.data.kpis.completed_orders + result.data.kpis.on_hold_orders), // Approximate pending
           'On Hold': result.data.kpis.on_hold_orders,
           'Completed': result.data.kpis.completed_orders
-          // Add 'In Progress' if available
-        }} : { status_counts: {} };
+          // Add 'In Progress' if available directly in kpis
+        }};
   },
 
   getRules: async (): Promise<Rule[]> => {

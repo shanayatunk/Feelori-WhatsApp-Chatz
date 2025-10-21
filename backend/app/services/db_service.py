@@ -14,7 +14,7 @@ from app.utils.metrics import database_operations_counter
 from app.services.cache_service import cache_service
 from app.services import security_service
 from app.services.shopify_service import shopify_service
-
+from app.services.security_service import EnhancedSecurityService
 logger = logging.getLogger(__name__)
 
 # Constants
@@ -186,6 +186,7 @@ class DatabaseService:
             ("abandoned_checkouts", [("updated_at", 1), ("reminder_sent", 1), ("completed_at", 1)], {}),
             ("triage_tickets", [("status", 1), ("_id", 1)], {}),
             ("human_escalation_analytics", [("timestamp", -1)], {}),
+            ("broadcast_groups", [("name", 1)], {"unique": True}),
         ]
 
         for collection, keys, options in indexes:
@@ -715,41 +716,99 @@ class DatabaseService:
 
     # ==================== Broadcast Operations ====================
 
-    async def get_customers_for_broadcast(
-        self, 
-        target_type: str, 
-        target_phones: Optional[List[str]] = None
+async def get_customers_for_broadcast(
+        self,
+        target_type: str,
+        target_phones: Optional[List[str]] = None,
+        target_group_id: Optional[str] = None # Add target_group_id parameter
     ) -> List[Dict[str, Any]]:
         """
         Get customers for broadcast based on targeting criteria.
-        
-        Args:
-            target_type: One of 'all', 'active', 'recent', 'inactive', 'custom'
-            target_phones: Specific phone numbers for 'custom' targeting
-            
-        Returns:
-            List of customer documents with phone numbers
+        Now includes support for custom groups.
         """
+        # --- NEW: Handle custom group targeting ---
+        if target_type == "custom_group" and target_group_id:
+            if not self._validate_object_id(target_group_id):
+                logger.warning(f"Invalid target_group_id format: {target_group_id}")
+                return []
+            group = await self.db.broadcast_groups.find_one({"_id": ObjectId(target_group_id)})
+            if group and group.get("phone_numbers"):
+                # Return list of dicts with 'phone_number' key as expected by the caller
+                return [{"phone_number": phone} for phone in group["phone_numbers"]]
+            else:
+                logger.warning(f"Broadcast group not found or empty: {target_group_id}")
+                return []
+        # --- END NEW ---
+
+        # Existing logic for other target types
         if target_phones:
-            sanitized_phones = [self._sanitize_phone(p) for p in target_phones]
-            sanitized_phones = [p for p in sanitized_phones if p]
-            return await self.db.customers.find(
+            # Enhanced Sanitization using the existing service method
+            sanitized_phones = [EnhancedSecurityService.sanitize_phone_number(p) for p in target_phones]
+            sanitized_phones = [p for p in sanitized_phones if p] # Filter out empty strings
+            if not sanitized_phones:
+                 logger.warning("No valid phone numbers provided for custom broadcast.")
+                 return []
+            # Fetch minimal data needed
+            cursor = self.db.customers.find(
                 {"phone_number": {"$in": sanitized_phones}},
-                {"phone_number": 1}
-            ).to_list(length=None)
-        
+                {"phone_number": 1, "name": 1, "_id": 0} # Fetch name if needed later
+            )
+            return await cursor.to_list(length=None)
+
         query = {}
         now = self._now_utc()
-        
+
         if target_type == "active":
-            query["last_interaction"] = {"$gte": now - timedelta(hours=24)}
-        elif target_type == "recent":
+            # Active within last 7 days (adjust as needed)
             query["last_interaction"] = {"$gte": now - timedelta(days=7)}
+        elif target_type == "recent": # Let's define recent as created in last 30 days
+             query["created_at"] = {"$gte": now - timedelta(days=30)}
         elif target_type == "inactive":
+            # No interaction in the last 30 days
             query["last_interaction"] = {"$lt": now - timedelta(days=30)}
-        # 'all' uses empty query
-        
-        return await self.db.customers.find(query, {"phone_number": 1}).to_list(length=None)
+        # 'all' uses empty query {}
+
+        # Fetch minimal data needed
+        cursor = self.db.customers.find(query, {"phone_number": 1, "name": 1, "_id": 0})
+        return await cursor.to_list(length=None) # Fetch all matching
+
+async def create_broadcast_group(self, name: str, phone_numbers: List[str]) -> Optional[str]:
+        """Creates a new broadcast group."""
+        sanitized_phones = list(set(
+            p for p in (self._sanitize_phone(num) for num in phone_numbers) if p
+        ))
+        if not sanitized_phones:
+            logger.warning("Attempted to create group with no valid phone numbers.")
+            return None
+
+        group_doc = {
+            "name": name,
+            "phone_numbers": sanitized_phones,
+            "created_at": self._now_utc()
+        }
+        try:
+            result = await self.db.broadcast_groups.insert_one(group_doc)
+            return str(result.inserted_id)
+        except Exception as e:
+            logger.error(f"Failed to create broadcast group '{name}': {e}", exc_info=True)
+            return None
+
+    async def get_broadcast_groups(self) -> List[Dict[str, Any]]:
+        """Retrieves all broadcast groups."""
+        try:
+            cursor = self.db.broadcast_groups.find({}, {"name": 1, "phone_numbers": 1}).sort("name", 1)
+            groups = await cursor.to_list(length=None) # Fetch all groups
+            # Return necessary info including ID and count for frontend
+            return [
+                {
+                    "_id": str(group["_id"]),
+                    "name": group.get("name", "Unnamed Group"),
+                    "phone_count": len(group.get("phone_numbers", []))
+                 } for group in groups
+            ]
+        except Exception as e:
+            logger.error(f"Failed to retrieve broadcast groups: {e}", exc_info=True)
+            return []
 
     async def create_broadcast_job(
         self, 

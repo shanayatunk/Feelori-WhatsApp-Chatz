@@ -8,7 +8,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Request, BackgroundTasks
 from fastapi.responses import StreamingResponse
 from app.config.settings import settings
-from app.models.api import APIResponse, BroadcastGroupCreate, BroadcastGroupResponse, BroadcastRequest, Rule, StringUpdateRequest
+from app.models.api import APIResponse, BroadcastGroupCreate, BroadcastRequest, Rule, StringUpdateRequest
 from app.utils.dependencies import verify_jwt_token
 from app.services import security_service, shopify_service, cache_service
 from app.services.db_service import db_service

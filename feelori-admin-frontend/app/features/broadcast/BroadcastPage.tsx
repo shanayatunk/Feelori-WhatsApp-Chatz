@@ -1,5 +1,5 @@
 import React from 'react';
-import { apiService } from '../../../lib/api';
+import { apiService, BroadcastGroup } from '../../../lib/api';
 import { Button } from '../../components/ui/Button';
 import { Card, CardHeader, CardContent, CardTitle, CardDescription } from '../../components/ui/Card';
 import { Input } from '../../components/ui/Input';
@@ -14,6 +14,36 @@ const ComposeView = () => {
     const [target, setTarget] = React.useState('active');
     const [isSending, setIsSending] = React.useState(false);
     const [result, setResult] = React.useState<{success: boolean, message: string} | null>(null);
+    const [groups, setGroups] = React.useState<BroadcastGroup[]>([]);
+    const [selectedGroup, setSelectedGroup] = React.useState<string>('');
+    const [newGroupName, setNewGroupName] = React.useState('');
+    const [newGroupPhones, setNewGroupPhones] = React.useState('');
+
+    const handleCreateGroup = async () => {
+        if (!newGroupName || !newGroupPhones) return;
+        const phone_numbers = newGroupPhones.split('\n').filter(p => p.trim() !== '');
+
+        try {
+            const newGroup = await apiService.createBroadcastGroup(newGroupName, phone_numbers);
+            setGroups([...groups, newGroup]);
+            setNewGroupName('');
+            setNewGroupPhones('');
+        } catch (error) {
+            console.error("Failed to create group:", error);
+        }
+    };
+
+    React.useEffect(() => {
+        const fetchGroups = async () => {
+            try {
+                const fetchedGroups = await apiService.getBroadcastGroups();
+                setGroups(fetchedGroups);
+            } catch (error) {
+                console.error("Failed to fetch broadcast groups:", error);
+            }
+        };
+        fetchGroups();
+    }, []);
 
     const handleSend = async () => {
         if (!message || isSending) return;
@@ -21,7 +51,7 @@ const ComposeView = () => {
         setResult(null);
 
         try {
-            const response = await apiService.broadcast(message, target, imageUrl);
+            const response = await apiService.broadcast(message, target, imageUrl, selectedGroup);
             setResult({ success: true, message: response.message });
             setMessage('');
             setImageUrl('');
@@ -61,6 +91,22 @@ const ComposeView = () => {
                                         <span className="ml-2 text-sm text-gray-900 capitalize">{t} Customers</span>
                                     </label>
                                 ))}
+                                <label className="flex items-center">
+                                    <input type="radio" value="custom_group" checked={target === 'custom_group'} onChange={() => setTarget('custom_group')} className="h-4 w-4 text-[#ff4d6d] focus:ring-[#ff4d6d] border-gray-300"/>
+                                    <span className="ml-2 text-sm text-gray-900">Custom Group</span>
+                                </label>
+                                {target === 'custom_group' && (
+                                    <select
+                                        value={selectedGroup}
+                                        onChange={(e) => setSelectedGroup(e.target.value)}
+                                        className="mt-2 block w-full pl-3 pr-10 py-2 text-base border-gray-300 focus:outline-none focus:ring-[#ff4d6d] focus:border-[#ff4d6d] sm:text-sm rounded-md"
+                                    >
+                                        <option value="">Select a group</option>
+                                        {groups.map((group) => (
+                                            <option key={group._id} value={group._id}>{group.name}</option>
+                                        ))}
+                                    </select>
+                                )}
                             </div>
                         </div>
                         <Button onClick={handleSend} disabled={isSending || !message} className="w-full">
@@ -74,9 +120,9 @@ const ComposeView = () => {
                  <Card>
                     <CardHeader><CardTitle>Manage Custom Groups</CardTitle></CardHeader>
                     <CardContent className="space-y-4">
-                        <Input placeholder="New group name..." />
-                        <Textarea rows={4} placeholder="Paste phone numbers, one per line..."></Textarea>
-                        <Button variant="secondary" className="w-full">Create Group</Button>
+                        <Input placeholder="New group name..." value={newGroupName} onChange={(e) => setNewGroupName(e.target.value)} />
+                        <Textarea rows={4} placeholder="Paste phone numbers, one per line..." value={newGroupPhones} onChange={(e) => setNewGroupPhones(e.target.value)}></Textarea>
+                        <Button variant="secondary" className="w-full" onClick={handleCreateGroup}>Create Group</Button>
                     </CardContent>
                 </Card>
             </div>

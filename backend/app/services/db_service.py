@@ -8,7 +8,7 @@ from typing import List, Optional, Dict, Any, Tuple
 from enum import Enum
 
 from app.config.settings import settings
-from app.models.api import Rule, StringResource
+from app.models.api import BroadcastGroupCreate, Rule, StringResource
 from app.utils.circuit_breaker import RedisCircuitBreaker
 from app.utils.metrics import database_operations_counter
 from app.services.cache_service import cache_service
@@ -715,10 +715,47 @@ class DatabaseService:
 
     # ==================== Broadcast Operations ====================
 
+    async def create_broadcast_group(self, group_data: BroadcastGroupCreate) -> Optional[Dict[str, Any]]:
+        """
+        Create a new broadcast group.
+
+        Args:
+            group_data: Broadcast group data
+
+        Returns:
+            The created broadcast group document or None on failure
+        """
+        sanitized_phones = [self._sanitize_phone(p) for p in group_data.phone_numbers]
+
+        group_doc = {
+            "name": group_data.name,
+            "phone_numbers": [p for p in sanitized_phones if p],
+            "created_at": self._now_utc()
+        }
+
+        try:
+            result = await self.db.broadcast_groups.insert_one(group_doc)
+            new_group = await self.db.broadcast_groups.find_one({"_id": result.inserted_id})
+            return self._serialize_id(new_group)
+        except Exception as e:
+            logger.exception(f"Failed to create broadcast group: {e}")
+            return None
+
+    async def get_broadcast_groups(self) -> List[Dict[str, Any]]:
+        """
+        Get all broadcast groups.
+
+        Returns:
+            List of broadcast group documents
+        """
+        groups = await self.db.broadcast_groups.find({}).to_list(length=None)
+        return self._serialize_ids(groups)
+
     async def get_customers_for_broadcast(
         self, 
         target_type: str, 
-        target_phones: Optional[List[str]] = None
+        target_phones: Optional[List[str]] = None,
+        target_group_id: Optional[str] = None
     ) -> List[Dict[str, Any]]:
         """
         Get customers for broadcast based on targeting criteria.
@@ -730,6 +767,16 @@ class DatabaseService:
         Returns:
             List of customer documents with phone numbers
         """
+        if target_type == "custom_group":
+            if not target_group_id or not self._validate_object_id(target_group_id):
+                return []
+
+            group = await self.db.broadcast_groups.find_one({"_id": ObjectId(target_group_id)})
+            if not group:
+                return []
+
+            return [{"phone_number": p} for p in group.get("phone_numbers", [])]
+
         if target_phones:
             sanitized_phones = [self._sanitize_phone(p) for p in target_phones]
             sanitized_phones = [p for p in sanitized_phones if p]

@@ -8,7 +8,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Request, BackgroundTasks
 from fastapi.responses import StreamingResponse
 from app.config.settings import settings
-from app.models.api import APIResponse, BroadcastRequest, Rule, StringUpdateRequest
+from app.models.api import APIResponse, BroadcastGroupCreate, BroadcastGroupResponse, BroadcastRequest, Rule, StringUpdateRequest
 from app.utils.dependencies import verify_jwt_token
 from app.services import security_service, shopify_service, cache_service
 from app.services.db_service import db_service
@@ -154,7 +154,9 @@ async def broadcast_message(
     security_service.EnhancedSecurityService.validate_admin_session(request, current_user)
     
     customers_to_message = await db_service.get_customers_for_broadcast(
-        broadcast_data.target_type, broadcast_data.target_phones
+        broadcast_data.target_type,
+        broadcast_data.target_phones,
+        broadcast_data.target_group_id
     )
 
     if not customers_to_message:
@@ -184,6 +186,43 @@ async def broadcast_message(
         version=settings.api_version
     )
 
+@router.post("/broadcast-groups", response_model=APIResponse)
+async def create_broadcast_group(
+    request: Request,
+    group_data: BroadcastGroupCreate,
+    current_user: dict = Depends(verify_jwt_token)
+):
+    """Create a new broadcast group."""
+    security_service.EnhancedSecurityService.validate_admin_session(request, current_user)
+
+    new_group = await db_service.create_broadcast_group(group_data)
+
+    if not new_group:
+        raise HTTPException(status_code=500, detail="Failed to create broadcast group.")
+
+    return APIResponse(
+        success=True,
+        message="Broadcast group created successfully.",
+        data={"group": new_group},
+        version=settings.api_version
+    )
+
+@router.get("/broadcast-groups", response_model=APIResponse)
+async def get_broadcast_groups(
+    request: Request,
+    current_user: dict = Depends(verify_jwt_token)
+):
+    """Get all broadcast groups."""
+    security_service.EnhancedSecurityService.validate_admin_session(request, current_user)
+
+    groups = await db_service.get_broadcast_groups()
+
+    return APIResponse(
+        success=True,
+        message=f"Retrieved {len(groups)} broadcast groups.",
+        data={"groups": groups},
+        version=settings.api_version
+    )
 
 @router.get("/broadcasts", response_model=APIResponse)
 async def get_broadcasts(

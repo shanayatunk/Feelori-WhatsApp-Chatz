@@ -119,6 +119,12 @@ export interface BroadcastDetails extends BroadcastJob {
   image_url?: string;
 }
 
+export interface BroadcastGroup {
+  _id: string;
+  name: string;
+  phone_numbers: string[];
+}
+
 // --- API Service ---
 const makeRequest = async (url: string, options: RequestInit = {}) => {
   
@@ -210,11 +216,29 @@ export const apiService = {
     return result.data.escalations;
   },
 
-  broadcast: async (message: string, target: string, imageUrl?: string): Promise<{ message: string }> => {
+  broadcast: async (message: string, target: string, imageUrl?: string, targetGroupId?: string): Promise<{ message: string }> => {
     return makeRequest(`${API_BASE_URL}/admin/broadcast`, {
-      method: 'POST',
-      body: JSON.stringify({ message, target_type: target, image_url: imageUrl }),
+        method: 'POST',
+        body: JSON.stringify({
+            message,
+            target_type: target,
+            image_url: imageUrl,
+            target_group_id: targetGroupId,
+        }),
     });
+  },
+
+  createBroadcastGroup: async (name: string, phone_numbers: string[]): Promise<BroadcastGroup> => {
+    const result = await makeRequest(`${API_BASE_URL}/admin/broadcast-groups`, {
+        method: 'POST',
+        body: JSON.stringify({ name, phone_numbers }),
+    });
+    return result.data.group;
+  },
+
+  getBroadcastGroups: async (): Promise<BroadcastGroup[]> => {
+      const result = await makeRequest(`${API_BASE_URL}/admin/broadcast-groups`);
+      return result.data.groups;
   },
 
   getPackingMetrics: async (): Promise<PackingMetrics> => {

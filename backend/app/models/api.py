@@ -3,6 +3,7 @@
 from pydantic import BaseModel, Field
 from typing import List, Dict, Optional
 from datetime import datetime
+from bson import ObjectId
 
 # This file contains Pydantic models that define the structure of data for
 # API requests and responses, ensuring type safety and validation.
@@ -17,9 +18,10 @@ class TokenResponse(BaseModel):
 
 class BroadcastRequest(BaseModel):
     message: str
-    target_type: str = Field(default="all", pattern="^(all|active|recent)$")
+    target_type: str = Field(default="all", pattern="^(all|active|recent|custom_group)$")
     target_phones: Optional[List[str]] = None
     image_url: Optional[str] = None
+    target_group_id: Optional[str] = None
 
 class APIResponse(BaseModel):
     success: bool
@@ -62,3 +64,20 @@ class OrderHold(BaseModel):
 
 class StringUpdateRequest(BaseModel):
     strings: List[StringResource]
+
+class BroadcastGroup(BaseModel):
+    name: str = Field(..., min_length=3, max_length=50)
+    phone_numbers: List[str]
+
+class BroadcastGroupCreate(BroadcastGroup):
+    pass
+
+class BroadcastGroupResponse(BroadcastGroup):
+    id: str = Field(..., alias="_id")
+
+    class Config:
+        orm_mode = True
+        allow_population_by_field_name = True
+        json_encoders = {
+            ObjectId: str
+        }

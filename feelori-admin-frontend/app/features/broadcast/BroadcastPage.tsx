@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { apiService, BroadcastGroup } from '../../../lib/api'; // Import BroadcastGroup
+import { apiService, BroadcastGroup, Pagination } from '../../../lib/api'; // Import Pagination
 import { Button } from '../../components/ui/Button';
 import { Card, CardHeader, CardContent, CardTitle, CardDescription } from '../../components/ui/Card';
 import { Input } from '../../components/ui/Input';
@@ -117,7 +117,8 @@ const ComposeView = ({ groups, onGroupCreated }: { groups: BroadcastGroup[], onG
             }
         } else {
              // If target is not custom_group, clear the selected group ID
-             setSelectedGroupId('');
+             // Keep selectedGroupId even if target changes, in case user toggles back
+             // setSelectedGroupId(''); // Optional: uncomment to clear selection when changing target
         }
     // Dependency includes groups to handle cases where groups load after initial render
     }, [target, groups, selectedGroupId]);
@@ -126,12 +127,14 @@ const ComposeView = ({ groups, onGroupCreated }: { groups: BroadcastGroup[], onG
     const handleSend = async () => {
         if (!message.trim()) {
              setResult({ success: false, message: "Message cannot be empty." });
+             setTimeout(() => setResult(null), 5000); // Clear error after delay
              return;
         }
         if (isSending) return;
 
         if (target === 'custom_group' && !selectedGroupId) {
             setResult({ success: false, message: "Please select a custom group." });
+             setTimeout(() => setResult(null), 5000); // Clear error after delay
             return;
         }
 
@@ -168,6 +171,11 @@ const ComposeView = ({ groups, onGroupCreated }: { groups: BroadcastGroup[], onG
 
     const targetOptions = ['all', 'active', 'inactive']; // Add 'custom_group' below conditionally
 
+    // FIX: Define explicit type for the event handler
+    const handleTargetChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+        setTarget(event.target.value as 'all' | 'active' | 'inactive' | 'custom_group');
+    };
+
     return (
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
             <div className="md:col-span-2">
@@ -198,7 +206,7 @@ const ComposeView = ({ groups, onGroupCreated }: { groups: BroadcastGroup[], onG
                                             type="radio"
                                             value={t}
                                             checked={target === t}
-                                            onChange={() => setTarget(t as any)} // Cast needed here
+                                            onChange={handleTargetChange} // FIX: Use defined handler
                                             className="h-4 w-4 text-[#ff4d6d] focus:ring-[#ff4d6d] border-gray-300"
                                         />
                                         <span className="ml-2 text-sm text-gray-900 capitalize">{t} Customers</span>
@@ -211,7 +219,7 @@ const ComposeView = ({ groups, onGroupCreated }: { groups: BroadcastGroup[], onG
                                             type="radio"
                                             value="custom_group"
                                             checked={target === 'custom_group'}
-                                            onChange={() => setTarget('custom_group')}
+                                            onChange={handleTargetChange} // FIX: Use defined handler
                                             className="h-4 w-4 text-[#ff4d6d] focus:ring-[#ff4d6d] border-gray-300"
                                         />
                                         <span className="ml-2 text-sm text-gray-900">Custom Group:</span>
@@ -219,12 +227,11 @@ const ComposeView = ({ groups, onGroupCreated }: { groups: BroadcastGroup[], onG
                                             value={selectedGroupId}
                                             onChange={(e) => setSelectedGroupId(e.target.value)}
                                             // Only truly disable if target is not custom group,
-                                            // otherwise allow selection even if default is already set
                                             disabled={target !== 'custom_group'}
                                             className={`ml-2 flex-grow rounded-md border border-gray-300 bg-white px-2 py-1 text-sm text-gray-900 focus:outline-none focus:ring-2 focus:ring-[#ff4d6d] focus:ring-offset-1 ${target !== 'custom_group' ? 'opacity-50 cursor-not-allowed bg-gray-100' : ''}`}
                                         >
-                                            {/* Default empty option only if no group is selected */}
-                                            {!selectedGroupId && <option value="" disabled>Select Group</option>}
+                                            {/* Default empty option only if no group is selected AND target is custom */}
+                                            {target === 'custom_group' && !selectedGroupId && <option value="" disabled>Select Group</option>}
                                             {groups.map(group => (
                                                 <option key={group.id} value={group.id}>
                                                     {group.name} ({group.phone_count})
@@ -233,7 +240,8 @@ const ComposeView = ({ groups, onGroupCreated }: { groups: BroadcastGroup[], onG
                                         </select>
                                     </label>
                                 )}
-                                {groups.length === 0 && (
+                                {/* Show message if custom groups exist but target is not custom */}
+                                {groups.length === 0 && target !== 'custom_group' && (
                                      <p className="text-xs text-gray-500 pl-6">No custom groups created yet.</p>
                                 )}
                             </div>
@@ -272,10 +280,8 @@ export const BroadcastPage = () => {
     const [loadingGroups, setLoadingGroups] = useState(true); // Loading state for groups
     const [groupsError, setGroupsError] = useState<string | null>(null); // Error state for groups
 
-    // Function to fetch groups
-    const fetchGroups = async () => {
-        // Don't reset groups immediately, only on success
-        // setGroups([]);
+    // Function to fetch groups, memoized with useCallback
+    const fetchGroups = React.useCallback(async () => {
         setGroupsError(null);
         setLoadingGroups(true);
         try {
@@ -287,16 +293,14 @@ export const BroadcastPage = () => {
         } finally {
              setLoadingGroups(false);
         }
-    };
+    }, []); // No dependencies, function is stable
 
     // Fetch groups on initial mount and when view changes back to compose
     useEffect(() => {
-        // Only fetch if in compose view
         if (view === 'compose') {
             fetchGroups();
         }
-        // No dependency on fetchGroups itself needed if defined within scope or stable
-    }, [view]);
+    }, [view, fetchGroups]); // Include fetchGroups in dependency array
 
     const handleSelectBroadcast = (jobId: string) => {
         setSelectedJobId(jobId);
@@ -307,8 +311,7 @@ export const BroadcastPage = () => {
     const backToCompose = () => {
         setSelectedJobId(null);
         setView('compose');
-        // Fetch groups again when returning to compose view
-        // fetchGroups(); // Already handled by useEffect on [view]
+        // fetchGroups will be called by the useEffect hook when view changes
     };
 
     // Function to handle navigating back from report to history
@@ -321,6 +324,7 @@ export const BroadcastPage = () => {
     const renderContent = () => {
         switch (view) {
             case 'history':
+                // FIX: No unused pagination variable here
                 return <BroadcastHistoryPage onSelectBroadcast={handleSelectBroadcast} />;
             case 'report':
                 // Pass onBack to navigate back to history view

@@ -949,22 +949,22 @@ class DatabaseService:
         
         return {}
 
-    async def get_broadcast_recipients(
-        self, 
-        job_id: str, 
-        page: int = 1, 
+async def get_broadcast_recipients(
+        self,
+        job_id: str,
+        page: int = 1,
         limit: int = PAGINATION_DEFAULT_LIMIT,
         search: Optional[str] = None
     ) -> Tuple[List[Dict[str, Any]], Dict[str, int]]:
         """
         Get paginated broadcast recipients with optional search.
-        
+
         Args:
             job_id: Broadcast job ID
             page: Page number
             limit: Items per page
             search: Optional search query for phone/name
-            
+
         Returns:
             Tuple of (recipients list, pagination info)
         """
@@ -1000,17 +1000,24 @@ class DatabaseService:
         pipeline.append({
             "$facet": {
                 "recipients": [
+                    # Ensure _id is projected if needed elsewhere, maybe add specific projection if not
+                    # {"$project": {"_id": 1, ... other fields ...}},
                     {"$skip": skip},
                     {"$limit": limit}
                 ],
                 "total_count": [{"$count": "count"}]
             }
         })
-        
+
         result = await self.db.message_logs.aggregate(pipeline).to_list(length=1)
-        
+
         recipients = result[0]['recipients'] if result and result[0].get('recipients') else []
         total_count = result[0]['total_count'][0]['count'] if result and result[0].get('total_count') else 0
+
+        # --- THIS IS THE FIX ---
+        # Explicitly serialize the ObjectId to string for each recipient document
+        recipients = self._serialize_ids(recipients)
+        # --- END OF FIX ---
 
         pagination = {
             "page": page,
@@ -1018,8 +1025,9 @@ class DatabaseService:
             "total": total_count,
             "pages": (total_count + limit - 1) // limit if total_count > 0 else 0
         }
-        
+
         return recipients, pagination
+
 
     async def get_all_broadcast_recipients_for_csv(self, job_id: str) -> List[Dict[str, Any]]:
         """

@@ -1,6 +1,6 @@
 # /app/models/api.py
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_serializer
 from typing import List, Dict, Optional
 from datetime import datetime
 from bson import ObjectId
@@ -29,6 +29,16 @@ class APIResponse(BaseModel):
     data: Optional[Dict] = None
     timestamp: datetime = Field(default_factory=datetime.utcnow)
     version: str
+    class Config:
+        # Pydantic V1 style (still works in V2 for compatibility)
+        # Tell Pydantic how to serialize ObjectId types when encountered
+        json_encoders = {
+            ObjectId: str
+        }
+        # For Pydantic V2 native style, you might use serialization_alias or custom serializers,
+        # but json_encoders is usually sufficient for FastAPI integration.
+        # Ensure you have `arbitrary_types_allowed = True` if using complex types directly.
+        arbitrary_types_allowed = True
 
 class HoldOrderRequest(BaseModel):
     reason: str
@@ -76,8 +86,9 @@ class BroadcastGroupResponse(BroadcastGroup):
     id: str = Field(..., alias="_id")
 
     class Config:
-        orm_mode = True
+        orm_mode = True # Deprecated in V2, use from_attributes = True
+        from_attributes = True
         allow_population_by_field_name = True
-        json_encoders = {
+        json_encoders = { # <-- This is correct here too
             ObjectId: str
         }

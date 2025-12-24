@@ -4,7 +4,7 @@ import re
 import html
 import logging
 from pydantic import BaseModel, Field
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Literal
 from datetime import datetime
 
 logger = logging.getLogger(__name__)
@@ -77,6 +77,9 @@ class Conversation(BaseModel):
     phone: str
     history: List[Dict[str, str]] = []
     last_updated: datetime = Field(default_factory=datetime.utcnow)
+    mode: Literal["bot", "human"] = "bot"
+    locked_by: Optional[str] = None  # Stores the user_id who took over
+    last_mode_change_at: Optional[datetime] = None
 
 class Order(BaseModel):
     id: Optional[str] = None

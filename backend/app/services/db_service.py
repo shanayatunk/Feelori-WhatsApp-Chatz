@@ -272,6 +272,150 @@ class DatabaseService:
         
         return None
 
+    async def takeover_conversation(self, phone_number: str, user_id: str) -> bool:
+        """
+        Take over a conversation for human handling.
+        
+        Args:
+            phone_number: Customer's phone number
+            user_id: ID of the user taking over the conversation
+            
+        Returns:
+            True if successful
+        """
+        cleaned_phone = self._sanitize_phone(phone_number)
+        if not cleaned_phone:
+            return False
+        
+        now = self._now_utc()
+        result = await self._safe_db_operation(
+            lambda: self.db.customers.update_one(
+                {"phone_number": cleaned_phone},
+                {
+                    "$set": {
+                        "conversation_mode": "human",
+                        "conversation_locked_by": user_id,
+                        "conversation_last_mode_change_at": now
+                    }
+                }
+            )
+        )
+        
+        return result and result.modified_count > 0
+    
+    async def release_conversation(self, phone_number: str, user_id: str) -> bool:
+        """
+        Release a conversation back to bot mode.
+        
+        Args:
+            phone_number: Customer's phone number
+            user_id: ID of the user releasing the conversation (must match locked_by)
+            
+        Returns:
+            True if successful
+            
+        Raises:
+            ValueError: If locked_by does not match user_id
+        """
+        cleaned_phone = self._sanitize_phone(phone_number)
+        if not cleaned_phone:
+            return False
+        
+        # First, check if the conversation is locked by this user
+        customer = await self.get_customer(cleaned_phone)
+        if not customer:
+            return False
+        
+        locked_by = customer.get("conversation_locked_by")
+        if locked_by and locked_by != user_id:
+            raise ValueError(f"Conversation is locked by a different user (locked_by={locked_by}, user_id={user_id})")
+        
+        result = await self._safe_db_operation(
+            lambda: self.db.customers.update_one(
+                {"phone_number": cleaned_phone},
+                {
+                    "$set": {
+                        "conversation_mode": "bot",
+                        "conversation_last_mode_change_at": self._now_utc()
+                    },
+                    "$unset": {
+                        "conversation_locked_by": ""
+                    }
+                }
+            )
+        )
+        
+        return result and result.modified_count > 0
+    
+    async def enforce_auto_release(self, phone_number: str) -> bool:
+        """
+        Automatically release a conversation if it's been in human mode for >30 minutes.
+        
+        Args:
+            phone_number: Customer's phone number
+            
+        Returns:
+            True if the conversation was auto-released, False otherwise
+        """
+        cleaned_phone = self._sanitize_phone(phone_number)
+        if not cleaned_phone:
+            return False
+        
+        customer = await self.get_customer(cleaned_phone)
+        if not customer:
+            return False
+        
+        mode = customer.get("conversation_mode", "bot")
+        if mode != "human":
+            return False
+        
+        last_mode_change = customer.get("conversation_last_mode_change_at")
+        if not last_mode_change:
+            # If there's no timestamp, assume it's stale and release it
+            logger.warning(f"Auto-releasing stale lock for {cleaned_phone[:4]}... (no timestamp)")
+            await self._force_release_conversation(cleaned_phone)
+            return True
+        
+        # Check if last_mode_change_at is a datetime or needs parsing
+        if isinstance(last_mode_change, str):
+            try:
+                last_mode_change = datetime.fromisoformat(last_mode_change.replace("Z", "+00:00"))
+            except Exception:
+                logger.warning(f"Could not parse last_mode_change_at for {cleaned_phone[:4]}...")
+                await self._force_release_conversation(cleaned_phone)
+                return True
+        
+        # Ensure timezone awareness
+        if last_mode_change.tzinfo is None:
+            last_mode_change = last_mode_change.replace(tzinfo=timezone.utc)
+        
+        now = self._now_utc()
+        time_diff = now - last_mode_change
+        
+        if time_diff.total_seconds() > 30 * 60:  # 30 minutes
+            logger.warning(f"Auto-releasing stale lock for {cleaned_phone[:4]}... (locked for {int(time_diff.total_seconds() / 60)} minutes)")
+            await self._force_release_conversation(cleaned_phone)
+            return True
+        
+        return False
+    
+    async def _force_release_conversation(self, cleaned_phone: str) -> None:
+        """Internal helper to force release a conversation."""
+        await self._safe_db_operation(
+            lambda: self.db.customers.update_one(
+                {"phone_number": cleaned_phone},
+                {
+                    "$set": {
+                        "conversation_mode": "bot",
+                        "conversation_last_mode_change_at": self._now_utc()
+                    },
+                    "$unset": {
+                        "conversation_locked_by": ""
+                    }
+                }
+            )
+        )
+
     async def update_conversation_history(
         self, 
         phone_number: str, 

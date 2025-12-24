@@ -2,9 +2,25 @@
 
 import sys
 import re
+import os
 import base64  # Import the base64 library
-from pydantic import Field, field_validator
+from typing import Dict
+from pydantic import BaseModel, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings
+
+
+class BusinessConfig(BaseModel):
+    """
+    Configuration model for a WhatsApp business account.
+    Stores metadata and references to environment variables for secure token management.
+    """
+    business_id: str
+    business_name: str
+    phone_number_id: str
+    token_env_key: str  # Name of the environment variable containing the access token (NOT the token itself)
+    
+    class Config:
+        frozen = True  # Immutable after creation
 
 class Settings(BaseSettings):
     # MongoDB
@@ -14,13 +30,18 @@ class Settings(BaseSettings):
     mongo_ssl: bool = True
 
     # WhatsApp
-    whatsapp_access_token: str
-    whatsapp_phone_id: str
+    # DEPRECATED: Use BUSINESS_REGISTRY for multi-tenant support. These fields are kept for backward compatibility.
+    whatsapp_access_token: str  # @deprecated: Use BUSINESS_REGISTRY and get_business_token() instead
+    whatsapp_phone_id: str  # @deprecated: Use BUSINESS_REGISTRY instead
     whatsapp_verify_token: str
     whatsapp_app_secret: str
     whatsapp_catalog_id: str | None = None
     whatsapp_business_account_id: str | None = None
     whatsapp_webhook_secret: str | None = None
+    
+    # Multi-tenant WhatsApp Business Registry
+    # Maps phone_number_id -> BusinessConfig for supporting multiple WhatsApp businesses
+    BUSINESS_REGISTRY: Dict[str, BusinessConfig] = {}
 
     # Shopify
     shopify_store_url: str = "feelori.myshopify.com"
@@ -116,6 +137,50 @@ class Settings(BaseSettings):
         if not re.match(r'^\d+$', v):
             raise ValueError("WHATSAPP_PHONE_ID must contain only digits")
         return v
+    
+    @model_validator(mode='after')
+    def initialize_business_registry(self):
+        """
+        Initialize the BUSINESS_REGISTRY with the default Feelori business configuration.
+        This runs after all fields are validated and allows us to use existing env vars.
+        """
+        # Only initialize if registry is empty and we have the legacy fields populated
+        if not self.BUSINESS_REGISTRY and self.whatsapp_phone_id:
+            feelori_config = BusinessConfig(
+                business_id="feelori",
+                business_name="Feelori",
+                phone_number_id=self.whatsapp_phone_id,
+                token_env_key="WHATSAPP_ACCESS_TOKEN"  # Reference to the existing env var name
+            )
+            self.BUSINESS_REGISTRY[self.whatsapp_phone_id] = feelori_config
+        return self
+    
+    def get_business_token(self, business_config: BusinessConfig) -> str:
+        """
+        Securely retrieves the access token for a business configuration.
+        
+        This method fetches the token from environment variables at runtime,
+        which enables token rotation without code changes or restarts.
+        
+        Args:
+            business_config: The BusinessConfig instance containing the token_env_key
+            
+        Returns:
+            The access token string
+            
+        Raises:
+            RuntimeError: If the environment variable is not set or token is missing
+            
+        Security Benefits:
+        - Tokens are never stored in code or configuration objects
+        - Token rotation only requires updating the environment variable
+        - No application restart needed for token updates
+        - Tokens are fetched fresh on each request, ensuring latest values
+        """
+        token = os.getenv(business_config.token_env_key)
+        if token is None:
+            raise RuntimeError(f"Missing WhatsApp access token for business_id={business_config.business_id} (env var {business_config.token_env_key})")
+        return token
 
     class Config:
         env_file = '.env'

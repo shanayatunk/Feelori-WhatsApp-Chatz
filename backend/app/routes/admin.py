@@ -2,19 +2,23 @@
 
 import io
 import csv
+import logging
 from bson import ObjectId
 
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Request, BackgroundTasks
 from fastapi.responses import StreamingResponse
+
+logger = logging.getLogger(__name__)
 from app.config.settings import settings
-from app.models.api import APIResponse, BroadcastGroupCreate, BroadcastRequest, Rule, StringUpdateRequest
+from app.models.api import APIResponse, BroadcastGroupCreate, BroadcastRequest, Rule, StringUpdateRequest, TemplateBroadcastRequest
 from app.utils.dependencies import verify_jwt_token
 from app.services import security_service, shopify_service, cache_service
 from app.services.db_service import db_service
 from app.services.whatsapp_service import whatsapp_service
 from app.services.string_service import string_service
 from app.services.rule_service import rule_service
+from app.services.broadcast_service import broadcast_service
 from app.utils.rate_limiter import limiter
 import asyncio
 
@@ -142,7 +146,7 @@ async def run_broadcast_task(broadcast_id: str, message: str, image_url: str | N
         {"$set": {"status": "completed"}}
     )
 
-@router.post("/broadcast", response_model=APIResponse)
+@router.post("/broadcast/message", response_model=APIResponse)
 @limiter.limit("1/minute")
 async def broadcast_message(
     request: Request,
@@ -185,6 +189,53 @@ async def broadcast_message(
         data={"job_id": job_id},
         version=settings.api_version
     )
+
+@router.post("/broadcast", response_model=APIResponse)
+@limiter.limit("1/minute")
+async def send_template_broadcast(
+    request: Request,
+    broadcast_data: TemplateBroadcastRequest,
+    current_user: dict = Depends(verify_jwt_token)
+):
+    """
+    Send a WhatsApp template broadcast to multiple recipients with business isolation.
+    Requires confirmation for broadcasts to more than 1 recipient.
+    """
+    security_service.EnhancedSecurityService.validate_admin_session(request, current_user)
+    
+    # Require confirmation if sending to more than 1 recipient
+    if len(broadcast_data.recipients) > 1:
+        if broadcast_data.confirmation != "CONFIRM_BROADCAST":
+            raise HTTPException(
+                status_code=400,
+                detail=f"Confirmation required for broadcasts to {len(broadcast_data.recipients)} recipients. Set confirmation='CONFIRM_BROADCAST'"
+            )
+    
+    try:
+        result = await broadcast_service.send_broadcast(
+            target_business_id=broadcast_data.business_id,
+            template_name=broadcast_data.template_name,
+            recipients=broadcast_data.recipients,
+            variables=broadcast_data.variables,
+            dry_run=broadcast_data.dry_run
+        )
+        
+        return APIResponse(
+            success=True,
+            message=f"Broadcast {'simulated' if broadcast_data.dry_run else 'sent'} successfully.",
+            data={
+                "status": result["status"],
+                "sent_count": result["sent_count"],
+                "failed_count": result.get("failed_count", 0),
+                "dry_run": result["dry_run"]
+            },
+            version=settings.api_version
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Error in template broadcast: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to send broadcast")
 
 @router.post("/broadcast-groups", response_model=APIResponse)
 async def create_broadcast_group(

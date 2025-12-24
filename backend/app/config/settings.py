@@ -67,7 +67,7 @@ class Settings(BaseSettings):
     redis_ssl: bool = False
 
     # CORS & Hosts
-    cors_allowed_origins: str = Field(default="https://feelori.com,https://admin.feelori.com", env="CORS_ALLOWED_ORIGINS")
+    cors_allowed_origins: str = Field(default="https://feelori.com,https://admin.feelori.com,https://message-whisperer-dash.lovable.app", env="CORS_ALLOWED_ORIGINS")
     allowed_hosts: str = Field(default="feelori.com,*.feelori.com", env="ALLOWED_HOSTS")
 
     # Observability & Alerting

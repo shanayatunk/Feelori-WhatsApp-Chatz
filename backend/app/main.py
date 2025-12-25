@@ -42,19 +42,19 @@ app.mount("/static", StaticFiles(directory=static_dir_path), name="static")
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
-# --- THIS BLOCK HAS BEEN CORRECTED TO HANDLE CORS WILDCARDS ---
+# --- CORS Configuration ---
+# settings.cors_allowed_origins is a List[str] (handled by settings validator)
 # Define a regular expression that matches all your Vercel preview URLs.
 allowed_origin_regex = r"https?://.*\.vercel\.app"
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.cors_allowed_origins,  # Already a list from settings
+    allow_origins=settings.cors_allowed_origins,  # List[str] from settings
     allow_origin_regex=allowed_origin_regex,      # Handles the Vercel wildcard pattern
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
-# --- END OF CORRECTED BLOCK ---
 
 if settings.environment != "test":
     allowed_hosts = [host.strip() for host in settings.allowed_hosts.split(",") if host.strip()] #

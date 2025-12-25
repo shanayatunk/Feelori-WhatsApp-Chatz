@@ -90,7 +90,7 @@ class Settings(BaseSettings):
                 "https://admin.feelori.com,"
                 "https://message-whisperer-dash.lovable.app,"
                 "https://messenger.feelori.com",
-        env="CORS_ALLOWED_ORIGINS"
+        env="CORS_FORCE_DEFAULT"
     )
 
     allowed_hosts: str = Field(

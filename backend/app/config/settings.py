@@ -4,7 +4,7 @@ import sys
 import re
 import os
 import base64
-from typing import Dict, List
+from typing import Dict, List, Union
 from pydantic import BaseModel, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings
 
@@ -84,15 +84,13 @@ class Settings(BaseSettings):
     redis_url: str = "redis://localhost:6379"
     redis_ssl: bool = False
 
-    # ✅ CORS — FIXED (messenger.feelori.com added)
-    cors_allowed_origins: List[str] = Field(
+    # ✅ CORS Configuration
+    cors_allowed_origins: Union[List[str], str] = Field(
         default=[
             "https://feelori.com",
             "https://admin.feelori.com",
-            "https://message-whisperer-dash.lovable.app",
-            "https://messenger.feelori.com"
         ],
-        env="CORS_FORCE_DEFAULT"
+        env="CORS_ALLOWED_ORIGINS",
     )
 
     allowed_hosts: str = Field(
@@ -116,15 +114,11 @@ class Settings(BaseSettings):
 
     @field_validator("cors_allowed_origins", mode="before")
     @classmethod
-    def parse_cors_allowed_origins(cls, v):
-        """
-        Handle both string (comma-separated) and list formats for cors_allowed_origins.
-        This allows backward compatibility with environment variables that use comma-separated strings.
-        """
+    def parse_cors_origins(cls, v):
+        if v is None:
+            return v
         if isinstance(v, str):
-            # Split by comma, strip whitespace from each item, return list
-            return [origin.strip() for origin in v.split(',')]
-        # If it's already a list, pass it through
+            return [o.strip() for o in v.split(",") if o.strip()]
         return v
 
     @field_validator("jwt_secret_key", "session_secret_key")

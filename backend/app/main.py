@@ -43,13 +43,13 @@ app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 # --- CORS Configuration ---
-# settings.cors_allowed_origins is a List[str] (handled by settings validator)
+# settings.cors_allowed_origins is guaranteed to be a List[str] after validator processing
 # Define a regular expression that matches all your Vercel preview URLs.
 allowed_origin_regex = r"https?://.*\.vercel\.app"
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.cors_allowed_origins,  # List[str] from settings
+    allow_origins=settings.cors_allowed_origins,  # List[str] from settings validator
     allow_origin_regex=allowed_origin_regex,      # Handles the Vercel wildcard pattern
     allow_credentials=True,
     allow_methods=["*"],

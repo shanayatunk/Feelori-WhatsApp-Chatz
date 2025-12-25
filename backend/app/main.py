@@ -18,7 +18,7 @@ from app.config.settings import settings
 from app.utils.lifecycle import lifespan
 from app.utils.metrics import response_time_histogram
 from app.utils.rate_limiter import limiter
-from app.routes import auth, admin, webhooks, public, dashboard, packing, triage
+from app.routes import auth, admin, webhooks, public, dashboard, packing, triage, conversations
 
 # Initialize the FastAPI application
 app = FastAPI(
@@ -86,8 +86,11 @@ app.include_router(auth.router, prefix=f"/api/{settings.api_version}")
 app.include_router(admin.router, prefix=f"/api/{settings.api_version}")
 app.include_router(webhooks.router, prefix=f"/api/{settings.api_version}/webhooks")
 app.include_router(dashboard.router, prefix=f"/api/{settings.api_version}")
-app.include_router(packing.router, prefix=f"/api/{settings.api_version}")
+app.include_router(conversations.router, prefix=f"/api/{settings.api_version}")
 app.include_router(triage.router, prefix=f"/api/{settings.api_version}")
+
+# Internal Staff Tools (Not exposed in SaaS API)
+app.include_router(packing.router)
 
 
 # --- Main Entry Point for Uvicorn (for local development) ---

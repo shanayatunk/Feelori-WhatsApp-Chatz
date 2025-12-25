@@ -4,7 +4,7 @@ import sys
 import re
 import os
 import base64
-from typing import Dict, List, Union
+from typing import Dict, List
 from pydantic import BaseModel, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings
 
@@ -85,7 +85,7 @@ class Settings(BaseSettings):
     redis_ssl: bool = False
 
     # ✅ CORS — FIXED (messenger.feelori.com added)
-    cors_allowed_origins: Union[List[str], str] = Field(
+    cors_allowed_origins: List[str] = Field(
         default=[
             "https://feelori.com",
             "https://admin.feelori.com",
@@ -122,7 +122,9 @@ class Settings(BaseSettings):
         This allows backward compatibility with environment variables that use comma-separated strings.
         """
         if isinstance(v, str):
+            # Split by comma, strip whitespace from each item, return list
             return [origin.strip() for origin in v.split(',')]
+        # If it's already a list, pass it through
         return v
 
     @field_validator("jwt_secret_key", "session_secret_key")

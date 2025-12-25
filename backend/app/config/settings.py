@@ -114,6 +114,23 @@ class Settings(BaseSettings):
 
     # ---------------- Validators ---------------- #
 
+    @field_validator("cors_allowed_origins", mode="before")
+    @classmethod
+    def parse_cors_allowed_origins(cls, v):
+        """
+        Handle both string (comma-separated) and list formats for cors_allowed_origins.
+        This allows backward compatibility with environment variables that use comma-separated strings.
+        """
+        if isinstance(v, str):
+            # Split by comma and strip whitespace, filter out empty strings
+            return [origin.strip() for origin in v.split(",") if origin.strip()]
+        elif isinstance(v, list):
+            # Already a list, return as is
+            return v
+        else:
+            # For None or other types, return as is (will use default)
+            return v
+
     @field_validator("jwt_secret_key", "session_secret_key")
     @classmethod
     def key_length_must_be_sufficient(cls, v):

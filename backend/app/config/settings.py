@@ -4,7 +4,7 @@ import sys
 import re
 import os
 import base64
-from typing import Dict, List
+from typing import Dict, List, Union
 from pydantic import BaseModel, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings
 
@@ -85,7 +85,7 @@ class Settings(BaseSettings):
     redis_ssl: bool = False
 
     # ✅ CORS — FIXED (messenger.feelori.com added)
-    cors_allowed_origins: List[str] = Field(
+    cors_allowed_origins: Union[List[str], str] = Field(
         default=[
             "https://feelori.com",
             "https://admin.feelori.com",

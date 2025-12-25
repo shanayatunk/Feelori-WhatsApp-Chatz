@@ -21,7 +21,7 @@ services:
       - admin_password=${ADMIN_PASSWORD}
       - allowed_hosts=${ALLOWED_HOSTS}
       - api_key=${API_KEY}
-      - cors_allowed_origins=${CORS_ALLOWED_ORIGINS}
+      #- cors_allowed_origins=${CORS_ALLOWED_ORIGINS}
       - environment=${ENVIRONMENT}
       - gemini_api_key=${GEMINI_API_KEY}
       - jwt_secret_key=${JWT_SECRET_KEY}
@@ -57,7 +57,7 @@ services:
       - admin_password=${ADMIN_PASSWORD}
       - allowed_hosts=${ALLOWED_HOSTS}
       - api_key=${API_KEY}
-      - cors_allowed_origins=${CORS_ALLOWED_ORIGINS}
+      #- cors_allowed_origins=${CORS_ALLOWED_ORIGINS}
       - environment=${ENVIRONMENT}
       - gemini_api_key=${GEMINI_API_KEY}
       - jwt_secret_key=${JWT_SECRET_KEY}

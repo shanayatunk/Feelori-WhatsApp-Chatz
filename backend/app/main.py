@@ -43,19 +43,13 @@ app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 # --- THIS BLOCK HAS BEEN CORRECTED TO HANDLE CORS WILDCARDS ---
-# Get the comma-separated string from your settings
-origins_str = settings.cors_allowed_origins
-
-# Split the string into a list and remove any extra whitespace
-allowed_origins_list = [origin.strip() for origin in origins_str.split(',')]
-
 # Define a regular expression that matches all your Vercel preview URLs.
 allowed_origin_regex = r"https?://.*\.vercel\.app"
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=allowed_origins_list,      # Handles the exact matches
-    allow_origin_regex=allowed_origin_regex, # Handles the Vercel wildcard pattern
+    allow_origins=settings.cors_allowed_origins,  # Already a list from settings
+    allow_origin_regex=allowed_origin_regex,      # Handles the Vercel wildcard pattern
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

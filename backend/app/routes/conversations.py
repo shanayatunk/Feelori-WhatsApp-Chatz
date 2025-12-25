@@ -45,6 +45,26 @@ async def get_pending_triage_tickets():
     )
 
 
+@router.get("/stats", response_model=APIResponse)
+async def get_conversation_stats():
+    """Get conversation statistics (ticket counts by status)."""
+    pending_count = await db_service.db.triage_tickets.count_documents({"status": "pending"})
+    resolved_count = await db_service.db.triage_tickets.count_documents({"status": "resolved"})
+    
+    return APIResponse(
+        success=True,
+        message="Conversation stats retrieved",
+        data={
+            "stats": {
+                "open": pending_count,
+                "resolved": resolved_count,
+                "total": pending_count + resolved_count
+            }
+        },
+        version=settings.api_version
+    )
+
+
 @router.put("/{ticket_id}/resolve", response_model=APIResponse)
 # ✅ 2. Removed redundant dependency
 async def resolve_ticket(ticket_id: str):

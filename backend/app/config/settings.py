@@ -89,6 +89,7 @@ class Settings(BaseSettings):
         default=[
             "https://feelori.com",
             "https://admin.feelori.com",
+            "https://messenger.feelori.com",
         ],
         env="CORS_ALLOWED_ORIGINS",
     )

@@ -122,14 +122,10 @@ class Settings(BaseSettings):
         This allows backward compatibility with environment variables that use comma-separated strings.
         """
         if isinstance(v, str):
-            # Split by comma and strip whitespace, filter out empty strings
-            return [origin.strip() for origin in v.split(",") if origin.strip()]
-        elif isinstance(v, list):
-            # Already a list, return as is
-            return v
-        else:
-            # For None or other types, return as is (will use default)
-            return v
+            # Split by comma and strip whitespace
+            return [origin.strip() for origin in v.split(',')]
+        # If it's already a list, return it as is
+        return v
 
     @field_validator("jwt_secret_key", "session_secret_key")
     @classmethod

@@ -8,8 +8,6 @@ from bson import ObjectId
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Request, BackgroundTasks
 from fastapi.responses import StreamingResponse
-
-logger = logging.getLogger(__name__)
 from app.config.settings import settings
 from app.models.api import APIResponse, BroadcastGroupCreate, BroadcastRequest, Rule, StringUpdateRequest, TemplateBroadcastRequest
 from app.utils.dependencies import verify_jwt_token
@@ -21,6 +19,8 @@ from app.services.rule_service import rule_service
 from app.services.broadcast_service import broadcast_service
 from app.utils.rate_limiter import limiter
 import asyncio
+
+logger = logging.getLogger(__name__)
 
 
 router = APIRouter(

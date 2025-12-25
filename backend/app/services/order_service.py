@@ -1379,8 +1379,6 @@ async def process_webhook_message(message: Dict[str, Any], webhook_data: Dict[st
             
         # --- THIS IS THE NEW LOGIC ---
         # Log the inbound message to the dedicated database collection
-        from app.services.db_service import db_service
-        from datetime import datetime
 
         log_data = {
             "wamid": wamid,

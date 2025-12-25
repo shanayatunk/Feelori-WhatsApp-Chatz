@@ -136,8 +136,17 @@ jobs:
             set -Eeuo pipefail
 
             cd /root/Feelori-WhatsApp-Chatz
+
+            # 1. Fetch latest code
             git fetch origin
+
+            # 2. Ensure we are on the develop branch
             git checkout develop
+
+            # 3. FORCE RESET: Discard any manual server-side changes (like the manual docker-compose edit)
+            git reset --hard origin/develop
+
+            # 4. Pull (now safe because local is clean)
             git pull origin develop
 
             TMP_ENV="$(mktemp)"
@@ -210,8 +219,17 @@ jobs:
             set -Eeuo pipefail
 
             cd /root/Feelori-WhatsApp-Chatz
+
+            # 1. Fetch latest code
             git fetch origin
+
+            # 2. Ensure we are on the main branch
             git checkout main
+
+            # 3. FORCE RESET: Discard any manual server-side changes (like the manual docker-compose edit)
+            git reset --hard origin/main
+
+            # 4. Pull (now safe because local is clean)
             git pull origin main
 
             TMP_ENV="$(mktemp)"

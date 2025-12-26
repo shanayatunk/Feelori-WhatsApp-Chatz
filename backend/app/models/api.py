@@ -104,7 +104,7 @@ class ConversationModel(BaseModel):
     customer_phone: str
     order_number: str
     issue_type: str
-    status: str = "pending"
+    status: ConversationStatus = ConversationStatus.PENDING
     assigned_to: Optional[str] = None
     business_id: str = "feelori"
     created_at: datetime

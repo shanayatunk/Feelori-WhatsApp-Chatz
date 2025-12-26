@@ -1,5 +1,4 @@
-# /app/main.py
-
+# /app/main.py 
 import os
 import time
 import uvicorn
@@ -13,12 +12,11 @@ from starlette.staticfiles import StaticFiles
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
-
 from app.config.settings import settings
 from app.utils.lifecycle import lifespan
 from app.utils.metrics import response_time_histogram
 from app.utils.rate_limiter import limiter
-from app.routes import auth, admin, webhooks, public, dashboard, packing, triage
+from app.routes import auth, admin, webhooks, public, dashboard, packing, triage, conversations
 
 # Initialize the FastAPI application
 app = FastAPI(
@@ -29,6 +27,7 @@ app = FastAPI(
     openapi_url=f"/api/{settings.api_version}/openapi.json" if settings.environment != "production" else None,
     docs_url=f"/api/{settings.api_version}/docs" if settings.environment != "production" else None,
     redoc_url=f"/api/{settings.api_version}/redoc" if settings.environment != "production" else None,
+    strict_slashes=False,  # <-- ONLY CHANGE NEEDED: Stops trailing-slash redirects
 )
 
 # --- Static Files ---
@@ -37,33 +36,23 @@ static_dir_path = os.path.join(basedir, "static")
 os.makedirs(static_dir_path, exist_ok=True)
 app.mount("/static", StaticFiles(directory=static_dir_path), name="static")
 
-
 # --- Rate Limiting ---
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
-# --- THIS BLOCK HAS BEEN CORRECTED TO HANDLE CORS WILDCARDS ---
-# Get the comma-separated string from your settings
-origins_str = settings.cors_allowed_origins
-
-# Split the string into a list and remove any extra whitespace
-allowed_origins_list = [origin.strip() for origin in origins_str.split(',')]
-
-# Define a regular expression that matches all your Vercel preview URLs.
+# --- CORS Configuration ---
 allowed_origin_regex = r"https?://.*\.vercel\.app"
-
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=allowed_origins_list,      # Handles the exact matches
-    allow_origin_regex=allowed_origin_regex, # Handles the Vercel wildcard pattern
+    allow_origins=settings.cors_allowed_origins,
+    allow_origin_regex=allowed_origin_regex,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
-# --- END OF CORRECTED BLOCK ---
 
 if settings.environment != "test":
-    allowed_hosts = [host.strip() for host in settings.allowed_hosts.split(",") if host.strip()] #
+    allowed_hosts = [host.strip() for host in settings.allowed_hosts.split(",") if host.strip()]
     if allowed_hosts:
         app.add_middleware(TrustedHostMiddleware, allowed_hosts=allowed_hosts)
 
@@ -92,19 +81,19 @@ app.include_router(auth.router, prefix=f"/api/{settings.api_version}")
 app.include_router(admin.router, prefix=f"/api/{settings.api_version}")
 app.include_router(webhooks.router, prefix=f"/api/{settings.api_version}/webhooks")
 app.include_router(dashboard.router, prefix=f"/api/{settings.api_version}")
-app.include_router(packing.router, prefix=f"/api/{settings.api_version}")
+app.include_router(conversations.router, prefix=f"/api/{settings.api_version}")
 app.include_router(triage.router, prefix=f"/api/{settings.api_version}")
+app.include_router(packing.router)
 
-
-# --- Main Entry Point for Uvicorn (for local development) ---
+# --- Main Entry Point for Uvicorn (local dev only) ---
 if __name__ == "__main__":
     port = int(os.getenv("PORT", "8000"))
     host = os.getenv("HOST", "127.0.0.1")
-    
+   
     uvicorn.run(
         "app.main:app",
         host=host,
         port=port,
-        reload=True if settings.environment == "development" else False, #
-        workers=settings.workers if settings.environment == "production" else 1 #
+        reload=True if settings.environment == "development" else False,
+        workers=settings.workers if settings.environment == "production" else 1
     )

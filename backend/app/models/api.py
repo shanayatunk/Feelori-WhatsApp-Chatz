@@ -81,3 +81,12 @@ class BroadcastGroupResponse(BroadcastGroup):
         json_encoders = {
             ObjectId: str
         }
+
+class TemplateBroadcastRequest(BaseModel):
+    """Request model for template-based WhatsApp broadcasts."""
+    business_id: str
+    recipients: List[str]
+    template_name: str
+    variables: Dict = Field(default_factory=dict)  # e.g., {"body_params": [...], "header_text_param": "...", "button_url_param": "..."}
+    confirmation: Optional[str] = None
+    dry_run: bool = True

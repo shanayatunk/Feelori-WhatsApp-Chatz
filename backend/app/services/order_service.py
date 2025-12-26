@@ -1339,6 +1339,19 @@ async def process_webhook_message(message: Dict[str, Any], webhook_data: Dict[st
             return
 
         clean_phone = security_service.EnhancedSecurityService.sanitize_phone_number(from_number)
+        
+        # --- KILL SWITCH: Bot vs Human Mode with Auto-Release ---
+        # Enforce auto-release for stale locks (>30 minutes)
+        await db_service.enforce_auto_release(clean_phone)
+        
+        # Fetch conversation to check mode
+        customer = await db_service.get_customer(clean_phone)
+        if customer:
+            conversation_mode = customer.get("conversation_mode", "bot")
+            if conversation_mode == "human":
+                logger.info(f"Skipping AI reply (Human Mode active) for {clean_phone[:4]}...")
+                return
+        # --- END OF KILL SWITCH ---
 
         # This duplicate check can be simplified now with a dedicated message log
         # but we'll leave it for now for extra safety.
@@ -1366,8 +1379,6 @@ async def process_webhook_message(message: Dict[str, Any], webhook_data: Dict[st
             
         # --- THIS IS THE NEW LOGIC ---
         # Log the inbound message to the dedicated database collection
-        from app.services.db_service import db_service
-        from datetime import datetime
 
         log_data = {
             "wamid": wamid,

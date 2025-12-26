@@ -8,7 +8,6 @@ from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
-from starlette.middleware.proxy import ProxyHeadersMiddleware  # <-- NEW IMPORT
 from starlette.staticfiles import StaticFiles
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
@@ -28,7 +27,7 @@ app = FastAPI(
     openapi_url=f"/api/{settings.api_version}/openapi.json" if settings.environment != "production" else None,
     docs_url=f"/api/{settings.api_version}/docs" if settings.environment != "production" else None,
     redoc_url=f"/api/{settings.api_version}/redoc" if settings.environment != "production" else None,
-    strict_slashes=False,  # <-- NEW: Stops trailing-slash redirects entirely (recommended)
+    strict_slashes=False,  # <-- ONLY CHANGE NEEDED: Stops trailing-slash redirects
 )
 
 # --- Static Files ---
@@ -57,12 +56,6 @@ if settings.environment != "test":
     if allowed_hosts:
         app.add_middleware(TrustedHostMiddleware, allowed_hosts=allowed_hosts)
 
-# --- NEW: Trust proxy headers from nginx (fixes HTTPS redirects) ---
-app.add_middleware(
-    ProxyHeadersMiddleware,
-    trusted_hosts=["127.0.0.1", "localhost", "::1", "172.18.0.0/16"]  # Covers Docker bridge networks
-)
-
 app.add_middleware(GZipMiddleware, minimum_size=1000)
 app.add_middleware(SlowAPIMiddleware)
 
@@ -90,10 +83,9 @@ app.include_router(webhooks.router, prefix=f"/api/{settings.api_version}/webhook
 app.include_router(dashboard.router, prefix=f"/api/{settings.api_version}")
 app.include_router(conversations.router, prefix=f"/api/{settings.api_version}")
 app.include_router(triage.router, prefix=f"/api/{settings.api_version}")
-# Internal Staff Tools (Not exposed in SaaS API)
 app.include_router(packing.router)
 
-# --- Main Entry Point for Uvicorn (for local development) ---
+# --- Main Entry Point for Uvicorn (local dev only) ---
 if __name__ == "__main__":
     port = int(os.getenv("PORT", "8000"))
     host = os.getenv("HOST", "127.0.0.1")

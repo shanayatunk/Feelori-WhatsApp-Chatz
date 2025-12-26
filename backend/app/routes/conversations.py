@@ -1,6 +1,7 @@
 # /app/routes/conversations.py
-from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi import APIRouter, Depends, HTTPException, Response, Query
 from pydantic import BaseModel
+from typing import Optional
 import logging
 
 # ✅ 1. Import settings
@@ -8,7 +9,7 @@ from app.config.settings import settings
 from app.services.db_service import db_service
 from app.services.whatsapp_service import whatsapp_service
 from app.utils.dependencies import verify_jwt_token
-from app.models.api import APIResponse
+from app.models.api import APIResponse, AssignTicketRequest, SendMessageRequest
 
 logger = logging.getLogger(__name__)
 
@@ -30,13 +31,27 @@ class TriageTicketModel(BaseModel):
 
 
 @router.get("/", response_model=APIResponse)
-# ✅ 2. Removed redundant dependency
-async def get_pending_triage_tickets():
-    tickets_cursor = db_service.db.triage_tickets.find({"status": "pending"}).sort("created_at", 1)
+async def get_pending_triage_tickets(
+    status: Optional[str] = Query(None, description="Filter by status (pending, human_needed, resolved)"),
+    assigned_to: Optional[str] = Query(None, description="Filter by assigned user ID")
+):
+    """Get conversation tickets with optional filtering by status and assigned_to."""
+    query = {}
+    
+    if status:
+        query["status"] = status
+    if assigned_to:
+        query["assigned_to"] = assigned_to
+    
+    # If no filters, default to pending (backward compatibility)
+    if not query:
+        query["status"] = "pending"
+    
+    tickets_cursor = db_service.db.triage_tickets.find(query).sort("created_at", 1)
     tickets = await tickets_cursor.to_list(length=100)
     for ticket in tickets:
         ticket["_id"] = str(ticket["_id"])
-    # ✅ 3. Added version to the response
+    
     return APIResponse(
         success=True,
         message="Tickets retrieved",
@@ -65,6 +80,19 @@ async def get_conversation_stats():
     )
 
 
+@router.get("/media/{media_id}")
+async def get_media(media_id: str):
+    """Retrieves and returns the media file from WhatsApp."""
+    try:
+        image_bytes, mime_type = await whatsapp_service.get_media_content(media_id)
+        if not image_bytes:
+            raise HTTPException(status_code=404, detail="Media not found")
+        return Response(content=image_bytes, media_type=mime_type)
+    except Exception as e:
+        logger.error(f"Failed to retrieve media {media_id}: {e}")
+        raise HTTPException(status_code=500, detail="Failed to retrieve media")
+
+
 @router.put("/{ticket_id}/resolve", response_model=APIResponse)
 # ✅ 2. Removed redundant dependency
 async def resolve_ticket(ticket_id: str):
@@ -79,15 +107,61 @@ async def resolve_ticket(ticket_id: str):
     )
 
 
-@router.get("/media/{media_id}")
-async def get_media(media_id: str):
-    """Retrieves and returns the media file from WhatsApp."""
-    try:
-        image_bytes, mime_type = await whatsapp_service.get_media_content(media_id)
-        if not image_bytes:
-            raise HTTPException(status_code=404, detail="Media not found")
-        return Response(content=image_bytes, media_type=mime_type)
-    except Exception as e:
-        logger.error(f"Failed to retrieve media {media_id}: {e}")
-        raise HTTPException(status_code=500, detail="Failed to retrieve media")
+@router.get("/{phone_number}/messages", response_model=APIResponse)
+async def get_chat_history(
+    phone_number: str,
+    limit: int = Query(50, ge=1, le=200, description="Maximum number of messages to return")
+):
+    """Get chat history for a phone number."""
+    messages = await db_service.get_chat_history(phone_number, limit=limit)
+    
+    return APIResponse(
+        success=True,
+        message="Chat history retrieved",
+        data={"messages": messages},
+        version=settings.api_version
+    )
+
+
+@router.post("/{ticket_id}/assign", response_model=APIResponse)
+async def assign_ticket(ticket_id: str, assign_data: AssignTicketRequest):
+    """Assign a ticket to a user."""
+    success = await db_service.assign_ticket(ticket_id, assign_data.user_id)
+    if not success:
+        raise HTTPException(status_code=404, detail="Ticket not found")
+    
+    return APIResponse(
+        success=True,
+        message="Ticket assigned successfully",
+        version=settings.api_version
+    )
+
+
+@router.post("/{phone_number}/send", response_model=APIResponse)
+async def send_manual_message(
+    phone_number: str,
+    message_data: SendMessageRequest,
+    current_user: dict = Depends(verify_jwt_token)
+):
+    """Send a manual message to a customer."""
+    user_id = current_user.get("username") or current_user.get("user_id", "unknown")
+    
+    # Send the message via WhatsApp
+    wamid = await whatsapp_service.send_message(
+        to_phone=phone_number,
+        message=message_data.message
+    )
+    
+    if not wamid:
+        raise HTTPException(status_code=500, detail="Failed to send message")
+    
+    # Log the manual message
+    await db_service.log_manual_message(phone_number, message_data.message, user_id)
+    
+    return APIResponse(
+        success=True,
+        message="Message sent successfully",
+        data={"wamid": wamid},
+        version=settings.api_version
+    )
 

@@ -598,6 +598,93 @@ class DatabaseService:
         except Exception:
             logger.exception(f"Failed to resolve triage ticket: {ticket_id}")
             return False
+    
+    async def get_chat_history(self, phone_number: str, limit: int = 50) -> List[Dict[str, Any]]:
+        """
+        Get chat history for a phone number from message_logs collection.
+        
+        Args:
+            phone_number: Customer's phone number
+            limit: Maximum number of messages to return
+            
+        Returns:
+            List of message documents sorted by timestamp (oldest to newest)
+        """
+        cleaned_phone = self._sanitize_phone(phone_number)
+        if not cleaned_phone:
+            return []
+        
+        try:
+            cursor = self.db.message_logs.find(
+                {"phone": cleaned_phone}
+            ).sort("timestamp", 1).limit(limit)
+            
+            messages = await cursor.to_list(length=limit)
+            # Convert ObjectId to string if present
+            for msg in messages:
+                if "_id" in msg:
+                    msg["_id"] = str(msg["_id"])
+            return messages
+        except Exception:
+            logger.exception(f"Failed to get chat history for {cleaned_phone[:4]}...")
+            return []
+    
+    async def assign_ticket(self, ticket_id: str, user_id: str) -> bool:
+        """
+        Assign a ticket to a user and set status to human_needed.
+        
+        Args:
+            ticket_id: Ticket's ObjectId as string
+            user_id: User ID to assign the ticket to
+            
+        Returns:
+            True if ticket was assigned successfully
+        """
+        if not self._validate_object_id(ticket_id):
+            logger.warning(f"Invalid ticket_id format: {ticket_id}")
+            return False
+        
+        try:
+            result = await self.db.triage_tickets.update_one(
+                {"_id": ObjectId(ticket_id)},
+                {"$set": {
+                    "assigned_to": user_id,
+                    "status": "human_needed",
+                    "updated_at": self._now_utc()
+                }}
+            )
+            return result.modified_count > 0
+        except Exception:
+            logger.exception(f"Failed to assign ticket {ticket_id} to user {user_id}")
+            return False
+    
+    async def log_manual_message(self, phone_number: str, text: str, user_id: str) -> None:
+        """
+        Log a manual message sent by a human agent.
+        
+        Args:
+            phone_number: Customer's phone number
+            text: Message text content
+            user_id: User ID of the agent who sent the message
+        """
+        cleaned_phone = self._sanitize_phone(phone_number)
+        if not cleaned_phone:
+            logger.warning(f"Invalid phone number for manual message logging: {phone_number}")
+            return
+        
+        message_data = {
+            "phone": cleaned_phone,
+            "text": text,
+            "direction": "outbound",
+            "status": "sent",
+            "timestamp": self._now_utc(),
+            "source": "human",
+            "user_id": user_id
+        }
+        
+        await self._safe_db_operation(
+            lambda: self.db.message_logs.insert_one(message_data)
+        )
 
     # ==================== Abandoned Checkouts ====================
 

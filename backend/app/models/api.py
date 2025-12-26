@@ -107,7 +107,6 @@ class ConversationModel(BaseModel):
     status: str = "pending"
     assigned_to: Optional[str] = None
     business_id: str = "feelori"
-    last_message: Optional[str] = None
     created_at: datetime
     updated_at: Optional[datetime] = None
     image_media_id: Optional[str] = None

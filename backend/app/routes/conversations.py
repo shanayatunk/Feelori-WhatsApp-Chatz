@@ -43,9 +43,9 @@ async def get_pending_triage_tickets(
     if assigned_to:
         query["assigned_to"] = assigned_to
     
-    # If no filters, default to pending (backward compatibility)
+    # If no filters, default to human_needed (actionable items)
     if not query:
-        query["status"] = "pending"
+        query["status"] = "human_needed"
     
     tickets_cursor = db_service.db.triage_tickets.find(query).sort("created_at", 1)
     tickets = await tickets_cursor.to_list(length=100)
@@ -64,6 +64,7 @@ async def get_pending_triage_tickets(
 async def get_conversation_stats():
     """Get conversation statistics (ticket counts by status)."""
     pending_count = await db_service.db.triage_tickets.count_documents({"status": "pending"})
+    human_needed_count = await db_service.db.triage_tickets.count_documents({"status": "human_needed"})
     resolved_count = await db_service.db.triage_tickets.count_documents({"status": "resolved"})
     
     return APIResponse(
@@ -71,9 +72,10 @@ async def get_conversation_stats():
         message="Conversation stats retrieved",
         data={
             "stats": {
-                "open": pending_count,
+                "open": human_needed_count,  # "Open" usually implies actionable by human
+                "pending": pending_count,     # Keep track of bot-active tickets
                 "resolved": resolved_count,
-                "total": pending_count + resolved_count
+                "total": human_needed_count + pending_count + resolved_count
             }
         },
         version=settings.api_version
@@ -107,13 +109,22 @@ async def resolve_ticket(ticket_id: str):
     )
 
 
-@router.get("/{phone_number}/messages", response_model=APIResponse)
+@router.get("/{ticket_id}/messages", response_model=APIResponse)
 async def get_chat_history(
-    phone_number: str,
+    ticket_id: str,
     limit: int = Query(50, ge=1, le=200, description="Maximum number of messages to return")
 ):
-    """Get chat history for a phone number."""
-    messages = await db_service.get_chat_history(phone_number, limit=limit)
+    """Get chat history for a ticket (retrieves phone number from ticket)."""
+    # Retrieve the ticket to get the customer phone number
+    ticket = await db_service.get_ticket_by_id(ticket_id)
+    if not ticket:
+        raise HTTPException(status_code=404, detail="Ticket not found")
+    
+    customer_phone = ticket.get("customer_phone")
+    if not customer_phone:
+        raise HTTPException(status_code=400, detail="Ticket missing customer phone number")
+    
+    messages = await db_service.get_chat_history(customer_phone, limit=limit)
     
     return APIResponse(
         success=True,
@@ -137,18 +148,27 @@ async def assign_ticket(ticket_id: str, assign_data: AssignTicketRequest):
     )
 
 
-@router.post("/{phone_number}/send", response_model=APIResponse)
+@router.post("/{ticket_id}/send", response_model=APIResponse)
 async def send_manual_message(
-    phone_number: str,
+    ticket_id: str,
     message_data: SendMessageRequest,
     current_user: dict = Depends(verify_jwt_token)
 ):
-    """Send a manual message to a customer."""
+    """Send a manual message to a customer (retrieves phone number from ticket)."""
+    # Retrieve the ticket to get the customer phone number
+    ticket = await db_service.get_ticket_by_id(ticket_id)
+    if not ticket:
+        raise HTTPException(status_code=404, detail="Ticket not found")
+    
+    customer_phone = ticket.get("customer_phone")
+    if not customer_phone:
+        raise HTTPException(status_code=400, detail="Ticket missing customer phone number")
+    
     user_id = current_user.get("username") or current_user.get("user_id", "unknown")
     
     # Send the message via WhatsApp
     wamid = await whatsapp_service.send_message(
-        to_phone=phone_number,
+        to_phone=customer_phone,
         message=message_data.message
     )
     
@@ -156,7 +176,7 @@ async def send_manual_message(
         raise HTTPException(status_code=500, detail="Failed to send message")
     
     # Log the manual message
-    await db_service.log_manual_message(phone_number, message_data.message, user_id)
+    await db_service.log_manual_message(customer_phone, message_data.message, user_id)
     
     return APIResponse(
         success=True,

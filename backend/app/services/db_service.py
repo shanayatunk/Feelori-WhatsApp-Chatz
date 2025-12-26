@@ -629,6 +629,29 @@ class DatabaseService:
             logger.exception(f"Failed to get chat history for {cleaned_phone[:4]}...")
             return []
     
+    async def get_ticket_by_id(self, ticket_id: str) -> Optional[Dict[str, Any]]:
+        """
+        Get a ticket by its ID.
+        
+        Args:
+            ticket_id: Ticket's ObjectId as string
+            
+        Returns:
+            Ticket document or None if not found
+        """
+        if not self._validate_object_id(ticket_id):
+            logger.warning(f"Invalid ticket_id format: {ticket_id}")
+            return None
+        
+        try:
+            ticket = await self.db.triage_tickets.find_one({"_id": ObjectId(ticket_id)})
+            if ticket and "_id" in ticket:
+                ticket["_id"] = str(ticket["_id"])
+            return ticket
+        except Exception:
+            logger.exception(f"Failed to get ticket by ID: {ticket_id}")
+            return None
+    
     async def assign_ticket(self, ticket_id: str, user_id: str) -> bool:
         """
         Assign a ticket to a user and set status to human_needed.

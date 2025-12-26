@@ -1,5 +1,4 @@
 # /app/main.py
-
 import os
 import time
 import uvicorn
@@ -9,11 +8,11 @@ from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
+from starlette.middleware.proxy import ProxyHeadersMiddleware  # <-- NEW IMPORT
 from starlette.staticfiles import StaticFiles
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
-
 from app.config.settings import settings
 from app.utils.lifecycle import lifespan
 from app.utils.metrics import response_time_histogram
@@ -29,6 +28,7 @@ app = FastAPI(
     openapi_url=f"/api/{settings.api_version}/openapi.json" if settings.environment != "production" else None,
     docs_url=f"/api/{settings.api_version}/docs" if settings.environment != "production" else None,
     redoc_url=f"/api/{settings.api_version}/redoc" if settings.environment != "production" else None,
+    strict_slashes=False,  # <-- NEW: Stops trailing-slash redirects entirely (recommended)
 )
 
 # --- Static Files ---
@@ -37,29 +37,31 @@ static_dir_path = os.path.join(basedir, "static")
 os.makedirs(static_dir_path, exist_ok=True)
 app.mount("/static", StaticFiles(directory=static_dir_path), name="static")
 
-
 # --- Rate Limiting ---
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 # --- CORS Configuration ---
-# settings.cors_allowed_origins is guaranteed to be a List[str] after validator processing
-# Define a regular expression that matches all your Vercel preview URLs.
 allowed_origin_regex = r"https?://.*\.vercel\.app"
-
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.cors_allowed_origins,  # List[str] from settings validator
-    allow_origin_regex=allowed_origin_regex,      # Handles the Vercel wildcard pattern
+    allow_origins=settings.cors_allowed_origins,
+    allow_origin_regex=allowed_origin_regex,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 if settings.environment != "test":
-    allowed_hosts = [host.strip() for host in settings.allowed_hosts.split(",") if host.strip()] #
+    allowed_hosts = [host.strip() for host in settings.allowed_hosts.split(",") if host.strip()]
     if allowed_hosts:
         app.add_middleware(TrustedHostMiddleware, allowed_hosts=allowed_hosts)
+
+# --- NEW: Trust proxy headers from nginx (fixes HTTPS redirects) ---
+app.add_middleware(
+    ProxyHeadersMiddleware,
+    trusted_hosts=["127.0.0.1", "localhost", "::1", "172.18.0.0/16"]  # Covers Docker bridge networks
+)
 
 app.add_middleware(GZipMiddleware, minimum_size=1000)
 app.add_middleware(SlowAPIMiddleware)
@@ -88,20 +90,18 @@ app.include_router(webhooks.router, prefix=f"/api/{settings.api_version}/webhook
 app.include_router(dashboard.router, prefix=f"/api/{settings.api_version}")
 app.include_router(conversations.router, prefix=f"/api/{settings.api_version}")
 app.include_router(triage.router, prefix=f"/api/{settings.api_version}")
-
 # Internal Staff Tools (Not exposed in SaaS API)
 app.include_router(packing.router)
-
 
 # --- Main Entry Point for Uvicorn (for local development) ---
 if __name__ == "__main__":
     port = int(os.getenv("PORT", "8000"))
     host = os.getenv("HOST", "127.0.0.1")
-    
+   
     uvicorn.run(
         "app.main:app",
         host=host,
         port=port,
-        reload=True if settings.environment == "development" else False, #
-        workers=settings.workers if settings.environment == "production" else 1 #
+        reload=True if settings.environment == "development" else False,
+        workers=settings.workers if settings.environment == "production" else 1
     )

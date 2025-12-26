@@ -12,7 +12,7 @@ services:
     restart: unless-stopped
     ports:
       - "8000:8000"
-    command: gunicorn -w 2 -k uvicorn.workers.UvicornWorker -b 0.0.0.0:8000 -t 120 app.main:app
+    command: gunicorn -w 2 -k uvicorn.workers.UvicornWorker -b 0.0.0.0:8000 -t 120 --forwarded-allow-ips '*' --proxy-protocol app.main:app
     depends_on:
       - redis
     networks:

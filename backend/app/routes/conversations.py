@@ -33,15 +33,18 @@ class TriageTicketModel(BaseModel):
 @router.get("/", response_model=APIResponse)
 async def get_pending_triage_tickets(
     status: Optional[str] = Query(None, description="Filter by status (pending, human_needed, resolved)"),
-    assigned_to: Optional[str] = Query(None, description="Filter by assigned user ID")
+    assigned_to: Optional[str] = Query(None, description="Filter by assigned user ID"),
+    business_id: Optional[str] = Query(None, description="Filter by business ID")
 ):
-    """Get conversation tickets with optional filtering by status and assigned_to."""
+    """Get conversation tickets with optional filtering by status, assigned_to, and business_id."""
     query = {}
     
     if status:
         query["status"] = status
     if assigned_to:
         query["assigned_to"] = assigned_to
+    if business_id:
+        query["business_id"] = business_id
     
     # If no filters, default to human_needed (actionable items)
     if not query:

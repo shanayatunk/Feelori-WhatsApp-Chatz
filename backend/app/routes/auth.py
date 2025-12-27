@@ -72,3 +72,14 @@ async def read_current_user(request: Request, current_user: dict = Depends(verif
         data={"user": user_data},
         version=settings.api_version
     )
+
+@router.get("/agents", response_model=APIResponse, status_code=status.HTTP_200_OK)
+async def get_all_agents(current_user: dict = Depends(verify_jwt_token)):
+    """Get all available agents (admin and agent roles) for ticket assignment."""
+    agents = await db_service.get_all_agents()
+    return APIResponse(
+        success=True,
+        message="Agents retrieved successfully",
+        data={"agents": agents},
+        version=settings.api_version
+    )

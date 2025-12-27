@@ -4,6 +4,7 @@ from pydantic import BaseModel, Field
 from typing import List, Dict, Optional
 from datetime import datetime
 from bson import ObjectId
+from enum import Enum
 
 # This file contains Pydantic models that define the structure of data for
 # API requests and responses, ensuring type safety and validation.
@@ -90,3 +91,30 @@ class TemplateBroadcastRequest(BaseModel):
     variables: Dict = Field(default_factory=dict)  # e.g., {"body_params": [...], "header_text_param": "...", "button_url_param": "..."}
     confirmation: Optional[str] = None
     dry_run: bool = True
+
+class ConversationStatus(str, Enum):
+    """Status values for conversation tickets."""
+    PENDING = "pending"
+    HUMAN_NEEDED = "human_needed"
+    RESOLVED = "resolved"
+
+class ConversationModel(BaseModel):
+    """Model for conversation tickets with assignment and status tracking."""
+    _id: str
+    customer_phone: str
+    order_number: str
+    issue_type: str
+    status: ConversationStatus = ConversationStatus.PENDING
+    assigned_to: Optional[str] = None
+    business_id: str = "feelori"
+    created_at: datetime
+    updated_at: Optional[datetime] = None
+    image_media_id: Optional[str] = None
+
+class AssignTicketRequest(BaseModel):
+    """Request model for assigning a ticket to a user."""
+    user_id: str
+
+class SendMessageRequest(BaseModel):
+    """Request model for sending a manual message."""
+    message: str

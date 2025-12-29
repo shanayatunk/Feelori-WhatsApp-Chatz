@@ -138,11 +138,45 @@ async def get_chat_history(
 
 
 @router.post("/{ticket_id}/assign", response_model=APIResponse)
-async def assign_ticket(ticket_id: str, assign_data: AssignTicketRequest):
+async def assign_ticket(
+    ticket_id: str,
+    assign_data: AssignTicketRequest,
+    current_user: dict = Depends(verify_jwt_token)
+):
     """Assign a ticket to a user."""
     success = await db_service.assign_ticket(ticket_id, assign_data.user_id)
     if not success:
         raise HTTPException(status_code=404, detail="Ticket not found")
+    
+    # Human Entry Notification: Send intro message when agent takes over
+    if success and assign_data.user_id:
+        try:
+            # Get the ticket to retrieve customer phone number
+            ticket = await db_service.get_ticket_by_id(ticket_id)
+            if ticket and ticket.get("status") == "human_needed":
+                # Get agent's name from current_user or assign_data
+                agent_name = (
+                    current_user.get("full_name") or
+                    current_user.get("username") or
+                    current_user.get("sub") or
+                    assign_data.user_id or
+                    "a support agent"
+                )
+                
+                # Construct entry message
+                entry_message = f"👋 Hi, I'm {agent_name} from FeelOri Support. I'm reviewing your request and will assist you shortly. 🧑‍💻"
+                
+                # Send WhatsApp message to customer
+                customer_phone = ticket.get("customer_phone")
+                if customer_phone:
+                    await whatsapp_service.send_message(
+                        to_phone=customer_phone,
+                        message=entry_message
+                    )
+                    logger.info(f"Sent agent entry notification to {customer_phone} for ticket {ticket_id}")
+        except Exception as e:
+            # Don't crash the API request if WhatsApp fails
+            logger.error(f"Failed to send agent entry notification for ticket {ticket_id}: {e}")
     
     return APIResponse(
         success=True,

@@ -221,10 +221,17 @@ async def get_broadcast_history(
     try:
         jobs, pagination = await db_service.get_broadcast_jobs(page=page, limit=limit)
         
-        # Convert ObjectId to string for JSON serialization
+        # Convert ObjectId to string for JSON serialization and ensure stats exist
         for job in jobs:
             if "_id" in job:
                 job["_id"] = str(job["_id"])
+            
+            # Phase 6C: Ensure Stats Exist (for old jobs that might not have these fields)
+            job["sent_count"] = job.get("sent_count", 0)
+            job["delivered_count"] = job.get("delivered_count", 0)
+            job["read_count"] = job.get("read_count", 0)
+            job["failed_count"] = job.get("failed_count", 0)
+            job["total_recipients"] = job.get("total_recipients", 0)
         
         return APIResponse(
             success=True,

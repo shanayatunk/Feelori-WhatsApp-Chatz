@@ -1335,18 +1335,24 @@ class DatabaseService:
             Broadcast job ID
         """
         job_doc = {
-            "created_at": self._now_utc(),
+            "created_at": datetime.utcnow(),
             "message": message,
             "image_url": image_url,
             "target_type": target_type,
-            "status": "pending",
+            "status": "queued",
             "stats": {
                 "total_recipients": total_recipients,
                 "sent": 0,
                 "delivered": 0,
                 "read": 0,
                 "failed": 0,
-            }
+            },
+            # Phase 6C: Flat stats fields for frontend compatibility
+            "sent_count": 0,
+            "delivered_count": 0,
+            "read_count": 0,
+            "failed_count": 0,
+            "total_recipients": total_recipients
         }
         result = await self.db.broadcasts.insert_one(job_doc)
         return str(result.inserted_id)

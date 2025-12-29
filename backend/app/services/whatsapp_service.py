@@ -35,7 +35,7 @@ class WhatsAppService:
     async def resilient_api_call(self, func, *args, **kwargs):
         return await self.circuit_breaker.call(func, *args, **kwargs)
 
-    async def send_whatsapp_request(self, payload: dict, metadata: dict | None = None) -> Optional[str]:
+    async def send_whatsapp_request(self, payload: dict, metadata: dict | None = None, source: str = "bot") -> Optional[str]:
         """Generic method to send a request to the WhatsApp messages API."""
         try:
             to_phone = payload.get("to")
@@ -68,6 +68,7 @@ class WhatsAppService:
                     "message_type": payload.get("type"),
                     "content": json.dumps(content_payload),
                     "status": "sent",
+                    "source": source,
                     "timestamp": datetime.utcnow(),
                     "metadata": metadata or {}
                 }
@@ -89,10 +90,16 @@ class WhatsAppService:
 
 
     # --- THIS FUNCTION IS NOW CORRECTED ---
-    async def send_message(self, to_phone: str, message: str, image_url: Optional[str] = None) -> Optional[str]:
+    async def send_message(self, to_phone: str, message: str, image_url: Optional[str] = None, source: str = "bot") -> Optional[str]:
         """
         Sends a message. If image_url is provided, sends an image with the message as a caption.
         Otherwise, sends a simple text message.
+        
+        Args:
+            to_phone: Recipient phone number
+            message: Message text content
+            image_url: Optional image URL
+            source: Message source ("bot", "agent", "system", "broadcast") - defaults to "bot"
         """
         clean_phone = re.sub(r"[^\d+]", "", to_phone)
         if not clean_phone.startswith("+"):
@@ -111,7 +118,7 @@ class WhatsAppService:
             payload["type"] = "text"
             payload["text"] = {"body": message[:4096]}
         
-        return await self.send_whatsapp_request(payload)
+        return await self.send_whatsapp_request(payload, source=source)
 
     # --- THIS FUNCTION IS NOW CORRECTED ---
     async def send_template_message(

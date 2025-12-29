@@ -723,7 +723,7 @@ class DatabaseService:
             logger.exception(f"Failed to handoff ticket {ticket_id} to bot")
             return False
     
-    async def log_manual_message(self, phone_number: str, text: str, user_id: str) -> None:
+    async def log_manual_message(self, phone_number: str, text: str, user_id: str, source: str = "agent") -> None:
         """
         Log a manual message sent by a human agent.
         
@@ -731,6 +731,7 @@ class DatabaseService:
             phone_number: Customer's phone number
             text: Message text content
             user_id: User ID of the agent who sent the message
+            source: Message source ("agent", "system", etc.) - defaults to "agent"
         """
         cleaned_phone = self._sanitize_phone(phone_number)
         if not cleaned_phone:
@@ -743,7 +744,7 @@ class DatabaseService:
             "direction": "outbound",
             "status": "sent",
             "timestamp": self._now_utc(),
-            "source": "human",
+            "source": source,
             "user_id": user_id
         }
         
@@ -1849,9 +1850,14 @@ class DatabaseService:
         Log inbound or outbound message.
         
         Args:
-            message_data: Message information to log
+            message_data: Message information to log (must include 'source' field:
+                         "customer", "bot", "agent", "system", or "broadcast")
         """
         message_data.setdefault("timestamp", self._now_utc())
+        # Ensure source field is present (required for message source hardening)
+        if "source" not in message_data:
+            logger.warning(f"Message logged without 'source' field: {message_data.get('wamid', 'unknown')}")
+            message_data["source"] = "unknown"
         await self.db.message_logs.insert_one(message_data)
 
     # ==================== Webhook Processing ====================

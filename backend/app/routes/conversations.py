@@ -3,6 +3,7 @@ from fastapi import APIRouter, Depends, HTTPException, Response, Query
 from pydantic import BaseModel
 from typing import Optional
 import logging
+from datetime import datetime
 
 # ✅ 1. Import settings
 from app.config.settings import settings
@@ -171,7 +172,8 @@ async def assign_ticket(
                 if customer_phone:
                     await whatsapp_service.send_message(
                         to_phone=customer_phone,
-                        message=entry_message
+                        message=entry_message,
+                        source="system"
                     )
                     logger.info(f"Sent agent entry notification to {customer_phone} for ticket {ticket_id}")
         except Exception as e:
@@ -227,7 +229,7 @@ async def send_manual_message(
         raise HTTPException(status_code=500, detail="Failed to send message")
     
     # Log the manual message
-    await db_service.log_manual_message(customer_phone, message_data.message, user_id)
+    await db_service.log_manual_message(customer_phone, message_data.message, user_id, source="agent")
     
     return APIResponse(
         success=True,

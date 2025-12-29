@@ -1404,6 +1404,7 @@ async def process_webhook_message(message: Dict[str, Any], webhook_data: Dict[st
             "message_type": message_type,
             "content": message_text,
             "status": "received", # The initial status is 'received'
+            "source": "customer",
             "timestamp": datetime.utcnow()
         }
         await db_service.log_message(log_data)

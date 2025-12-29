@@ -185,6 +185,7 @@ class DatabaseService:
             ("message_logs", [("metadata.broadcast_id", 1), ("status", 1)], {}),
             ("abandoned_checkouts", [("updated_at", 1), ("reminder_sent", 1), ("completed_at", 1)], {}),
             ("triage_tickets", [("status", 1), ("_id", 1)], {}),
+            ("triage_tickets", [("business_id", 1), ("status", 1), ("created_at", 1)], {}),
             ("human_escalation_analytics", [("timestamp", -1)], {}),
         ]
 

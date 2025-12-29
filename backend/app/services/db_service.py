@@ -618,14 +618,15 @@ class DatabaseService:
         try:
             cursor = self.db.message_logs.find(
                 {"phone": cleaned_phone}
-            ).sort("timestamp", 1).limit(limit)
+            ).sort("timestamp", -1).limit(limit)
             
             messages = await cursor.to_list(length=limit)
             # Convert ObjectId to string if present
             for msg in messages:
                 if "_id" in msg:
                     msg["_id"] = str(msg["_id"])
-            return messages
+            # Reverse to return in chronological order (oldest to newest)
+            return list(reversed(messages))
         except Exception:
             logger.exception(f"Failed to get chat history for {cleaned_phone[:4]}...")
             return []
@@ -680,6 +681,46 @@ class DatabaseService:
             return result.modified_count > 0
         except Exception:
             logger.exception(f"Failed to assign ticket {ticket_id} to user {user_id}")
+            return False
+    
+    async def handoff_to_bot(self, ticket_id: str) -> bool:
+        """
+        Release a ticket back to the bot (handoff from human to bot).
+        
+        Args:
+            ticket_id: Ticket's ObjectId as string
+            
+        Returns:
+            True if ticket was successfully released to bot, False if status is invalid
+        """
+        if not self._validate_object_id(ticket_id):
+            logger.warning(f"Invalid ticket_id format: {ticket_id}")
+            return False
+        
+        try:
+            # Retrieve the ticket first to check status
+            ticket = await self.get_ticket_by_id(ticket_id)
+            if not ticket:
+                logger.warning(f"Ticket not found: {ticket_id}")
+                return False
+            
+            # Guard clause: Only allow release if status is "human_needed"
+            if ticket.get("status") != "human_needed":
+                logger.warning(f"Ticket {ticket_id} status is {ticket.get('status')}, cannot release to bot")
+                return False
+            
+            # Update operation: Set status to pending, clear assignment
+            result = await self.db.triage_tickets.update_one(
+                {"_id": ObjectId(ticket_id)},
+                {"$set": {
+                    "status": "pending",
+                    "assigned_to": None,
+                    "updated_at": self._now_utc()
+                }}
+            )
+            return result.modified_count > 0
+        except Exception:
+            logger.exception(f"Failed to handoff ticket {ticket_id} to bot")
             return False
     
     async def log_manual_message(self, phone_number: str, text: str, user_id: str) -> None:

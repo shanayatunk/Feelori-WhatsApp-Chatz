@@ -151,6 +151,20 @@ async def assign_ticket(ticket_id: str, assign_data: AssignTicketRequest):
     )
 
 
+@router.post("/{ticket_id}/release", response_model=APIResponse)
+async def release_ticket(ticket_id: str):
+    """Release a ticket back to the bot (handoff from human to bot)."""
+    success = await db_service.handoff_to_bot(ticket_id)
+    if not success:
+        raise HTTPException(status_code=400, detail="Ticket status invalid for release")
+    
+    return APIResponse(
+        success=True,
+        message="Ticket released to bot successfully",
+        version=settings.api_version
+    )
+
+
 @router.post("/{ticket_id}/send", response_model=APIResponse)
 async def send_manual_message(
     ticket_id: str,

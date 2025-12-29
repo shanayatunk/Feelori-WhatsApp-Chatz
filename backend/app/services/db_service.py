@@ -631,6 +631,32 @@ class DatabaseService:
             logger.exception(f"Failed to get chat history for {cleaned_phone[:4]}...")
             return []
     
+    async def get_last_outbound_message(self, phone_number: str) -> Optional[Dict[str, Any]]:
+        """
+        Get the last outbound message sent to a phone number.
+        
+        Args:
+            phone_number: Customer's phone number
+            
+        Returns:
+            Last outbound message document or None if not found
+        """
+        cleaned_phone = self._sanitize_phone(phone_number)
+        if not cleaned_phone:
+            return None
+        
+        try:
+            message = await self.db.message_logs.find_one(
+                {"phone": cleaned_phone, "direction": "outbound"},
+                sort=[("timestamp", -1)]
+            )
+            if message and "_id" in message:
+                message["_id"] = str(message["_id"])
+            return message
+        except Exception:
+            logger.exception(f"Failed to get last outbound message for {cleaned_phone[:4]}...")
+            return None
+    
     async def get_ticket_by_id(self, ticket_id: str) -> Optional[Dict[str, Any]]:
         """
         Get a ticket by its ID.

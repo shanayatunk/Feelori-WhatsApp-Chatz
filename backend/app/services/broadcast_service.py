@@ -198,26 +198,6 @@ class BroadcastService:
                 
                 if wamid:
                     # Message is already logged by send_whatsapp_request with source="broadcast"
-                    # Additional logging with db_service for broadcast tracking
-                    try:
-                        await db_service.log_message({
-                            "wamid": wamid,
-                            "phone": formatted_phone,
-                            "direction": "outbound",
-                            "message_type": "template",
-                            "content": f"Template: {template_name}",
-                            "status": "sent",
-                            "source": "broadcast",
-                            "timestamp": datetime.utcnow(),
-                            "metadata": {
-                                "template_name": template_name,
-                                "business_id": business_config.business_id,
-                                "business_name": business_config.business_name
-                            }
-                        })
-                    except Exception as log_error:
-                        logger.warning(f"Failed to log broadcast message to db_service: {log_error}")
-                    
                     logger.info(f"Broadcast sent to {formatted_phone[:4]}... (wamid: {wamid})")
                     sent_count += 1
                 else:
@@ -238,6 +218,41 @@ class BroadcastService:
             "skipped_count": skipped_count,
             "dry_run": dry_run
         }
+    
+    async def execute_job(self, job_id: str, **kwargs):
+        """
+        Wrapper to run a broadcast and update the job status in DB.
+        
+        Args:
+            job_id: Broadcast job ID
+            **kwargs: Arguments to pass to send_broadcast (target_business_id, template_name, recipients, variables, dry_run)
+        """
+        try:
+            # 1. Mark as Processing
+            await db_service.update_broadcast_job(job_id, {
+                "status": "processing",
+                "started_at": datetime.utcnow()
+            })
+            
+            # 2. Run the actual broadcast
+            # Pass all kwargs (template_name, recipients, etc.) to send_broadcast
+            result = await self.send_broadcast(**kwargs)
+            
+            # 3. Mark as Completed
+            await db_service.update_broadcast_job(job_id, {
+                "status": "completed",
+                "stats.sent": result.get("sent_count", 0),
+                "stats.failed": result.get("failed_count", 0),
+                "completed_at": datetime.utcnow()
+            })
+            
+        except Exception as e:
+            logger.error(f"Broadcast Job {job_id} failed: {e}", exc_info=True)
+            # Mark as Failed if it crashes
+            await db_service.update_broadcast_job(job_id, {
+                "status": "failed",
+                "error": str(e)
+            })
     
     async def close(self):
         """Close HTTP client."""

@@ -254,6 +254,19 @@ async def process_message(phone_number: str, message_text: str, message_type: st
         if clean_phone == settings.packing_dept_whatsapp_number:
             return string_service.get_string("PACKING_DEPT_REDIRECT", strings.PACKING_DEPT_REDIRECT)
 
+        # --- BOT SUPPRESSION CHECK ---
+        # Check if there is an active ticket handled by a human
+        active_ticket = await db_service.db.triage_tickets.find_one({
+            "customer_phone": clean_phone,
+            "status": "human_needed",
+            "business_id": "feelori"
+        })
+
+        if active_ticket:
+            logger.info(f"Bot suppressed for {clean_phone}: Human agent active on ticket {active_ticket.get('_id')}")
+            return None  # Stop processing (Bot stays silent)
+        # -----------------------------
+
         customer = await get_or_create_customer(clean_phone)
 
         # --- Refactored State Handling ---

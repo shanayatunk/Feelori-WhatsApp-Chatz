@@ -14,29 +14,33 @@ from app.models.api import APIResponse
 logger = logging.getLogger(__name__)
 
 # Template Metadata for UI Previews (Phase 5C)
-# Note: The "Source of Truth" is Meta. This is for UI preview confidence only.
+# Source of Truth: Meta Business Manager
+# Last Synced: Manually by Admin
 TEMPLATE_METADATA = {
     "new_arrival_showcase": {
         "header": "IMAGE",
-        "body": "✨ Hello {{1}}!\n\nOur latest collection is finally here. Handcrafted designs to make you Feel Original. 💎\n\nCheck them out before they are gone! 👇"
+        "body": "✨ Hello {{1}}!\n\nOur latest collection is finally here. Handcrafted designs to make you Feel Original. 💎\n\nCheck them out before they are gone! 👇",
+        "version": "v1.0",
+        "last_verified": "2025-12-29"
     },
     "video_collection_launch": {
         "header": "VIDEO",
-        "body": "🎥 Watch our new designs come to life, {{1}}!\n\nDetailed craftsmanship you have to see to believe. Perfect for the upcoming season. ✨\n\nTap below to shop the look!"
+        "body": "🎥 Watch our new designs come to life, {{1}}!\n\nDetailed craftsmanship you have to see to believe. Perfect for the upcoming season. ✨\n\nTap below to shop the look!",
+        "version": "v1.0",
+        "last_verified": "2025-12-29"
     },
     "festival_sale_alert": {
         "header": "TEXT: FESTIVE SALE 🪔",
-        "body": "Hi {{1}}, the festive season is here!\n\nEnjoy flat {{2}}% OFF on selected items. 💖\n\nUse code: *{{3}}* at checkout.\nOffer valid until {{4}}."
+        "body": "Hi {{1}}, the festive season is here!\n\nEnjoy flat {{2}}% OFF on selected items. 💖\n\nUse code: *{{3}}* at checkout.\nOffer valid until {{4}}.",
+        "version": "v1.0",
+        "last_verified": "2025-12-29"
     },
     "gentle_greeting_v1": {
         "header": "NONE",
-        "body": "Hi {{1}}, we missed you! 👋\n\nWe've added some beautiful new pieces since your last visit. Come take a look at what's new at FeelOri. ✨"
-    },
-    # Fallbacks
-    "hello_world": {"header": "NONE", "body": "Hello world! Welcome to FeelOri."},
-    "order_update": {"header": "TEXT", "body": "Your order {{1}} has been updated."},
-    "order_confirmation_v2": {"header": "TEXT", "body": "Thanks for your order {{1}}!"},
-    "shipping_update_v1": {"header": "TEXT", "body": "Your order is on the way!"}
+        "body": "Hi {{1}}, we missed you! 👋\n\nWe've added some beautiful new pieces since your last visit. Come take a look at what's new at FeelOri. ✨",
+        "version": "v1.0",
+        "last_verified": "2025-12-29"
+    }
 }
 
 router = APIRouter(
@@ -75,7 +79,9 @@ async def get_broadcast_config(current_user: dict = Depends(verify_jwt_token)):
             "id": t,
             "name": readable_name,
             "header": meta.get("header", "NONE"),
-            "body": meta.get("body", "Preview not available.")
+            "body": meta.get("body", "Preview not available."),
+            "version": meta.get("version", "v0"),
+            "last_verified": meta.get("last_verified", "")
         })
     
     # Audience definitions with display names

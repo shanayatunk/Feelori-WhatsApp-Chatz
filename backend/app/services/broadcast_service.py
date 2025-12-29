@@ -4,7 +4,7 @@ import asyncio
 import httpx
 import logging
 import re
-from typing import List, Dict
+from typing import List, Dict, Optional
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -98,7 +98,8 @@ class BroadcastService:
         template_name: str,
         recipients: List[str],
         variables: Dict,
-        dry_run: bool = True
+        dry_run: bool = True,
+        job_id: Optional[str] = None
     ) -> Dict:
         """
         Send a WhatsApp template broadcast to multiple recipients.
@@ -197,6 +198,10 @@ class BroadcastService:
                 )
                 
                 if wamid:
+                    # Link message to job immediately so we don't miss fast delivery webhooks
+                    if job_id:
+                        await db_service.link_message_to_job(wamid, job_id)
+                    
                     # Message is already logged by send_whatsapp_request with source="broadcast"
                     logger.info(f"Broadcast sent to {formatted_phone[:4]}... (wamid: {wamid})")
                     sent_count += 1
@@ -236,7 +241,8 @@ class BroadcastService:
             
             # 2. Run the actual broadcast
             # Pass all kwargs (template_name, recipients, etc.) to send_broadcast
-            result = await self.send_broadcast(**kwargs)
+            # Include job_id so messages can be linked to this job
+            result = await self.send_broadcast(**kwargs, job_id=job_id)
             
             # 3. Mark as Completed
             await db_service.update_broadcast_job(job_id, {

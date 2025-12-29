@@ -28,17 +28,46 @@ class BroadcastSendRequest(BaseModel):
     target_phones: Optional[List[str]] = None  # For "custom" audience type
     target_group_id: Optional[str] = None  # For "custom_group" audience type
     dry_run: bool = False
+    is_test: bool = False  # Test mode - doesn't create broadcast job
+    test_phone: Optional[str] = None  # Phone number for test mode
 
 
 @router.get("/config", response_model=APIResponse)
 async def get_broadcast_config(current_user: dict = Depends(verify_jwt_token)):
-    """Get broadcast configuration (templates and audiences). Admin only."""
+    """Get broadcast configuration (templates and audiences with counts). Admin only."""
     # Admin check
     if current_user.get("role") != "admin":
         raise HTTPException(status_code=403, detail="Admin access required")
     
     templates = list(ALLOWED_TEMPLATES)
-    audiences = ["all", "active", "recent", "inactive", "custom", "custom_group"]
+    
+    # Audience definitions with display names
+    audience_definitions = [
+        {"id": "all", "name": "All Customers"},
+        {"id": "active", "name": "Active (24h)"},
+        {"id": "recent", "name": "Recent (7d)"},
+        {"id": "inactive", "name": "Inactive (30d+)"},
+        {"id": "custom", "name": "Custom List"},
+        {"id": "custom_group", "name": "Custom Group"}
+    ]
+    
+    # Get counts for each audience type
+    audiences = []
+    for audience in audience_definitions:
+        try:
+            count = await db_service.count_audience(audience["id"])
+            audiences.append({
+                "id": audience["id"],
+                "name": audience["name"],
+                "count": count
+            })
+        except Exception as e:
+            logger.error(f"Failed to count audience {audience['id']}: {e}")
+            audiences.append({
+                "id": audience["id"],
+                "name": audience["name"],
+                "count": 0
+            })
     
     return APIResponse(
         success=True,
@@ -63,6 +92,30 @@ async def send_broadcast(
         raise HTTPException(status_code=403, detail="Admin access required")
     
     try:
+        # Test Mode: Send to single phone without creating job
+        if request_data.is_test:
+            if not request_data.test_phone:
+                raise HTTPException(status_code=400, detail="test_phone is required when is_test is True")
+            
+            # Send test message directly (no job creation)
+            result = await broadcast_service.send_broadcast(
+                target_business_id=request_data.business_id,
+                template_name=request_data.template_name,
+                recipients=[request_data.test_phone],
+                variables=request_data.params,
+                dry_run=request_data.dry_run
+            )
+            
+            logger.info(f"Test broadcast sent to {request_data.test_phone[:4]}... by admin {current_user.get('username', 'unknown')}")
+            
+            return APIResponse(
+                success=True,
+                message="Test broadcast sent successfully",
+                data={"mode": "test", "sent_count": result.get("sent_count", 0)},
+                version=settings.api_version
+            )
+        
+        # Normal Broadcast Mode: Full audience with job tracking
         # Get users for broadcast
         users = await db_service.get_customers_for_broadcast(
             target_type=request_data.audience_type,
@@ -70,8 +123,8 @@ async def send_broadcast(
             target_group_id=request_data.target_group_id
         )
         
-        # Extract phone numbers from user objects
-        recipients = [user.get("phone_number") for user in users if user.get("phone_number")]
+        # Extract phone numbers from user objects (excluding opted-out)
+        recipients = [user.get("phone_number") for user in users if user.get("phone_number") and not user.get("opted_out")]
         
         if not recipients:
             raise HTTPException(status_code=400, detail="No recipients found for the specified audience")

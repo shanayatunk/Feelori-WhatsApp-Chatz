@@ -1185,6 +1185,67 @@ class DatabaseService:
         groups = await self.db.broadcast_groups.find({}).to_list(length=None)
         return self._serialize_ids(groups)
 
+    async def count_audience(
+        self,
+        audience_type: str,
+        target_phones: Optional[List[str]] = None,
+        target_group_id: Optional[str] = None
+    ) -> int:
+        """
+        Count customers for broadcast audience, excluding opted-out users.
+        Must match get_customers_for_broadcast logic exactly.
+        
+        Args:
+            audience_type: One of 'all', 'active', 'recent', 'inactive', 'custom', 'custom_group'
+            target_phones: Specific phone numbers for 'custom' targeting
+            target_group_id: Group ID for 'custom_group' targeting
+            
+        Returns:
+            Count of eligible customers (excluding opted-out)
+        """
+        # Build query matching get_customers_for_broadcast logic
+        if audience_type == "custom_group":
+            if not target_group_id or not self._validate_object_id(target_group_id):
+                return 0
+            
+            group = await self.db.broadcast_groups.find_one({"_id": ObjectId(target_group_id)})
+            if not group:
+                return 0
+            
+            group_phones = group.get("phone_numbers", [])
+            sanitized_phones = [self._sanitize_phone(p) for p in group_phones]
+            sanitized_phones = [p for p in sanitized_phones if p]
+            
+            # Count excluding opted-out users
+            return await self.db.customers.count_documents({
+                "phone_number": {"$in": sanitized_phones},
+                "opted_out": {"$ne": True}
+            })
+        
+        if target_phones:
+            sanitized_phones = [self._sanitize_phone(p) for p in target_phones]
+            sanitized_phones = [p for p in sanitized_phones if p]
+            
+            # Count excluding opted-out users
+            return await self.db.customers.count_documents({
+                "phone_number": {"$in": sanitized_phones},
+                "opted_out": {"$ne": True}
+            })
+        
+        # Build query based on audience_type
+        query = {"opted_out": {"$ne": True}}  # Always exclude opted-out
+        now = self._now_utc()
+        
+        if audience_type == "active":
+            query["last_interaction"] = {"$gte": now - timedelta(hours=24)}
+        elif audience_type == "recent":
+            query["last_interaction"] = {"$gte": now - timedelta(days=7)}
+        elif audience_type == "inactive":
+            query["last_interaction"] = {"$lt": now - timedelta(days=30)}
+        # 'all' uses query with only opted_out filter
+        
+        return await self.db.customers.count_documents(query)
+    
     async def get_customers_for_broadcast(
         self, 
         target_type: str, 

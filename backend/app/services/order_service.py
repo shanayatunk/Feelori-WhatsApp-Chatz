@@ -209,7 +209,9 @@ async def _handle_triage_flow(clean_phone: str, message_text: str, message_type:
             logger.info(f"Triage: Escalating for {clean_phone}, Order: {order_number}, Issue: {issue_text}")
             triage_ticket = {
                 "customer_phone": clean_phone, "order_number": order_number,
-                "issue_type": issue_text, "image_media_id": None, "status": "pending",
+                "issue_type": issue_text, "image_media_id": None, "status": "human_needed",
+                "business_id": "feelori",
+                "assigned_to": None,
                 "created_at": datetime.utcnow()
             }
             await db_service.db.triage_tickets.insert_one(triage_ticket)
@@ -224,7 +226,9 @@ async def _handle_triage_flow(clean_phone: str, message_text: str, message_type:
         logger.info(f"Triage: Got photo (Media ID: {image_id}) for {clean_phone}, Order: {order_number}. Escalating.")
         triage_ticket = {
             "customer_phone": clean_phone, "order_number": order_number,
-            "issue_type": "damaged_item", "image_media_id": image_id, "status": "pending",
+            "issue_type": "damaged_item", "image_media_id": image_id, "status": "human_needed",
+            "business_id": "feelori",
+            "assigned_to": None,
             "created_at": datetime.utcnow()
         }
         await db_service.db.triage_tickets.insert_one(triage_ticket)

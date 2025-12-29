@@ -185,6 +185,7 @@ class DatabaseService:
             ("message_logs", [("metadata.broadcast_id", 1), ("status", 1)], {}),
             ("abandoned_checkouts", [("updated_at", 1), ("reminder_sent", 1), ("completed_at", 1)], {}),
             ("triage_tickets", [("status", 1), ("_id", 1)], {}),
+            ("triage_tickets", [("business_id", 1), ("status", 1), ("created_at", 1)], {}),
             ("human_escalation_analytics", [("timestamp", -1)], {}),
         ]
 
@@ -708,6 +709,35 @@ class DatabaseService:
         await self._safe_db_operation(
             lambda: self.db.message_logs.insert_one(message_data)
         )
+    
+    async def get_all_agents(self) -> List[Dict[str, Any]]:
+        """
+        Get all available agents (admin and agent roles) for ticket assignment.
+        
+        Returns:
+            List of agent dictionaries with id, username, and role
+        """
+        try:
+            cursor = self.db.users.find(
+                {"role": {"$in": ["admin", "agent"]}},
+                {"_id": 1, "username": 1, "role": 1}
+            )
+            agents = await cursor.to_list(length=100)
+            
+            # Transform: Convert _id to string id and remove _id
+            result = []
+            for agent in agents:
+                agent_dict = {
+                    "id": str(agent["_id"]),
+                    "username": agent.get("username", ""),
+                    "role": agent.get("role", "")
+                }
+                result.append(agent_dict)
+            
+            return result
+        except Exception:
+            logger.exception("Failed to get all agents")
+            return []
 
     # ==================== Abandoned Checkouts ====================
 

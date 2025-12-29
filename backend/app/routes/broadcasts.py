@@ -226,12 +226,19 @@ async def get_broadcast_history(
             if "_id" in job:
                 job["_id"] = str(job["_id"])
             
-            # Phase 6C: Ensure Stats Exist (for old jobs that might not have these fields)
+            # Ensure stats are integers, defaulting to 0 if missing
             job["sent_count"] = job.get("sent_count", 0)
             job["delivered_count"] = job.get("delivered_count", 0)
             job["read_count"] = job.get("read_count", 0)
             job["failed_count"] = job.get("failed_count", 0)
             job["total_recipients"] = job.get("total_recipients", 0)
+            
+            # Ensure all values are integers (handle None/null values)
+            job["sent_count"] = int(job["sent_count"]) if job["sent_count"] is not None else 0
+            job["delivered_count"] = int(job["delivered_count"]) if job["delivered_count"] is not None else 0
+            job["read_count"] = int(job["read_count"]) if job["read_count"] is not None else 0
+            job["failed_count"] = int(job["failed_count"]) if job["failed_count"] is not None else 0
+            job["total_recipients"] = int(job["total_recipients"]) if job["total_recipients"] is not None else 0
         
         return APIResponse(
             success=True,

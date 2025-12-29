@@ -136,10 +136,18 @@ class BroadcastService:
         
         sent_count = 0
         failed_count = 0
+        skipped_count = 0
         
         for recipient in recipients:
             try:
                 formatted_phone = self._format_phone(recipient)
+                
+                # Check opt-out status for this recipient
+                customer = await db_service.get_customer(formatted_phone)
+                if customer and customer.get("opted_out"):
+                    logger.debug(f"Skipping opted-out user {formatted_phone[:4]}...")
+                    skipped_count += 1
+                    continue
                 
                 if dry_run:
                     logger.info(
@@ -205,6 +213,7 @@ class BroadcastService:
             "status": "success",
             "sent_count": sent_count,
             "failed_count": failed_count,
+            "skipped_count": skipped_count,
             "dry_run": dry_run
         }
     

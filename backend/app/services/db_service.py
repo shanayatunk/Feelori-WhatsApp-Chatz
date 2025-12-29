@@ -236,6 +236,38 @@ class DatabaseService:
         if customer:
             database_operations_counter.labels(operation="get_customer", status="success").inc()
         return customer
+    
+    async def toggle_opt_out(self, phone: str, status: bool) -> bool:
+        """
+        Toggle opt-out status for a customer.
+        
+        Args:
+            phone: Customer's phone number
+            status: True to opt-out, False to opt-in
+            
+        Returns:
+            True if update was successful, False otherwise
+        """
+        cleaned_phone = self._sanitize_phone(phone)
+        if not cleaned_phone:
+            logger.warning(f"Invalid phone number for opt-out toggle: {phone}")
+            return False
+        
+        try:
+            result = await self.db.customers.update_one(
+                {"phone_number": cleaned_phone},
+                {"$set": {"opted_out": status, "opt_out_updated_at": self._now_utc()}},
+                upsert=False
+            )
+            if result.modified_count > 0:
+                logger.info(f"Opt-out status updated for {cleaned_phone[:4]}...: opted_out={status}")
+                return True
+            else:
+                logger.warning(f"Customer not found for opt-out toggle: {cleaned_phone[:4]}...")
+                return False
+        except Exception:
+            logger.exception(f"Failed to toggle opt-out for {cleaned_phone[:4]}...")
+            return False
 
     async def create_customer(self, customer_data: Dict[str, Any]) -> Optional[str]:
         """
@@ -1127,15 +1159,32 @@ class DatabaseService:
             if not group:
                 return []
 
-            return [{"phone_number": p} for p in group.get("phone_numbers", [])]
+            # For custom groups, we need to fetch customer records to get opted_out status
+            group_phones = group.get("phone_numbers", [])
+            sanitized_phones = [self._sanitize_phone(p) for p in group_phones]
+            sanitized_phones = [p for p in sanitized_phones if p]
+            customers = await self.db.customers.find(
+                {"phone_number": {"$in": sanitized_phones}},
+                {"phone_number": 1, "opted_out": 1}
+            ).to_list(length=None)
+            # Ensure opted_out field exists (default to False if missing)
+            for customer in customers:
+                if "opted_out" not in customer:
+                    customer["opted_out"] = False
+            return customers
 
         if target_phones:
             sanitized_phones = [self._sanitize_phone(p) for p in target_phones]
             sanitized_phones = [p for p in sanitized_phones if p]
-            return await self.db.customers.find(
+            customers = await self.db.customers.find(
                 {"phone_number": {"$in": sanitized_phones}},
-                {"phone_number": 1}
+                {"phone_number": 1, "opted_out": 1}
             ).to_list(length=None)
+            # Ensure opted_out field exists (default to False if missing)
+            for customer in customers:
+                if "opted_out" not in customer:
+                    customer["opted_out"] = False
+            return customers
         
         query = {}
         now = self._now_utc()
@@ -1148,7 +1197,12 @@ class DatabaseService:
             query["last_interaction"] = {"$lt": now - timedelta(days=30)}
         # 'all' uses empty query
         
-        return await self.db.customers.find(query, {"phone_number": 1}).to_list(length=None)
+        customers = await self.db.customers.find(query, {"phone_number": 1, "opted_out": 1}).to_list(length=None)
+        # Ensure opted_out field exists (default to False if missing)
+        for customer in customers:
+            if "opted_out" not in customer:
+                customer["opted_out"] = False
+        return customers
 
     async def create_broadcast_job(
         self, 

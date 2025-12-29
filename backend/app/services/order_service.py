@@ -267,6 +267,21 @@ async def process_message(phone_number: str, message_text: str, message_type: st
             return None  # Stop processing (Bot stays silent)
         # -----------------------------
 
+        # --- OPT-OUT / DND COMPLIANCE CHECK ---
+        # Check for STOP/UNSUBSCRIBE commands (case-insensitive)
+        message_upper = message_text.strip().upper()
+        if message_upper in ["STOP", "UNSUBSCRIBE"]:
+            await db_service.toggle_opt_out(clean_phone, True)
+            logger.info(f"Opt-out requested by {clean_phone[:4]}...")
+            return "You have been unsubscribed from updates. Reply START to resubscribe."
+        
+        # Check for START command (case-insensitive)
+        if message_upper == "START":
+            await db_service.toggle_opt_out(clean_phone, False)
+            logger.info(f"Opt-in requested by {clean_phone[:4]}...")
+            return "You have been resubscribed! 🎉"
+        # ----------------------------------------
+
         customer = await get_or_create_customer(clean_phone)
 
         # --- BROADCAST REPLY CHECK ---

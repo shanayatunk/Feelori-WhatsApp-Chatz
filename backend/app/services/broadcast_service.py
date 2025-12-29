@@ -198,11 +198,29 @@ class BroadcastService:
                 )
                 
                 if wamid:
-                    # Link message to job immediately so we don't miss fast delivery webhooks
+                    # 1. Log the message first (creates the doc) with job_id in metadata
+                    # Note: send_whatsapp_request already logs, but we ensure job_id is in metadata
+                    try:
+                        await db_service.log_message({
+                            "wamid": wamid,
+                            "phone": formatted_phone,
+                            "message_type": "template",
+                            "content": f"Template: {template_name}",
+                            "direction": "outbound",
+                            "status": "sent",
+                            "source": "broadcast",
+                            "timestamp": datetime.utcnow(),
+                            "metadata": {"job_id": job_id} if job_id else {}  # CRITICAL: Store Job ID here
+                        })
+                    except Exception as log_error:
+                        # If duplicate key (already logged by send_whatsapp_request), that's okay
+                        # We'll update it with link_message_to_job below
+                        logger.debug(f"Message already logged, will update with job_id: {log_error}")
+
+                    # 2. Explicitly link (Double safety) if job_id exists
                     if job_id:
                         await db_service.link_message_to_job(wamid, job_id)
                     
-                    # Message is already logged by send_whatsapp_request with source="broadcast"
                     logger.info(f"Broadcast sent to {formatted_phone[:4]}... (wamid: {wamid})")
                     sent_count += 1
                 else:

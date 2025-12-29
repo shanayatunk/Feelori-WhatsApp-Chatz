@@ -127,7 +127,8 @@ class WhatsAppService:
         template_name: str,
         body_params: list,
         header_image_url: Optional[str] = None,
-        header_text_param: Optional[str] = None, # <-- ADD THIS NEW PARAMETER
+        header_text_param: Optional[str] = None,
+        header_video_url: Optional[str] = None,
         button_url_param: Optional[str] = None,
         source: str = "bot"
     ) -> Optional[str]:
@@ -138,12 +139,23 @@ class WhatsAppService:
 
         components = []
 
-        # --- REVISED LOGIC TO HANDLE BOTH HEADER TYPES ---
-        if header_image_url and header_text_param:
-            logger.error(f"Template message for '{template_name}' cannot have both an image and text header.")
+        # --- HEADER LOGIC: Mutual Exclusivity (Only ONE header type allowed) ---
+        header_count = sum([
+            1 if header_image_url else 0,
+            1 if header_text_param else 0,
+            1 if header_video_url else 0
+        ])
+        
+        if header_count > 1:
+            logger.error(f"Template message for '{template_name}' cannot have multiple header types (image, text, or video). Only one is allowed.")
             return None
 
-        if header_image_url:
+        if header_video_url:
+            components.append({
+                "type": "header",
+                "parameters": [{"type": "video", "video": {"link": header_video_url}}]
+            })
+        elif header_image_url:
             components.append({
                 "type": "header",
                 "parameters": [{"type": "image", "image": {"link": header_image_url}}]
@@ -153,7 +165,7 @@ class WhatsAppService:
                 "type": "header",
                 "parameters": [{"type": "text", "text": str(header_text_param)}]
             })
-        # --- END OF REVISED LOGIC ---
+        # --- END OF HEADER LOGIC ---
 
         # Add body component
         if body_params:

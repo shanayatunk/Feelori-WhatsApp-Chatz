@@ -19,7 +19,11 @@ ALLOWED_TEMPLATES = {
     "hello_world",
     "order_update",
     "order_confirmation_v2",
-    "shipping_update_v1"
+    "shipping_update_v1",
+    "new_arrival_showcase",
+    "video_collection_launch",
+    "festival_sale_alert",
+    "gentle_greeting_v1"
 }
 
 
@@ -129,10 +133,12 @@ class BroadcastService:
         self._validate_template(template_name)
         
         # Extract variables
-        body_params = variables.get("body_params", [])
+        raw_body_params = variables.get("body_params", [])
         header_text_param = variables.get("header_text_param")
         header_image_url = variables.get("header_image_url")
-        button_url_param = variables.get("button_url_param")
+        header_video_url = variables.get("header_video_url")
+        button_url_suffix = variables.get("button_url_suffix")
+        button_url_param = variables.get("button_url_param")  # Keep for backward compatibility
         
         sent_count = 0
         failed_count = 0
@@ -149,6 +155,17 @@ class BroadcastService:
                     skipped_count += 1
                     continue
                 
+                # Smart Name Injection: Replace {{name}} with customer's first_name
+                user_body_params = []
+                for param in raw_body_params:
+                    if param == "{{name}}":
+                        # Replace with customer's first_name or default to "there"
+                        customer_name = customer.get("first_name", "there") if customer else "there"
+                        user_body_params.append(customer_name)
+                    else:
+                        # Keep param as is
+                        user_body_params.append(param)
+                
                 if dry_run:
                     logger.info(
                         "Dry run broadcast",
@@ -156,21 +173,26 @@ class BroadcastService:
                             "business": business_config.business_id,
                             "business_name": business_config.business_name,
                             "recipient": formatted_phone[:4] + "...",
-                            "template": template_name
+                            "template": template_name,
+                            "personalized": "{{name}}" in raw_body_params
                         }
                     )
                     sent_count += 1
                     await asyncio.sleep(0.5)  # Still throttle in dry run
                     continue
                 
+                # Use button_url_suffix if provided, otherwise fall back to button_url_param
+                final_button_param = button_url_suffix if button_url_suffix else button_url_param
+                
                 # Use whatsapp_service.send_template_message for each user
                 wamid = await whatsapp_service.send_template_message(
                     to=formatted_phone,
                     template_name=template_name,
-                    body_params=body_params,
+                    body_params=user_body_params,
                     header_image_url=header_image_url,
                     header_text_param=header_text_param,
-                    button_url_param=button_url_param,
+                    header_video_url=header_video_url,
+                    button_url_param=final_button_param,
                     source="broadcast"
                 )
                 

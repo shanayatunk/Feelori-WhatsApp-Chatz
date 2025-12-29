@@ -128,7 +128,8 @@ class WhatsAppService:
         body_params: list,
         header_image_url: Optional[str] = None,
         header_text_param: Optional[str] = None, # <-- ADD THIS NEW PARAMETER
-        button_url_param: Optional[str] = None
+        button_url_param: Optional[str] = None,
+        source: str = "bot"
     ) -> Optional[str]:
         """Sends a pre-approved WhatsApp message template with optional header and button parameters."""
         clean_phone = re.sub(r"[^\d+]", "", to)
@@ -180,7 +181,7 @@ class WhatsAppService:
                 "components": components
             }
         }
-        return await self.send_whatsapp_request(payload)
+        return await self.send_whatsapp_request(payload, source=source)
 
     async def get_catalog_id(self) -> Optional[str]:
         """Fetches and caches the WhatsApp Business catalog ID, prioritizing env settings."""

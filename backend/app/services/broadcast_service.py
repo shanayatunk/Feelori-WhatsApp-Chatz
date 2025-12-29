@@ -5,8 +5,12 @@ import httpx
 import logging
 import re
 from typing import List, Dict
+from datetime import datetime
+import pytz
 
 from app.config.settings import settings, BusinessConfig
+from app.services.whatsapp_service import whatsapp_service
+from app.services.db_service import db_service
 
 logger = logging.getLogger(__name__)
 
@@ -67,6 +71,21 @@ class BroadcastService:
             clean_phone = "+" + clean_phone.lstrip("+")
         return clean_phone
     
+    def is_quiet_hours(self) -> bool:
+        """
+        Check if current time is within quiet hours (8:00 PM to 9:00 AM IST).
+        
+        Returns:
+            True if within quiet hours, False otherwise
+        """
+        ist = pytz.timezone("Asia/Kolkata")
+        now_ist = datetime.now(ist)
+        current_hour = now_ist.hour
+        
+        # Quiet hours: 8:00 PM (20:00) to 9:00 AM (09:00)
+        # This means: hour >= 20 OR hour < 9
+        return current_hour >= 20 or current_hour < 9
+    
     async def send_broadcast(
         self,
         target_business_id: str,
@@ -87,11 +106,20 @@ class BroadcastService:
             
         Returns:
             Dictionary with status and sent_count
+            
+        Raises:
+            ValueError: If quiet hours check fails
         """
+        # Check 1: Quiet Hours Guardrail
+        if self.is_quiet_hours():
+            error_msg = "Cannot send broadcast during quiet hours (8:00 PM - 9:00 AM IST). Please try again later."
+            logger.warning(error_msg)
+            if not dry_run:
+                raise ValueError(error_msg)
+            # In dry run, just log warning but continue
+        
         # Guardrail 1: Business Isolation
         business_config = self._find_business_config(target_business_id)
-        access_token = settings.get_business_token(business_config)
-        phone_id = business_config.phone_number_id
         
         # Guardrail 2: Template Validation
         self._validate_template(template_name)
@@ -122,74 +150,26 @@ class BroadcastService:
                     await asyncio.sleep(0.5)  # Still throttle in dry run
                     continue
                 
-                # Build template payload
-                components = []
+                # Use whatsapp_service.send_template_message for each user
+                wamid = await whatsapp_service.send_template_message(
+                    to=formatted_phone,
+                    template_name=template_name,
+                    body_params=body_params,
+                    header_image_url=header_image_url,
+                    header_text_param=header_text_param,
+                    button_url_param=button_url_param,
+                    source="broadcast"
+                )
                 
-                # Header component
-                if header_image_url and header_text_param:
-                    logger.error(f"Template '{template_name}' cannot have both image and text header")
-                    failed_count += 1
-                    continue
-                
-                if header_image_url:
-                    components.append({
-                        "type": "header",
-                        "parameters": [{"type": "image", "image": {"link": header_image_url}}]
-                    })
-                elif header_text_param:
-                    components.append({
-                        "type": "header",
-                        "parameters": [{"type": "text", "text": str(header_text_param)}]
-                    })
-                
-                # Body component
-                if body_params:
-                    components.append({
-                        "type": "body",
-                        "parameters": [{"type": "text", "text": str(p)} for p in body_params]
-                    })
-                
-                # Button component
-                if button_url_param:
-                    components.append({
-                        "type": "button",
-                        "sub_type": "url",
-                        "index": "0",
-                        "parameters": [{"type": "text", "text": button_url_param}]
-                    })
-                
-                payload = {
-                    "messaging_product": "whatsapp",
-                    "to": formatted_phone,
-                    "type": "template",
-                    "template": {
-                        "name": template_name,
-                        "language": {"code": "en"},
-                        "components": components
-                    }
-                }
-                
-                # Send HTTP request
-                url = f"{self.base_url}/{phone_id}/messages"
-                headers = {
-                    "Authorization": f"Bearer {access_token}",
-                    "Content-Type": "application/json"
-                }
-                
-                response = await self.http_client.post(url, json=payload, headers=headers)
-                
-                if response.status_code == 200:
-                    response_data = response.json()
-                    message_id = response_data.get("messages", [{}])[0].get("id")
-                    logger.info(f"Broadcast sent to {formatted_phone[:4]}... (wamid: {message_id})")
+                if wamid:
+                    # Message is already logged by send_whatsapp_request with source="broadcast"
+                    logger.info(f"Broadcast sent to {formatted_phone[:4]}... (wamid: {wamid})")
                     sent_count += 1
                 else:
-                    error_data = response.json()
-                    error_message = (error_data.get("error") or {}).get("message", "Unknown error")
-                    logger.error(f"Broadcast failed to {formatted_phone[:4]}...: {response.status_code} - {error_message}")
+                    logger.error(f"Broadcast failed to {formatted_phone[:4]}...: send_template_message returned None")
                     failed_count += 1
                 
-                # Guardrail 2: Throttling
+                # Guardrail 3: Throttling
                 await asyncio.sleep(0.5)
                 
             except Exception as e:

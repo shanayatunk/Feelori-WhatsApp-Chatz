@@ -97,6 +97,7 @@ async def handle_whatsapp_webhook(
                             log.info("Processing status update", wamid=wamid, status=status_type)
                             # The DB service now handles idempotency and job linking internally
                             await db_service.update_message_status(wamid, status_type)
+                            log.info(f"Updated status for {wamid} to {status_type}")
                 elif "messages" in value:
                     for message in value.get("messages", []):
                         log.info("Processing incoming message", message=message)

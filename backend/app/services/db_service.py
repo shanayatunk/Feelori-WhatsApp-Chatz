@@ -2166,6 +2166,8 @@ class DatabaseService:
         if "source" not in message_data:
             logger.warning(f"Message logged without 'source' field: {message_data.get('wamid', 'unknown')}")
             message_data["source"] = "unknown"
+        # Ensure metadata field is present (default to empty dict if not provided)
+        message_data.setdefault("metadata", {})
         await self.db.message_logs.insert_one(message_data)
 
     # ==================== Webhook Processing ====================

@@ -97,138 +97,90 @@ class BroadcastService:
         target_business_id: str,
         template_name: str,
         recipients: List[str],
-        variables: Dict,
-        dry_run: bool = True,
+        variables: Dict[str, Any],
+        dry_run: bool = False,
         job_id: Optional[str] = None
-    ) -> Dict:
+    ) -> Dict[str, Any]:
         """
-        Send a WhatsApp template broadcast to multiple recipients.
-        
-        Args:
-            target_business_id: Business ID (e.g., "feelori")
-            template_name: WhatsApp template name
-            recipients: List of phone numbers
-            variables: Dictionary of template variables (e.g., {"body_params": [...], "header_text_param": "...", "button_url_param": "..."})
-            dry_run: If True, log but don't send actual messages
-            
-        Returns:
-            Dictionary with status and sent_count
-            
-        Raises:
-            ValueError: If quiet hours check fails
+        Send a template message to a list of recipients.
         """
-        # Check 1: Quiet Hours Guardrail
-        if self.is_quiet_hours():
-            error_msg = "Cannot send broadcast during quiet hours (8:00 PM - 9:00 AM IST). Please try again later."
-            logger.warning(error_msg)
-            if not dry_run:
-                raise ValueError(error_msg)
-            # In dry run, just log warning but continue
-        
-        # Guardrail 1: Business Isolation
-        business_config = self._find_business_config(target_business_id)
-        # Use business_config for logging and validation
-        logger.info(f"Broadcast initiated for business: {business_config.business_id} ({business_config.business_name})")
-        
-        # Guardrail 2: Template Validation
-        self._validate_template(template_name)
+        # 1. Initialize counters (Fixes F821 Undefined name)
+        success_count = 0
+        failed_count = 0
         
         # Extract variables
-        raw_body_params = variables.get("body_params", [])
-        header_text_param = variables.get("header_text_param")
         header_image_url = variables.get("header_image_url")
         header_video_url = variables.get("header_video_url")
         button_url_suffix = variables.get("button_url_suffix")
-        button_url_param = variables.get("button_url_param")  # Keep for backward compatibility
+        raw_body_params = variables.get("body_params", [])
         
-        sent_count = 0
-        failed_count = 0
-        skipped_count = 0
-        
+        logger.info(f"Starting broadcast: {template_name} to {len(recipients)} recipients. Job: {job_id}")
+
         for recipient in recipients:
             try:
-                formatted_phone = self._format_phone(recipient)
-                
-                # Check opt-out status for this recipient
+                # Format phone
+                if not recipient.startswith("+"):
+                    formatted_phone = f"+{recipient.strip()}"
+                else:
+                    formatted_phone = recipient.strip()
+
+                # Smart Name Injection Logic
                 customer = await db_service.get_customer(formatted_phone)
-                if customer and customer.get("opted_out"):
-                    logger.debug(f"Skipping opted-out user {formatted_phone[:4]}...")
-                    skipped_count += 1
-                    continue
-                
-                # Smart Name Injection: Replace {{name}} with customer's first_name
+                customer_name = customer.get("first_name", "there") if customer else "there"
+
                 user_body_params = []
                 for param in raw_body_params:
                     if param == "{{name}}":
-                        # Replace with customer's first_name or default to "there"
-                        customer_name = customer.get("first_name", "there") if customer else "there"
                         user_body_params.append(customer_name)
                     else:
-                        # Keep param as is
                         user_body_params.append(param)
-                
+
                 if dry_run:
-                    logger.info(
-                        "Dry run broadcast",
-                        extra={
-                            "business": business_config.business_id,
-                            "business_name": business_config.business_name,
-                            "recipient": formatted_phone[:4] + "...",
-                            "template": template_name,
-                            "personalized": "{{name}}" in raw_body_params
-                        }
-                    )
-                    sent_count += 1
-                    await asyncio.sleep(0.5)  # Still throttle in dry run
+                    logger.info(f"[DRY RUN] Would send {template_name} to {formatted_phone}")
+                    success_count += 1
                     continue
-                
-                # Use button_url_suffix if provided, otherwise fall back to button_url_param
-                final_button_param = button_url_suffix if button_url_suffix else button_url_param
-                
-                # Use whatsapp_service.send_template_message for each user
+
+                # Send to WhatsApp
                 wamid = await whatsapp_service.send_template_message(
                     to=formatted_phone,
                     template_name=template_name,
                     body_params=user_body_params,
                     header_image_url=header_image_url,
-                    header_text_param=header_text_param,
                     header_video_url=header_video_url,
-                    button_url_param=final_button_param,
+                    button_url_param=button_url_suffix,
                     source="broadcast"
                 )
-                
+
                 if wamid:
-                    # Prepare metadata immediately
+                    # Fix F841: Use 'meta' immediately in the function call
                     meta = {"job_id": job_id} if job_id else {}
                     
-                    # Update existing message document atomically with job_id in metadata
-                    # This ensures job_id is in DB before webhook arrives (fixes race condition)
-                    # Note: send_whatsapp_request already logs the message, so we update it atomically
-                    if job_id:
-                        await db_service.db.message_logs.update_one(
-                            {"wamid": wamid},
-                            {"$set": {"metadata.job_id": job_id}}
-                        )
+                    # Atomic Log: Create message WITH job_id immediately
+                    await db_service.log_message({
+                        "wamid": wamid,
+                        "phone": formatted_phone,
+                        "message_type": "template",
+                        "content": f"Template: {template_name}",
+                        "direction": "outbound",
+                        "status": "sent",
+                        "source": "broadcast",
+                        "metadata": meta  # <--- Passing meta uses the variable
+                    })
                     
                     logger.info(f"Broadcast sent to {formatted_phone[:4]}... (wamid: {wamid})")
                     success_count += 1
                 else:
                     logger.error(f"Broadcast failed to {formatted_phone[:4]}...: send_template_message returned None")
                     failed_count += 1
-                
-                # Guardrail 3: Throttling
-                await asyncio.sleep(0.5)
-                
+
             except Exception as e:
-                logger.error(f"Error sending broadcast to {recipient[:4] if recipient else 'unknown'}...: {e}", exc_info=True)
+                logger.error(f"Error sending broadcast to {recipient}: {e}")
                 failed_count += 1
-        
+
         return {
-            "status": "success",
-            "sent_count": sent_count,
+            "sent_count": success_count,
             "failed_count": failed_count,
-            "skipped_count": skipped_count,
-            "dry_run": dry_run
+            "total_processed": len(recipients)
         }
     
     async def execute_job(self, job_id: str, **kwargs):

@@ -618,14 +618,15 @@ class DatabaseService:
         try:
             cursor = self.db.message_logs.find(
                 {"phone": cleaned_phone}
-            ).sort("timestamp", 1).limit(limit)
+            ).sort("timestamp", -1).limit(limit)
             
             messages = await cursor.to_list(length=limit)
             # Convert ObjectId to string if present
             for msg in messages:
                 if "_id" in msg:
                     msg["_id"] = str(msg["_id"])
-            return messages
+            # Reverse to return in chronological order (oldest to newest)
+            return list(reversed(messages))
         except Exception:
             logger.exception(f"Failed to get chat history for {cleaned_phone[:4]}...")
             return []

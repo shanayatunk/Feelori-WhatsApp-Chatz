@@ -691,46 +691,51 @@ class DatabaseService:
     
     async def is_within_24h_window(self, phone: str) -> bool:
         """
-        Check if the customer is within the 24-hour customer service window.
-        
-        WhatsApp allows free-text messages only if the customer has messaged
-        within the last 24 hours. Otherwise, template messages must be used.
-        
-        Args:
-            phone: Customer's phone number
-            
-        Returns:
-            True if last inbound message was within 24 hours, False otherwise
+        Checks if the customer has messaged us within the last 24 hours.
+        Returns True if within window, False otherwise.
         """
         cleaned_phone = self._sanitize_phone(phone)
         if not cleaned_phone:
             return False
         
         try:
-            # Find the last inbound message from this phone number
-            last_message = await self.db.message_logs.find_one(
+            # 1. Find the last INBOUND message from this customer
+            last_msg = await self.db.message_logs.find_one(
                 {"phone": cleaned_phone, "direction": "inbound"},
                 sort=[("timestamp", -1)]
             )
-            
-            if not last_message:
-                # No inbound messages found - window expired
+
+            if not last_msg:
                 return False
-            
-            # Get the timestamp of the last message
-            last_message_timestamp = last_message.get("timestamp")
-            if not last_message_timestamp:
+
+            last_ts = last_msg.get("timestamp")
+            if not last_ts:
                 return False
+
+            # 2. Fix Timezones (The Critical Fix)
+            from datetime import datetime, timezone
             
-            # Calculate time difference
-            now = self._now_utc()
-            time_diff = now - last_message_timestamp
+            # Get 'now' as UTC Aware
+            now = datetime.now(timezone.utc)
+
+            # Ensure 'last_ts' is UTC Aware
+            # If it's a string, parse it first (just in case)
+            if isinstance(last_ts, str):
+                last_ts = datetime.fromisoformat(last_ts.replace('Z', '+00:00'))
             
-            # Check if within 24 hours
-            return time_diff < timedelta(hours=24)
+            # If it's a naive datetime object, force it to UTC
+            if last_ts.tzinfo is None:
+                last_ts = last_ts.replace(tzinfo=timezone.utc)
             
-        except Exception:
-            logger.exception(f"Failed to check 24h window for {cleaned_phone[:4]}...")
+            # 3. Calculate difference
+            diff = now - last_ts
+            
+            # Check if less than 24 hours (86400 seconds)
+            return diff.total_seconds() < 86400
+
+        except Exception as e:
+            logger.error(f"Failed to check 24h window for {cleaned_phone[:4]}...: {e}")
+            # If check fails, default to FALSE (Safety first compliance)
             return False
     
     async def get_ticket_by_id(self, ticket_id: str) -> Optional[Dict[str, Any]]:

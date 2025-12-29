@@ -6,7 +6,7 @@ import logging
 import re
 from typing import List, Dict
 from datetime import datetime
-import pytz
+from zoneinfo import ZoneInfo
 
 from app.config.settings import settings, BusinessConfig
 from app.services.whatsapp_service import whatsapp_service
@@ -78,13 +78,15 @@ class BroadcastService:
         Returns:
             True if within quiet hours, False otherwise
         """
-        ist = pytz.timezone("Asia/Kolkata")
-        now_ist = datetime.now(ist)
-        current_hour = now_ist.hour
+        # Get current time in IST
+        ist = ZoneInfo("Asia/Kolkata")
+        now = datetime.now(ist)
         
-        # Quiet hours: 8:00 PM (20:00) to 9:00 AM (09:00)
-        # This means: hour >= 20 OR hour < 9
-        return current_hour >= 20 or current_hour < 9
+        # Define quiet hours (20:00 to 09:00)
+        current_hour = now.hour
+        if current_hour >= 20 or current_hour < 9:
+            return True
+        return False
     
     async def send_broadcast(
         self,

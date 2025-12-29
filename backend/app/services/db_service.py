@@ -1350,6 +1350,37 @@ class DatabaseService:
         }
         result = await self.db.broadcasts.insert_one(job_doc)
         return str(result.inserted_id)
+    
+    async def update_broadcast_job(self, job_id: str, updates: dict) -> bool:
+        """
+        Update a broadcast job status and stats.
+        
+        Args:
+            job_id: Broadcast job ID (string or ObjectId)
+            updates: Dictionary of fields to update (e.g., {"status": "completed", "stats.sent": 10})
+            
+        Returns:
+            True if update was successful, False otherwise
+        """
+        try:
+            # Convert string ID to ObjectId if needed
+            if isinstance(job_id, str):
+                if not self._validate_object_id(job_id):
+                    logger.warning(f"Invalid job_id format: {job_id}")
+                    return False
+                _id = ObjectId(job_id)
+            else:
+                _id = job_id
+            
+            # Use the same collection as create_broadcast_job: 'broadcasts'
+            result = await self.db.broadcasts.update_one(
+                {"_id": _id},
+                {"$set": updates}
+            )
+            return result.modified_count > 0
+        except Exception as e:
+            logger.error(f"Failed to update broadcast job {job_id}: {e}")
+            return False
 
     async def get_broadcast_jobs(
         self, 

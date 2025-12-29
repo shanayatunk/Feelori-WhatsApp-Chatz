@@ -1116,7 +1116,8 @@ class DatabaseService:
             return [], {"page": page, "limit": limit, "total": 0, "pages": 0}
         
         customers = result[0].get("customers", [])
-        total_count = result[0].get("total", [{}])[0].get("count", 0)
+        total_list = result[0].get("total", [])
+        total_count = total_list[0].get("count", 0) if total_list else 0
         
         customers = self._serialize_ids(customers)
         pagination = {
@@ -1325,7 +1326,8 @@ class DatabaseService:
             return [], {"page": page, "limit": limit, "total": 0, "pages": 0}
         
         jobs = result[0].get("jobs", [])
-        total_count = result[0].get("total", [{}])[0].get("count", 0)
+        total_list = result[0].get("total", [])
+        total_count = total_list[0].get("count", 0) if total_list else 0
         
         jobs = self._serialize_ids(jobs)
         pagination = {

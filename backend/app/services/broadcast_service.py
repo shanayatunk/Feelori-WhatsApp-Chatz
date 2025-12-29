@@ -151,20 +151,10 @@ class BroadcastService:
                 )
 
                 if wamid:
-                    # Fix F841: Use 'meta' immediately in the function call
-                    meta = {"job_id": job_id} if job_id else {}
-                    
-                    # Atomic Log: Create message WITH job_id immediately
-                    await db_service.log_message({
-                        "wamid": wamid,
-                        "phone": formatted_phone,
-                        "message_type": "template",
-                        "content": f"Template: {template_name}",
-                        "direction": "outbound",
-                        "status": "sent",
-                        "source": "broadcast",
-                        "metadata": meta  # <--- Passing meta uses the variable
-                    })
+                    # The message is ALREADY logged by whatsapp_service.
+                    # We just need to attach the Job ID to it.
+                    if job_id:
+                        await db_service.link_message_to_job(wamid, job_id)
                     
                     logger.info(f"Broadcast sent to {formatted_phone[:4]}... (wamid: {wamid})")
                     success_count += 1

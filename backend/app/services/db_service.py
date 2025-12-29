@@ -689,6 +689,50 @@ class DatabaseService:
             logger.exception(f"Failed to get last outbound message for {cleaned_phone[:4]}...")
             return None
     
+    async def is_within_24h_window(self, phone: str) -> bool:
+        """
+        Check if the customer is within the 24-hour customer service window.
+        
+        WhatsApp allows free-text messages only if the customer has messaged
+        within the last 24 hours. Otherwise, template messages must be used.
+        
+        Args:
+            phone: Customer's phone number
+            
+        Returns:
+            True if last inbound message was within 24 hours, False otherwise
+        """
+        cleaned_phone = self._sanitize_phone(phone)
+        if not cleaned_phone:
+            return False
+        
+        try:
+            # Find the last inbound message from this phone number
+            last_message = await self.db.message_logs.find_one(
+                {"phone": cleaned_phone, "direction": "inbound"},
+                sort=[("timestamp", -1)]
+            )
+            
+            if not last_message:
+                # No inbound messages found - window expired
+                return False
+            
+            # Get the timestamp of the last message
+            last_message_timestamp = last_message.get("timestamp")
+            if not last_message_timestamp:
+                return False
+            
+            # Calculate time difference
+            now = self._now_utc()
+            time_diff = now - last_message_timestamp
+            
+            # Check if within 24 hours
+            return time_diff < timedelta(hours=24)
+            
+        except Exception:
+            logger.exception(f"Failed to check 24h window for {cleaned_phone[:4]}...")
+            return False
+    
     async def get_ticket_by_id(self, ticket_id: str) -> Optional[Dict[str, Any]]:
         """
         Get a ticket by its ID.

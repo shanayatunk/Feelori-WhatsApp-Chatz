@@ -216,6 +216,14 @@ async def send_manual_message(
     if not customer_phone:
         raise HTTPException(status_code=400, detail="Ticket missing customer phone number")
     
+    # Check 24-hour customer service window
+    is_within_window = await db_service.is_within_24h_window(customer_phone)
+    if not is_within_window:
+        raise HTTPException(
+            status_code=400,
+            detail="Customer service window expired (24h). You must use a Template Message to reply."
+        )
+    
     user_id = current_user.get("username") or current_user.get("user_id", "unknown")
     
     # Send the message via WhatsApp

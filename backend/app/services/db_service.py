@@ -1381,6 +1381,85 @@ class DatabaseService:
         except Exception as e:
             logger.error(f"Failed to update broadcast job {job_id}: {e}")
             return False
+    
+    async def link_message_to_job(self, wamid: str, job_id: str):
+        """
+        Tag a message log with a job_id so we can track it later.
+        
+        Args:
+            wamid: WhatsApp message ID
+            job_id: Broadcast job ID
+        """
+        try:
+            await self.db.message_logs.update_one(
+                {"wamid": wamid},
+                {"$set": {"metadata.job_id": job_id}}
+            )
+        except Exception as e:
+            logger.error(f"Failed to link message {wamid} to job {job_id}: {e}")
+    
+    async def increment_job_stats(self, job_id: str, status: str):
+        """
+        Increment the counters for a job.
+        
+        Args:
+            job_id: Broadcast job ID
+            status: Status to increment ("sent", "delivered", "read", "failed")
+        """
+        try:
+            if isinstance(job_id, str):
+                if not self._validate_object_id(job_id):
+                    logger.warning(f"Invalid job_id format: {job_id}")
+                    return
+                _id = ObjectId(job_id)
+            else:
+                _id = job_id
+            
+            field_map = {
+                "sent": "stats.sent",
+                "delivered": "stats.delivered",
+                "read": "stats.read",
+                "failed": "stats.failed"
+            }
+            if status in field_map:
+                await self.db.broadcasts.update_one(
+                    {"_id": _id},
+                    {"$inc": {field_map[status]: 1}}
+                )
+        except Exception as e:
+            logger.error(f"Failed to increment stats for job {job_id}: {e}")
+    
+    async def update_message_status(self, wamid: str, status: str):
+        """
+        Update message status and increment job stats.
+        IMPORTANT: Uses find_one_and_update to ensure we only increment ONCE per status change.
+        
+        Args:
+            wamid: WhatsApp message ID
+            status: New status ("sent", "delivered", "read", "failed")
+        """
+        try:
+            # 1. Try to find the message AND ensure the status is actually new.
+            # This prevents double-counting if WhatsApp sends 'delivered' twice.
+            updated_doc = await self.db.message_logs.find_one_and_update(
+                {"wamid": wamid, "status": {"$ne": status}},  # Query: ID match AND Status is different
+                {"$set": {"status": status, "updated_at": datetime.utcnow()}},
+                return_document=True
+            )
+            
+            # 2. If no document was returned, it means the status was ALREADY set. Do nothing.
+            if not updated_doc:
+                return
+
+            # 3. If we updated it, check if it belongs to a job and increment stats.
+            metadata = updated_doc.get("metadata", {})
+            job_id = metadata.get("job_id")
+            
+            if job_id:
+                await self.increment_job_stats(job_id, status)
+                
+        except Exception as e:
+            logger.error(f"Failed to update status for {wamid}: {e}")
 
     async def get_broadcast_jobs(
         self, 

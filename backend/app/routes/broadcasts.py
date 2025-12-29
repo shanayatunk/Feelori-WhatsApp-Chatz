@@ -13,6 +13,32 @@ from app.models.api import APIResponse
 
 logger = logging.getLogger(__name__)
 
+# Template Metadata for UI Previews (Phase 5C)
+# Note: The "Source of Truth" is Meta. This is for UI preview confidence only.
+TEMPLATE_METADATA = {
+    "new_arrival_showcase": {
+        "header": "IMAGE",
+        "body": "✨ Hello {{1}}!\n\nOur latest collection is finally here. Handcrafted designs to make you Feel Original. 💎\n\nCheck them out before they are gone! 👇"
+    },
+    "video_collection_launch": {
+        "header": "VIDEO",
+        "body": "🎥 Watch our new designs come to life, {{1}}!\n\nDetailed craftsmanship you have to see to believe. Perfect for the upcoming season. ✨\n\nTap below to shop the look!"
+    },
+    "festival_sale_alert": {
+        "header": "TEXT: FESTIVE SALE 🪔",
+        "body": "Hi {{1}}, the festive season is here!\n\nEnjoy flat {{2}}% OFF on selected items. 💖\n\nUse code: *{{3}}* at checkout.\nOffer valid until {{4}}."
+    },
+    "gentle_greeting_v1": {
+        "header": "NONE",
+        "body": "Hi {{1}}, we missed you! 👋\n\nWe've added some beautiful new pieces since your last visit. Come take a look at what's new at FeelOri. ✨"
+    },
+    # Fallbacks
+    "hello_world": {"header": "NONE", "body": "Hello world! Welcome to FeelOri."},
+    "order_update": {"header": "TEXT", "body": "Your order {{1}} has been updated."},
+    "order_confirmation_v2": {"header": "TEXT", "body": "Thanks for your order {{1}}!"},
+    "shipping_update_v1": {"header": "TEXT", "body": "Your order is on the way!"}
+}
+
 router = APIRouter(
     prefix="/broadcasts",
     tags=["Broadcasts"]
@@ -39,7 +65,18 @@ async def get_broadcast_config(current_user: dict = Depends(verify_jwt_token)):
     if current_user.get("role") != "admin":
         raise HTTPException(status_code=403, detail="Admin access required")
     
-    templates = list(ALLOWED_TEMPLATES)
+    # Format templates with metadata for UI previews
+    formatted_templates = []
+    for t in ALLOWED_TEMPLATES:
+        # Convert snake_case to Title Case for readable name
+        readable_name = t.replace("_", " ").title()
+        meta = TEMPLATE_METADATA.get(t, {})
+        formatted_templates.append({
+            "id": t,
+            "name": readable_name,
+            "header": meta.get("header", "NONE"),
+            "body": meta.get("body", "Preview not available.")
+        })
     
     # Audience definitions with display names
     audience_definitions = [
@@ -73,7 +110,7 @@ async def get_broadcast_config(current_user: dict = Depends(verify_jwt_token)):
         success=True,
         message="Broadcast configuration retrieved",
         data={
-            "templates": templates,
+            "templates": formatted_templates,
             "audiences": audiences
         },
         version=settings.api_version

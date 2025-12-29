@@ -139,7 +139,8 @@ async def send_broadcast(
         
         # Add background task to send broadcast
         background_tasks.add_task(
-            broadcast_service.send_broadcast,
+            broadcast_service.execute_job,
+            job_id=job_id,  # Passing the Job ID is crucial!
             target_business_id=request_data.business_id,
             template_name=request_data.template_name,
             recipients=recipients,

@@ -120,6 +120,8 @@ class BroadcastService:
         
         # Guardrail 1: Business Isolation
         business_config = self._find_business_config(target_business_id)
+        # Use business_config for logging and validation
+        logger.info(f"Broadcast initiated for business: {business_config.business_id} ({business_config.business_name})")
         
         # Guardrail 2: Template Validation
         self._validate_template(template_name)
@@ -141,7 +143,8 @@ class BroadcastService:
                     logger.info(
                         "Dry run broadcast",
                         extra={
-                            "business": target_business_id,
+                            "business": business_config.business_id,
+                            "business_name": business_config.business_name,
                             "recipient": formatted_phone[:4] + "...",
                             "template": template_name
                         }
@@ -163,6 +166,26 @@ class BroadcastService:
                 
                 if wamid:
                     # Message is already logged by send_whatsapp_request with source="broadcast"
+                    # Additional logging with db_service for broadcast tracking
+                    try:
+                        await db_service.log_message({
+                            "wamid": wamid,
+                            "phone": formatted_phone,
+                            "direction": "outbound",
+                            "message_type": "template",
+                            "content": f"Template: {template_name}",
+                            "status": "sent",
+                            "source": "broadcast",
+                            "timestamp": datetime.utcnow(),
+                            "metadata": {
+                                "template_name": template_name,
+                                "business_id": business_config.business_id,
+                                "business_name": business_config.business_name
+                            }
+                        })
+                    except Exception as log_error:
+                        logger.warning(f"Failed to log broadcast message to db_service: {log_error}")
+                    
                     logger.info(f"Broadcast sent to {formatted_phone[:4]}... (wamid: {wamid})")
                     sent_count += 1
                 else:

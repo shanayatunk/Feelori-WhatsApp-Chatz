@@ -3,7 +3,6 @@ from fastapi import APIRouter, Depends, HTTPException, Response, Query
 from pydantic import BaseModel
 from typing import Optional
 import logging
-from datetime import datetime
 
 # ✅ 1. Import settings
 from app.config.settings import settings

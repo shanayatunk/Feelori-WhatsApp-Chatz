@@ -90,8 +90,13 @@ async def handle_whatsapp_webhook(
                 # --- (Your existing logic continues below) ---
                 if "statuses" in value:
                     for status_data in value.get("statuses", []):
-                        log.info("Processing status update", status=status_data)
-                        asyncio.create_task(order_service.handle_status_update(status_data))
+                        wamid = status_data.get("id")
+                        status_type = status_data.get("status")
+                        
+                        if wamid and status_type:
+                            log.info("Processing status update", wamid=wamid, status=status_type)
+                            # The DB service now handles idempotency and job linking internally
+                            await db_service.update_message_status(wamid, status_type)
                 elif "messages" in value:
                     for message in value.get("messages", []):
                         log.info("Processing incoming message", message=message)

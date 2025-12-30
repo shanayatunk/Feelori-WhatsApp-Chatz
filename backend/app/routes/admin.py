@@ -464,12 +464,18 @@ async def add_packer(
     request: Request, 
     current_user: dict = Depends(verify_jwt_token)
 ):
-    """Add a new packer user with default password."""
+    """Create a new packer user."""
     security_service.EnhancedSecurityService.validate_admin_session(request, current_user)
+    
     success = await db_service.create_packer_user(data.name)
     if not success:
-        raise HTTPException(400, "Packer already exists")
-    return APIResponse(success=True, message=f"Packer {data.name} added. Default password: 'packer123'", version="v1")
+        raise HTTPException(status_code=400, detail="Packer already exists or could not be created")
+        
+    return APIResponse(
+        success=True, 
+        message=f"Packer {data.name} added. Default password: 'packer123'",
+        version="v1"
+    )
 
 @router.delete("/packers/{name}", response_model=APIResponse)
 async def remove_packer(
@@ -477,9 +483,15 @@ async def remove_packer(
     request: Request, 
     current_user: dict = Depends(verify_jwt_token)
 ):
-    """Remove (soft-delete) a packer user."""
+    """Remove/Disable a packer user."""
     security_service.EnhancedSecurityService.validate_admin_session(request, current_user)
+    
     success = await db_service.remove_packer_user(name)
     if not success:
-        raise HTTPException(404, "Packer not found")
-    return APIResponse(success=True, message=f"Packer {name} removed.", version="v1")
+        raise HTTPException(status_code=404, detail="Packer not found")
+        
+    return APIResponse(
+        success=True, 
+        message=f"Packer {name} removed.",
+        version="v1"
+    )

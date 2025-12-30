@@ -83,18 +83,30 @@ async def get_packing_orders(
     business_id = _validate_business_context(x_business_id, current_user)
     orders = await db_service.get_all_packing_orders(business_id)
     
-    # Ensure 'id' and 'name' are present. If missing, fallback to order_number.
-    formatted_orders = [
-        {
+    # Ensure 'id' and 'name' are present. Format name with "#" prefix if needed.
+    formatted_orders = []
+    for order in orders:
+        # Get the name, fallback to order_number if missing
+        order_name = order.get("name") or str(order.get("order_number", ""))
+        # Ensure name starts with "#" for human-readable format (e.g., "#FO1067")
+        if order_name and not order_name.startswith("#"):
+            order_name = f"#{order_name}"
+        
+        formatted_orders.append({
             **order,
             "id": order.get("id"),  # explicit fetch
-            "name": order.get("name", str(order.get("order_number", ""))),  # Fallback to order_number if name missing
-            "order_id": str(order.get("id", "")) if order.get("id") else None  # Explicit string conversion for frontend
-        }
-        for order in orders
-    ]
+            "name": order_name,  # SEND THE NAME! Formatted with "#" prefix
+            "order_id": str(order.get("id", "")) if order.get("id") else None,  # Explicit string conversion for frontend
+            "customer": order.get("customer", {}),  # Pass the full object
+            "items": order.get("items", [])
+        })
     
-    return APIResponse(success=True, message="Orders retrieved", data={"orders": formatted_orders}, version="v1")
+    return APIResponse(
+        success=True,
+        message=f"Retrieved {len(formatted_orders)} orders",
+        data={"orders": formatted_orders},
+        version="v1"
+    )
 
 # API endpoint to get global packing configuration
 @router.get("/config", response_model=APIResponse)

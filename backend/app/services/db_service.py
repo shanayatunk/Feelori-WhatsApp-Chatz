@@ -1463,7 +1463,7 @@ class DatabaseService:
                 _id = ObjectId(job_id) if isinstance(job_id, str) else job_id
             except Exception:
                 _id = job_id # Fallback if it's not a valid ObjectId string
-
+            
             field_map = {
                 "sent": "sent_count",
                 "delivered": "delivered_count",
@@ -1836,10 +1836,58 @@ class DatabaseService:
         Returns:
             Dictionary with packers and carriers lists
         """
+        # Query active packer users from the users collection
+        packer_users = await self.db.users.find(
+            {"role": "packer", "disabled": {"$ne": True}},
+            {"username": 1}
+        ).to_list(length=None)
+        
+        packer_names = [user.get("username", "") for user in packer_users if user.get("username")]
+        
+        # Fallback to default packers if none found
+        if not packer_names:
+            packer_names = ["Swathi", "Dharam", "Pushpa"]
+        
         return {
-            "packers": ["Swathi", "Dharam", "Pushpa"],
+            "packers": packer_names,
             "carriers": ["India Post", "Delhivery", "Blue Dart", "DTDC", "FedEx"]
         }
+
+    async def create_packer_user(self, username: str) -> bool:
+        """
+        Create a new packer user with default password 'packer123'.
+        """
+        # 1. Check if username exists (case insensitive)
+        existing = await self.db.users.find_one({"username": {"$regex": f"^{username}$", "$options": "i"}})
+        if existing:
+            # If disabled, re-enable
+            if existing.get("disabled"):
+                await self.db.users.update_one({"_id": existing["_id"]}, {"$set": {"disabled": False, "role": "packer"}})
+                return True
+            return False
+
+        # 2. Hash default password
+        from app.services import security_service
+        hashed_password = security_service.SecurityService.hash_password("packer123")
+
+        # 3. Create User
+        user_doc = {
+            "username": username.lower(),
+            "hashed_password": hashed_password,
+            "role": "packer",
+            "disabled": False,
+            "created_at": self._now_utc()
+        }
+        await self.db.users.insert_one(user_doc)
+        return True
+
+    async def remove_packer_user(self, username: str) -> bool:
+        """Soft-delete a packer."""
+        result = await self.db.users.update_one(
+            {"username": username, "role": "packer"},
+            {"$set": {"disabled": True}}
+        )
+        return result.modified_count > 0
 
     async def get_all_packing_orders(self, business_id: str) -> List[Dict[str, Any]]:
         """
@@ -2097,10 +2145,10 @@ class DatabaseService:
                     "packed_by": {"$ne": None}
                 }
             },
-            {
-                "$group": {
+                        {
+                            "$group": {
                     "_id": "$packed_by",
-                    "total_orders": {"$sum": 1},
+                                "total_orders": {"$sum": 1},
                     "last_active": {"$max": "$fulfilled_at"}
                 }
             },

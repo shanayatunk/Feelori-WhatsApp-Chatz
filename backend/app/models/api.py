@@ -41,6 +41,9 @@ class FulfillOrderRequest(BaseModel):
     tracking_number: str
     carrier: str
 
+class PackerRequest(BaseModel):
+    name: str
+
 class Rule(BaseModel):
     name: str
     keywords: List[str]

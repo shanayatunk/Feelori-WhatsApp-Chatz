@@ -9,7 +9,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Request, BackgroundTasks
 from fastapi.responses import StreamingResponse
 from app.config.settings import settings
-from app.models.api import APIResponse, BroadcastGroupCreate, BroadcastRequest, Rule, StringUpdateRequest, TemplateBroadcastRequest
+from app.models.api import APIResponse, BroadcastGroupCreate, BroadcastRequest, Rule, StringUpdateRequest, TemplateBroadcastRequest, PackerRequest
 from app.utils.dependencies import verify_jwt_token
 from app.services import security_service, shopify_service, cache_service
 from app.services.db_service import db_service
@@ -457,3 +457,29 @@ async def get_packer_performance(
         data=metrics,
         version=settings.api_version # <-- THIS LINE IS THE FIX
     )
+
+@router.post("/packers", response_model=APIResponse)
+async def add_packer(
+    data: PackerRequest, 
+    request: Request, 
+    current_user: dict = Depends(verify_jwt_token)
+):
+    """Add a new packer user with default password."""
+    security_service.EnhancedSecurityService.validate_admin_session(request, current_user)
+    success = await db_service.create_packer_user(data.name)
+    if not success:
+        raise HTTPException(400, "Packer already exists")
+    return APIResponse(success=True, message=f"Packer {data.name} added. Default password: 'packer123'")
+
+@router.delete("/packers/{name}", response_model=APIResponse)
+async def remove_packer(
+    name: str, 
+    request: Request, 
+    current_user: dict = Depends(verify_jwt_token)
+):
+    """Remove (soft-delete) a packer user."""
+    security_service.EnhancedSecurityService.validate_admin_session(request, current_user)
+    success = await db_service.remove_packer_user(name)
+    if not success:
+        raise HTTPException(404, "Packer not found")
+    return APIResponse(success=True, message=f"Packer {name} removed.")

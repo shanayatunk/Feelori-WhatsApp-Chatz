@@ -81,7 +81,19 @@ async def get_packing_orders(
     """Provides the list of all orders for the packing dashboard."""
     security_service.EnhancedSecurityService.validate_admin_session(request, current_user)
     business_id = _validate_business_context(x_business_id, current_user)
-    formatted_orders = await db_service.get_all_packing_orders(business_id)
+    orders = await db_service.get_all_packing_orders(business_id)
+    
+    # Ensure 'id' and 'name' are present. If missing, fallback to order_number.
+    formatted_orders = [
+        {
+            **order,
+            "id": order.get("id"),  # explicit fetch
+            "name": order.get("name", str(order.get("order_number", ""))),  # Fallback to order_number if name missing
+            "order_id": str(order.get("id", "")) if order.get("id") else None  # Explicit string conversion for frontend
+        }
+        for order in orders
+    ]
+    
     return APIResponse(success=True, message="Orders retrieved", data={"orders": formatted_orders}, version="v1")
 
 # API endpoint to get global packing configuration

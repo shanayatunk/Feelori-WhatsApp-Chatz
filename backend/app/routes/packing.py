@@ -83,28 +83,44 @@ async def get_packing_orders(
     business_id = _validate_business_context(x_business_id, current_user)
     orders = await db_service.get_all_packing_orders(business_id)
     
-    # Ensure 'id' and 'name' are present. Format name with "#" prefix if needed.
-    formatted_orders = []
+    orders_data = []
     for order in orders:
-        # Get the name, fallback to order_number if missing
-        order_name = order.get("name") or str(order.get("order_number", ""))
-        # Ensure name starts with "#" for human-readable format (e.g., "#FO1067")
-        if order_name and not order_name.startswith("#"):
-            order_name = f"#{order_name}"
+        # 1. robustly find the ID
+        oid = order.get("id") or order.get("order_id")
         
-        formatted_orders.append({
+        # 2. robustly find the Name
+        # Priority: "name" (#FO1067) -> "order_number" (#1067) -> ID (632...)
+        raw_name = order.get("name")
+        raw_number = order.get("order_number")
+        
+        display_name = raw_name
+        if not display_name and raw_number:
+            display_name = f"#{raw_number}"
+        if not display_name:
+            display_name = str(oid)
+
+        # 3. Robustly find Customer Name
+        cust = order.get("customer", {})
+        c_name = "Guest"
+        if isinstance(cust, dict):
+            c_name = cust.get("name") or f"{cust.get('first_name', '')} {cust.get('last_name', '')}".strip()
+        
+        if not c_name: 
+            c_name = "Guest"
+
+        orders_data.append({
             **order,
-            "id": order.get("id"),  # explicit fetch
-            "name": order_name,  # SEND THE NAME! Formatted with "#" prefix
-            "order_id": str(order.get("id", "")) if order.get("id") else None,  # Explicit string conversion for frontend
-            "customer": order.get("customer", {}),  # Pass the full object
-            "items": order.get("items", [])
+            "id": oid,
+            "order_id": str(oid),
+            "name": display_name,        # <--- FORCE THIS
+            "order_number": str(raw_number) if raw_number else str(oid),
+            "customer": {"name": c_name} # <--- Flatten for safety
         })
-    
+
     return APIResponse(
         success=True,
-        message=f"Retrieved {len(formatted_orders)} orders",
-        data={"orders": formatted_orders},
+        message=f"Retrieved {len(orders)} orders",
+        data={"orders": orders_data},
         version="v1"
     )
 

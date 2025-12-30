@@ -2117,7 +2117,7 @@ class DatabaseService:
         stats = {doc["_id"]: doc["count"] for doc in status_counts if doc.get("_id")}
         
         # 2. Completed TODAY count (Uses the new index efficiently)
-        start_of_day = self._now_utc().replace(hour=0, minute=0, second=0, microsecond=0)
+        start_of_day = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
         completed_today = await self.db.orders.count_documents({
             "business_id": business_id,
             "fulfillment_status_internal": "Completed",
@@ -2135,7 +2135,7 @@ class DatabaseService:
         """
         Calculate per-packer throughput across ALL businesses (Global Operational View).
         """
-        cutoff = self._now_utc() - timedelta(days=days)
+        cutoff = datetime.now(timezone.utc) - timedelta(days=days)
         
         pipeline = [
             {

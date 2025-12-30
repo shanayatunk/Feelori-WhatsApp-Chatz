@@ -469,7 +469,7 @@ async def add_packer(
     success = await db_service.create_packer_user(data.name)
     if not success:
         raise HTTPException(400, "Packer already exists")
-    return APIResponse(success=True, message=f"Packer {data.name} added. Default password: 'packer123'")
+    return APIResponse(success=True, message=f"Packer {data.name} added. Default password: 'packer123'", version="v1")
 
 @router.delete("/packers/{name}", response_model=APIResponse)
 async def remove_packer(
@@ -482,4 +482,4 @@ async def remove_packer(
     success = await db_service.remove_packer_user(name)
     if not success:
         raise HTTPException(404, "Packer not found")
-    return APIResponse(success=True, message=f"Packer {name} removed.")
+    return APIResponse(success=True, message=f"Packer {name} removed.", version="v1")

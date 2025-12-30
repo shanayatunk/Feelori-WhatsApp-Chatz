@@ -1828,9 +1828,24 @@ class DatabaseService:
 
     # ==================== Packing Dashboard ====================
 
-    async def get_all_packing_orders(self) -> List[Dict[str, Any]]:
+    async def get_global_packing_config(self) -> Dict[str, Any]:
+        """
+        Get shared configuration for the operations team.
+        
+        Returns:
+            Dictionary with packers and carriers lists
+        """
+        return {
+            "packers": ["Swathi", "Dharam", "Pushpa"],
+            "carriers": ["India Post", "Delhivery", "Blue Dart", "DTDC", "FedEx"]
+        }
+
+    async def get_all_packing_orders(self, business_id: str) -> List[Dict[str, Any]]:
         """
         Get all orders for packing dashboard.
+        
+        Args:
+            business_id: Business ID to filter orders
         
         Returns:
             List of formatted order documents
@@ -1838,7 +1853,7 @@ class DatabaseService:
         statuses = [status.value for status in OrderStatus]
         
         orders_cursor = self.db.orders.find(
-            {"fulfillment_status_internal": {"$in": statuses}}
+            {"fulfillment_status_internal": {"$in": statuses}, "business_id": business_id}
         ).sort("created_at", 1)
         
         orders_list = await orders_cursor.to_list(length=200)
@@ -1882,12 +1897,13 @@ class DatabaseService:
         
         return formatted_orders
 
-    async def update_order_status(self, order_id: int, new_status: str) -> bool:
+    async def update_order_status(self, order_id: int, business_id: str, new_status: str) -> bool:
         """
         Update order status from Pending/Needs Stock Check to In Progress.
         
         Args:
             order_id: Shopify order ID
+            business_id: Business ID for isolation
             new_status: New status value
             
         Returns:
@@ -1904,6 +1920,7 @@ class DatabaseService:
         result = await self.db.orders.update_one(
             {
                 "id": order_id,
+                "business_id": business_id,
                 "fulfillment_status_internal": {
                     "$in": [OrderStatus.PENDING.value, OrderStatus.NEEDS_STOCK_CHECK.value]
                 }
@@ -1916,6 +1933,7 @@ class DatabaseService:
     async def hold_order(
         self, 
         order_id: int, 
+        business_id: str,
         reason: str, 
         notes: Optional[str] = None,
         skus: Optional[List[str]] = None
@@ -1925,12 +1943,13 @@ class DatabaseService:
         
         Args:
             order_id: Shopify order ID
+            business_id: Business ID for isolation
             reason: Hold reason
             notes: Optional additional notes
             skus: Optional list of problematic SKUs
         """
         await self.db.orders.update_one(
-            {"id": order_id},
+            {"id": order_id, "business_id": business_id},
             {"$set": {
                 "fulfillment_status_internal": OrderStatus.ON_HOLD.value,
                 "hold_reason": reason,
@@ -1940,18 +1959,19 @@ class DatabaseService:
             }}
         )
 
-    async def requeue_held_order(self, order_id: int) -> bool:
+    async def requeue_held_order(self, order_id: int, business_id: str) -> bool:
         """
         Move order from On Hold back to Pending.
         
         Args:
             order_id: Shopify order ID
+            business_id: Business ID for isolation
             
         Returns:
             True if requeued successfully
         """
         order_on_hold = await self.db.orders.find_one(
-            {"id": order_id, "fulfillment_status_internal": OrderStatus.ON_HOLD.value}
+            {"id": order_id, "business_id": business_id, "fulfillment_status_internal": OrderStatus.ON_HOLD.value}
         )
         
         if not order_on_hold:
@@ -1961,7 +1981,7 @@ class DatabaseService:
         previous_skus = order_on_hold.get("problem_item_skus", [])
 
         await self.db.orders.update_one(
-            {"id": order_id},
+            {"id": order_id, "business_id": business_id},
             {
                 "$set": {
                     "fulfillment_status_internal": OrderStatus.PENDING.value,
@@ -1982,6 +2002,7 @@ class DatabaseService:
     async def complete_order_fulfillment(
         self, 
         order_id: int, 
+        business_id: str,
         packer_name: str, 
         fulfillment_id: int
     ) -> None:
@@ -1990,13 +2011,15 @@ class DatabaseService:
         
         Args:
             order_id: Shopify order ID
+            business_id: Business ID for isolation
             packer_name: Name of person who packed the order
             fulfillment_id: Shopify fulfillment ID
         """
         await self.db.orders.update_one(
-            {"id": order_id},
+            {"id": order_id, "business_id": business_id},
             {"$set": {
                 "fulfillment_status_internal": OrderStatus.COMPLETED.value,
+                "business_id": business_id,
                 "packed_by": packer_name,
                 "fulfillment_id": fulfillment_id,
                 "fulfilled_at": self._now_utc(),
@@ -2007,6 +2030,7 @@ class DatabaseService:
     async def update_order_packing_status(
         self, 
         order_id: int, 
+        business_id: str,
         new_status: str, 
         details: Dict[str, Any]
     ) -> None:
@@ -2015,6 +2039,7 @@ class DatabaseService:
         
         Args:
             order_id: Shopify order ID
+            business_id: Business ID for isolation
             new_status: New status value
             details: Additional fields to update
         """
@@ -2028,7 +2053,7 @@ class DatabaseService:
             update_doc["in_progress_at"] = self._now_utc()
         
         await self.db.orders.update_one(
-            {"id": order_id},
+            {"id": order_id, "business_id": business_id},
             {"$set": update_doc}
         )
 

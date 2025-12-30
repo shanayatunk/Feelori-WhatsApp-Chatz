@@ -151,12 +151,19 @@ class BroadcastService:
                 )
 
                 if wamid:
-                    # The message is ALREADY logged by whatsapp_service.
-                    # We just need to attach the Job ID to it.
+                    # 1. Try to Link (Update) first. 
+                    # This handles the case where whatsapp_service ALREADY created the log.
                     if job_id:
                         await db_service.link_message_to_job(wamid, job_id)
                     
-                    logger.info(f"Broadcast sent to {formatted_phone[:4]}... (wamid: {wamid})")
+                    # 2. Check if we need to Log (Insert).
+                    # We only log if we didn't just update it (or just rely on whatsapp_service).
+                    # Actually, let's keep it simple: Just Link.
+                    
+                    # If whatsapp_service logged it, this link works.
+                    # If whatsapp_service FAILED to log, this might miss, but that's a bigger issue.
+                    
+                    logger.info(f"Broadcast sent to {formatted_phone[:4]}... (wamid: {wamid}) linked to Job {job_id}")
                     success_count += 1
                 else:
                     logger.error(f"Broadcast failed to {formatted_phone[:4]}...: send_template_message returned None")

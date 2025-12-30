@@ -230,10 +230,15 @@ async def get_packer_performance_metrics(
 # API endpoint for packing metrics
 @router.get("/metrics", response_model=APIResponse)
 @limiter.limit("10/minute")
-async def get_packing_metrics(request: Request, current_user: dict = Depends(verify_jwt_token)):
+async def get_packing_metrics(
+    request: Request,
+    x_business_id: Optional[str] = Header(None),
+    current_user: dict = Depends(verify_jwt_token)
+):
     """Provides key performance indicators (KPIs) for the packing workflow."""
     security_service.EnhancedSecurityService.validate_admin_session(request, current_user)
-    metrics = await db_service.get_packing_dashboard_metrics()
+    business_id = _validate_business_context(x_business_id, current_user)
+    metrics = await db_service.get_packing_dashboard_metrics(business_id)
     return APIResponse(
         success=True,
         message="Packing metrics retrieved successfully.",

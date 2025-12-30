@@ -1410,7 +1410,7 @@ class DatabaseService:
             # Robust ID conversion
             try:
                 _id = ObjectId(job_id) if isinstance(job_id, str) else job_id
-            except:
+            except Exception:
                 _id = job_id # Fallback if it's not a valid ObjectId string
 
             field_map = {

@@ -2057,14 +2057,18 @@ class DatabaseService:
             {"$set": update_doc}
         )
 
-    async def get_packing_dashboard_metrics(self) -> Dict[str, Any]:
+    async def get_packing_dashboard_metrics(self, business_id: str) -> Dict[str, Any]:
         """
         Get simple packing dashboard metrics.
         
+        Args:
+            business_id: Business ID to filter metrics by
+            
         Returns:
             Dictionary with status counts
         """
         pipeline = [
+            {"$match": {"business_id": business_id}},  # Added Scope
             {"$group": {"_id": "$fulfillment_status_internal", "count": {"$sum": 1}}}
         ]
         results = await self.db.orders.aggregate(pipeline).to_list(length=None)

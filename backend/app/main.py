@@ -84,7 +84,7 @@ app.include_router(dashboard.router, prefix=f"/api/{settings.api_version}")
 app.include_router(conversations.router, prefix=f"/api/{settings.api_version}")
 app.include_router(triage.router, prefix=f"/api/{settings.api_version}")
 app.include_router(broadcasts.router, prefix=f"/api/{settings.api_version}")
-app.include_router(packing.router)
+app.include_router(packing.router, prefix=f"/api/{settings.api_version}/packing", tags=["Packing"])
 
 # --- Main Entry Point for Uvicorn (local dev only) ---
 if __name__ == "__main__":

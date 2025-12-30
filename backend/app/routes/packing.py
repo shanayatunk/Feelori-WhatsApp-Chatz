@@ -223,7 +223,8 @@ async def get_packer_performance_metrics(
     return APIResponse(
         success=True,
         message=f"Packer performance for the last {days} days retrieved.",
-        data=metrics
+        data=metrics,
+        version="v1"
     )
 # --- END OF NEW ENDPOINT ---
 
@@ -242,7 +243,8 @@ async def get_packing_metrics(
     return APIResponse(
         success=True,
         message="Packing metrics retrieved successfully.",
-        data=metrics
+        data=metrics,
+        version="v1"
     )
 
 

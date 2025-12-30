@@ -115,6 +115,26 @@ class BroadcastService:
         
         logger.info(f"Starting broadcast: {template_name} to {len(recipients)} recipients. Job: {job_id}")
 
+        # Phase 7A: Auto-append UTM tracking to dynamic button links
+        if button_url_suffix:
+            # Determine if we need '?' or '&'
+            separator = "&" if "?" in button_url_suffix else "?"
+            
+            # Clean the template name for URL usage
+            safe_campaign_name = template_name.replace(" ", "_").replace("-", "_").lower()
+            
+            # Construct parameters
+            utm_params = f"utm_source=whatsapp&utm_medium=broadcast&utm_campaign={safe_campaign_name}"
+            
+            # Add Job ID for precise ROI tracking if available
+            if job_id:
+                utm_params += f"&utm_id={job_id}"
+                
+            # Append to the suffix
+            button_url_suffix = f"{button_url_suffix}{separator}{utm_params}"
+            
+            logger.info(f"Attached UTM tracking: {button_url_suffix}")
+
         for recipient in recipients:
             try:
                 # Format phone

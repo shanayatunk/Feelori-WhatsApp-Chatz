@@ -1952,9 +1952,18 @@ class DatabaseService:
             customer_name = f"{customer.get('first_name', '')} {customer.get('last_name', '')}".strip()
             customer_phone = shipping_address.get("phone") or customer.get("phone")
 
+            # Get Shopify order ID (primary id)
+            shopify_id = order.get("id") or raw_order.get("id")
+            
+            # Get order name (e.g., "FO1067") - fallback to order_number if missing
+            order_name = order.get("name") or raw_order.get("name") or str(order.get("order_number", ""))
+            
             formatted_orders.append({
-                "order_id": raw_order.get("id"),
+                "id": shopify_id,  # Primary ID field
+                "order_id": str(shopify_id) if shopify_id else None,  # String alias for frontend
                 "order_number": order.get("order_number"),
+                "name": order_name,  # Critical for "FO1067"
+                "business_id": order.get("business_id"),
                 "status": order.get("fulfillment_status_internal"),
                 "created_at": order.get("created_at"),
                 "packer_name": order.get("packed_by"),

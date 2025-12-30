@@ -1,7 +1,7 @@
 # /app/models/api.py
 
 from pydantic import BaseModel, Field
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Union
 from datetime import datetime
 from bson import ObjectId
 from enum import Enum
@@ -43,6 +43,24 @@ class FulfillOrderRequest(BaseModel):
 
 class PackerRequest(BaseModel):
     name: str
+
+class PackingOrder(BaseModel):
+    """Model for packing dashboard orders."""
+    id: int  # Shopify order ID
+    order_id: Optional[str] = None  # Alias for frontend compatibility
+    order_number: Union[str, int]
+    name: Optional[str] = None  # Critical for "FO1067"
+    business_id: Optional[str] = None
+    status: str
+    created_at: Optional[datetime] = None
+    packer_name: Optional[str] = None
+    customer: Optional[Dict] = None
+    items: Optional[List[Dict]] = None
+    notes: Optional[str] = None
+    hold_reason: Optional[str] = None
+    problem_item_skus: Optional[List[str]] = None
+    previously_on_hold_reason: Optional[str] = None
+    previously_problem_skus: Optional[List[str]] = None
 
 class Rule(BaseModel):
     name: str

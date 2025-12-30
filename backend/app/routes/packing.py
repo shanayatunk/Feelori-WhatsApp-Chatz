@@ -2,7 +2,8 @@
 
 import os
 import asyncio
-from fastapi import APIRouter, Depends, HTTPException, Request
+from typing import Optional
+from fastapi import APIRouter, Depends, HTTPException, Request, Header
 from fastapi.responses import FileResponse
 from app.models.api import APIResponse, HoldOrderRequest, FulfillOrderRequest
 from app.utils.dependencies import verify_jwt_token
@@ -16,11 +17,51 @@ from app.config.settings import settings
 # This file defines all API routes specifically for the packing team's HTML dashboard.
 # All routes are protected and require JWT authentication.
 
+# Allowed businesses for packing operations
+ALLOWED_BUSINESSES = {"feelori", "goldencollections", "godjewellery9"}
+
 router = APIRouter(
     prefix="/packing",
     tags=["Packing Dashboard"],
     dependencies=[Depends(verify_jwt_token)]
 )
+
+def _validate_business_context(x_business_id: Optional[str], user: dict) -> str:
+    """
+    Validate business context from header or user object.
+    
+    Args:
+        x_business_id: Business ID from x-business-id header (for shared packers)
+        user: Current user dictionary (may contain business_id for single-business admins)
+        
+    Returns:
+        Validated business_id string
+        
+    Raises:
+        HTTPException: 400 if business_id is missing, 403 if not in allowed list
+    """
+    # Prefer x_business_id header (for shared packers)
+    business_id = x_business_id
+    
+    # Fallback to user.get("business_id") (for single-business admins)
+    if not business_id:
+        business_id = user.get("business_id")
+    
+    # Raise 400 if missing
+    if not business_id:
+        raise HTTPException(
+            status_code=400,
+            detail="Business context required. Provide 'x-business-id' header or ensure user has business_id."
+        )
+    
+    # Raise 403 if not in ALLOWED_BUSINESSES
+    if business_id not in ALLOWED_BUSINESSES:
+        raise HTTPException(
+            status_code=403,
+            detail=f"Business '{business_id}' is not authorized for packing operations."
+        )
+    
+    return business_id
 
 # Serve the static HTML dashboard for the packing team
 @router.get("/", include_in_schema=False)
@@ -33,33 +74,59 @@ async def get_packing_dashboard_page():
 
 # API endpoint to get all orders for the packing dashboard
 @router.get("/orders", response_model=APIResponse)
-async def get_packing_orders(request: Request, current_user: dict = Depends(verify_jwt_token)):
+async def get_packing_orders(
+    request: Request,
+    x_business_id: Optional[str] = Header(None),
+    current_user: dict = Depends(verify_jwt_token)
+):
     """Provides the list of all orders for the packing dashboard."""
     security_service.EnhancedSecurityService.validate_admin_session(request, current_user)
-    formatted_orders = await db_service.get_all_packing_orders()
+    business_id = _validate_business_context(x_business_id, current_user)
+    formatted_orders = await db_service.get_all_packing_orders(business_id)
     return APIResponse(success=True, message="Orders retrieved", data={"orders": formatted_orders}, version="v1")
+
+# API endpoint to get global packing configuration
+@router.get("/config", response_model=APIResponse)
+async def get_packing_config(current_user: dict = Depends(verify_jwt_token)):
+    """Provides global packing configuration (packers and carriers)."""
+    config = await db_service.get_global_packing_config()
+    return APIResponse(success=True, message="Packing config retrieved", data=config, version="v1")
 
 # API endpoint to start packing an order
 @router.post("/orders/{order_id}/start", response_model=APIResponse)
-async def start_packing(order_id: str, request: Request, current_user: dict = Depends(verify_jwt_token)):
+async def start_packing(
+    order_id: str,
+    request: Request,
+    x_business_id: Optional[str] = Header(None),
+    current_user: dict = Depends(verify_jwt_token)
+):
     """Marks an order as 'In Progress'."""
     security_service.EnhancedSecurityService.validate_admin_session(request, current_user)
+    business_id = _validate_business_context(x_business_id, current_user)
     
     # --- FIX ---
     # The 'details' argument was missing. We provide an empty dictionary.
     # We also convert order_id to an integer.
-    await db_service.update_order_packing_status(int(order_id), "In Progress", {})
+    await db_service.update_order_packing_status(int(order_id), business_id, "In Progress", {})
     # --- END OF FIX ---
     
     return APIResponse(success=True, message="Order packing started.", version="v1")
 
 # API endpoint to put an order on hold
 @router.post("/orders/{order_id}/hold", response_model=APIResponse)
-async def hold_order(order_id: str, hold_data: HoldOrderRequest, request: Request, current_user: dict = Depends(verify_jwt_token)):
+async def hold_order(
+    order_id: str,
+    hold_data: HoldOrderRequest,
+    request: Request,
+    x_business_id: Optional[str] = Header(None),
+    current_user: dict = Depends(verify_jwt_token)
+):
     """Marks an order as 'On Hold' with a reason."""
     security_service.EnhancedSecurityService.validate_admin_session(request, current_user)
+    business_id = _validate_business_context(x_business_id, current_user)
     await db_service.hold_order(
         order_id=int(order_id),
+        business_id=business_id,
         reason=hold_data.reason,
         notes=hold_data.notes,
         skus=hold_data.problem_item_skus
@@ -68,9 +135,16 @@ async def hold_order(order_id: str, hold_data: HoldOrderRequest, request: Reques
 
 # API endpoint to fulfill an order
 @router.post("/orders/{order_id}/fulfill", response_model=APIResponse)
-async def fulfill_order(order_id: str, fulfill_data: FulfillOrderRequest, request: Request, current_user: dict = Depends(verify_jwt_token)):
+async def fulfill_order(
+    order_id: str,
+    fulfill_data: FulfillOrderRequest,
+    request: Request,
+    x_business_id: Optional[str] = Header(None),
+    current_user: dict = Depends(verify_jwt_token)
+):
     """Marks an order as 'Completed' in Shopify and sends a template notification."""
     security_service.EnhancedSecurityService.validate_admin_session(request, current_user)
+    business_id = _validate_business_context(x_business_id, current_user)
     
     success, fulfillment_id, tracking_url = await shopify_service.fulfill_order(
         order_id=int(order_id),
@@ -84,6 +158,7 @@ async def fulfill_order(order_id: str, fulfill_data: FulfillOrderRequest, reques
 
     await db_service.complete_order_fulfillment(
         order_id=int(order_id),
+        business_id=business_id,
         packer_name=fulfill_data.packer_name,
         fulfillment_id=fulfillment_id
     )
@@ -113,10 +188,16 @@ async def fulfill_order(order_id: str, fulfill_data: FulfillOrderRequest, reques
 # --- NEW FUNCTION ---
 # API endpoint to move a held order back to the pending queue
 @router.post("/orders/{order_id}/requeue", response_model=APIResponse)
-async def requeue_order(order_id: str, request: Request, current_user: dict = Depends(verify_jwt_token)):
+async def requeue_order(
+    order_id: str,
+    request: Request,
+    x_business_id: Optional[str] = Header(None),
+    current_user: dict = Depends(verify_jwt_token)
+):
     """Moves an order from 'On Hold' back to the 'Pending' queue."""
     security_service.EnhancedSecurityService.validate_admin_session(request, current_user)
-    success = await db_service.requeue_held_order(order_id=int(order_id))
+    business_id = _validate_business_context(x_business_id, current_user)
+    success = await db_service.requeue_held_order(order_id=int(order_id), business_id=business_id)
     if not success:
         raise HTTPException(
             status_code=404,

@@ -26,6 +26,22 @@ class WhatsAppService:
         self.circuit_breaker = RedisCircuitBreaker(cache_service.redis, "whatsapp")
         self._catalog_id_cache: Optional[str] = None
 
+    def _get_credentials(self, business_id: str):
+        """
+        Returns (phone_id, token, catalog_id) based on the business_id.
+        """
+        bid = (business_id or "feelori").lower().replace(" ", "")
+        
+        if "golden" in bid:
+            return (
+                settings.whatsapp_phone_id_golden or settings.whatsapp_phone_id,
+                settings.whatsapp_access_token_golden or settings.whatsapp_access_token,
+                settings.whatsapp_catalog_id_golden
+            )
+        
+        # Default: Feelori
+        return (settings.whatsapp_phone_id, settings.whatsapp_access_token, settings.whatsapp_catalog_id)
+
     @tenacity.retry(
         retry=tenacity.retry_if_exception_type((httpx.RequestError, httpx.TimeoutException)),
         stop=tenacity.stop_after_attempt(3),
@@ -35,7 +51,7 @@ class WhatsAppService:
     async def resilient_api_call(self, func, *args, **kwargs):
         return await self.circuit_breaker.call(func, *args, **kwargs)
 
-    async def send_whatsapp_request(self, payload: dict, metadata: dict | None = None, source: str = "bot") -> Optional[str]:
+    async def send_whatsapp_request(self, payload: dict, metadata: dict | None = None, source: str = "bot", business_id: str = "feelori") -> Optional[str]:
         """Generic method to send a request to the WhatsApp messages API."""
         try:
             to_phone = payload.get("to")
@@ -43,8 +59,9 @@ class WhatsAppService:
                 logger.error(f"send_whatsapp_request_invalid_phone: {to_phone}")
                 return None
 
-            url = f"{self.base_url}/{self.phone_id}/messages"
-            headers = {"Authorization": f"Bearer {self.access_token}", "Content-Type": "application/json"}
+            phone_id, token, _ = self._get_credentials(business_id)
+            url = f"{self.base_url}/{phone_id}/messages"
+            headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
             response = await self.resilient_api_call(self.http_client.post, url, json=payload, headers=headers)
 
             if response.status_code == 200:
@@ -90,7 +107,7 @@ class WhatsAppService:
 
 
     # --- THIS FUNCTION IS NOW CORRECTED ---
-    async def send_message(self, to_phone: str, message: str, image_url: Optional[str] = None, source: str = "bot") -> Optional[str]:
+    async def send_message(self, to_phone: str, message: str, image_url: Optional[str] = None, source: str = "bot", business_id: str = "feelori") -> Optional[str]:
         """
         Sends a message. If image_url is provided, sends an image with the message as a caption.
         Otherwise, sends a simple text message.
@@ -100,6 +117,7 @@ class WhatsAppService:
             message: Message text content
             image_url: Optional image URL
             source: Message source ("bot", "agent", "system", "broadcast") - defaults to "bot"
+            business_id: Business ID for multi-tenant support - defaults to "feelori"
         """
         clean_phone = re.sub(r"[^\d+]", "", to_phone)
         if not clean_phone.startswith("+"):
@@ -118,7 +136,7 @@ class WhatsAppService:
             payload["type"] = "text"
             payload["text"] = {"body": message[:4096]}
         
-        return await self.send_whatsapp_request(payload, source=source)
+        return await self.send_whatsapp_request(payload, source=source, business_id=business_id)
 
     # --- THIS FUNCTION IS NOW CORRECTED ---
     async def send_template_message(
@@ -130,7 +148,8 @@ class WhatsAppService:
         header_text_param: Optional[str] = None,
         header_video_url: Optional[str] = None,
         button_url_param: Optional[str] = None,
-        source: str = "bot"
+        source: str = "bot",
+        business_id: str = "feelori"
     ) -> Optional[str]:
         """Sends a pre-approved WhatsApp message template with optional header and button parameters."""
         clean_phone = re.sub(r"[^\d+]", "", to)
@@ -193,23 +212,29 @@ class WhatsAppService:
                 "components": components
             }
         }
-        return await self.send_whatsapp_request(payload, source=source)
+        return await self.send_whatsapp_request(payload, source=source, business_id=business_id)
 
-    async def get_catalog_id(self) -> Optional[str]:
+    async def get_catalog_id(self, business_id: str = "feelori") -> Optional[str]:
         """Fetches and caches the WhatsApp Business catalog ID, prioritizing env settings."""
-        if settings.whatsapp_catalog_id:
-            logger.info(f"Using WhatsApp Catalog ID from settings: {settings.whatsapp_catalog_id}")
-            return settings.whatsapp_catalog_id
+        _, token, catalog_id = self._get_credentials(business_id)
+        
+        if catalog_id:
+            logger.info(f"Using WhatsApp Catalog ID from settings: {catalog_id}")
+            return catalog_id
 
         if self._catalog_id_cache:
             return self._catalog_id_cache
         
-        if not self.business_account_id:
+        # Get business_account_id based on business_id
+        bid = (business_id or "feelori").lower().replace(" ", "")
+        business_account_id = settings.whatsapp_business_account_id_golden if "golden" in bid else settings.whatsapp_business_account_id
+        
+        if not business_account_id:
             logger.error("whatsapp_business_account_id_not_set")
             return None
 
-        url = f"{self.base_url}/{self.business_account_id}/catalogs"
-        params = {"access_token": self.access_token}
+        url = f"{self.base_url}/{business_account_id}/catalogs"
+        params = {"access_token": token}
         try:
             resp = await self.http_client.get(url, params=params)
             resp.raise_for_status()
@@ -224,8 +249,10 @@ class WhatsAppService:
             logger.error(f"whatsapp_get_catalog_id_error: {e}")
             return None
 
-    async def send_multi_product_message(self, to: str, header_text: str, body_text: str, footer_text: str, catalog_id: Optional[str], section_title: str, product_items: list, fallback_products: list):
+    async def send_multi_product_message(self, to: str, header_text: str, body_text: str, footer_text: str, catalog_id: Optional[str], section_title: str, product_items: list, fallback_products: list, business_id: str = "feelori"):
         """Sends a WhatsApp Multi-Product Message with a fallback to individual cards."""
+        phone_id, token, _ = self._get_credentials(business_id)
+        
         if catalog_id and product_items:
             try:
                 payload = {
@@ -238,8 +265,8 @@ class WhatsAppService:
                         "action": {"catalog_id": catalog_id, "sections": [{"title": section_title, "product_items": product_items}]}
                     }
                 }
-                url = f"{self.base_url}/{self.phone_id}/messages"
-                headers = {"Authorization": f"Bearer {self.access_token}", "Content-Type": "application/json"}
+                url = f"{self.base_url}/{phone_id}/messages"
+                headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
                 response = await self.resilient_api_call(self.http_client.post, url, json=payload, headers=headers)
                 if response.status_code == 200:
                     logger.info(f"WhatsApp multi-product message sent to {to}")
@@ -263,8 +290,8 @@ class WhatsAppService:
                         "action": {"buttons": [{"type": "reply", "reply": {"id": f"product_{product.id}", "title": "View Details"}}]}
                     }
                 }
-                url = f"{self.base_url}/{self.phone_id}/messages"
-                headers = {"Authorization": f"Bearer {self.access_token}", "Content-Type": "application/json"}
+                url = f"{self.base_url}/{phone_id}/messages"
+                headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
                 response = await self.resilient_api_call(self.http_client.post, url, json=payload, headers=headers)
                 if response.status_code != 200:
                      logger.error(f"WhatsApp fallback send failed for {product.id}: {response.text}")
@@ -272,9 +299,10 @@ class WhatsAppService:
             except Exception as e:
                 logger.error(f"WhatsApp fallback template error: {e}")
 
-    async def send_product_detail_with_buttons(self, to_phone: str, product: Product):
+    async def send_product_detail_with_buttons(self, to_phone: str, product: Product, business_id: str = "feelori"):
         """Sends a product detail message with interactive reply buttons."""
         try:
+            phone_id, token, _ = self._get_credentials(business_id)
             short_desc = (product.description[:120] + '...') if len(product.description) > 120 else product.description
             body_text = f"*{product.title}*\n\n💰 ₹{product.price:,.2f}\n\n✨ {short_desc}"
             payload = {
@@ -291,8 +319,8 @@ class WhatsAppService:
             if product.image_url:
                 payload["interactive"]["header"] = {"type": "image", "image": {"link": product.image_url}}
 
-            url = f"{self.base_url}/{self.phone_id}/messages"
-            headers = {"Authorization": f"Bearer {self.access_token}", "Content-Type": "application/json"}
+            url = f"{self.base_url}/{phone_id}/messages"
+            headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
             response = await self.resilient_api_call(self.http_client.post, url, json=payload, headers=headers)
 
             if response.status_code == 200:
@@ -304,16 +332,17 @@ class WhatsAppService:
             logger.error(f"Interactive product detail error for {to_phone}: {e}")
             return False
 
-    async def send_quick_replies(self, to_phone: str, message: str, options: Dict[str, str]):
+    async def send_quick_replies(self, to_phone: str, message: str, options: Dict[str, str], business_id: str = "feelori"):
         """Sends a message with up to 3 quick reply buttons."""
         try:
+            phone_id, token, _ = self._get_credentials(business_id)
             buttons = [{"type": "reply", "reply": {"id": option_id, "title": title[:20]}} for option_id, title in list(options.items())[:3]]
             payload = {
                 "messaging_product": "whatsapp", "to": to_phone, "type": "interactive",
                 "interactive": {"type": "button", "body": {"text": message}, "action": {"buttons": buttons}}
             }
-            url = f"{self.base_url}/{self.phone_id}/messages"
-            headers = {"Authorization": f"Bearer {self.access_token}", "Content-Type": "application/json"}
+            url = f"{self.base_url}/{phone_id}/messages"
+            headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
             response = await self.resilient_api_call(self.http_client.post, url, json=payload, headers=headers)
 
             if response.status_code == 200:
@@ -325,11 +354,12 @@ class WhatsAppService:
             logger.error(f"Send quick replies error for {to_phone}: {e}")
             return False
 
-    async def get_media_url(self, media_id: str) -> Optional[str]:
+    async def get_media_url(self, media_id: str, business_id: str = "feelori") -> Optional[str]:
         """Fetches a temporary URL for a media object from WhatsApp."""
         try:
+            _, token, _ = self._get_credentials(business_id)
             url = f"{self.base_url}/{media_id}"
-            headers = {"Authorization": f"Bearer {self.access_token}"}
+            headers = {"Authorization": f"Bearer {token}"}
             resp = await self.http_client.get(url, headers=headers)
             resp.raise_for_status()
             return resp.json().get("url")
@@ -337,14 +367,15 @@ class WhatsAppService:
             logger.error(f"get_media_url_failed for {media_id}: {e}")
             return None
 
-    async def get_media_content(self, media_id: str) -> Tuple[Optional[bytes], Optional[str]]:
+    async def get_media_content(self, media_id: str, business_id: str = "feelori") -> Tuple[Optional[bytes], Optional[str]]:
         """Downloads media bytes and returns (bytes, mime_type)."""
         try:
-            url = await self.get_media_url(media_id)
+            _, token, _ = self._get_credentials(business_id)
+            url = await self.get_media_url(media_id, business_id)
             if not url: 
                 return None, None
             
-            headers = {"Authorization": f"Bearer {self.access_token}"}
+            headers = {"Authorization": f"Bearer {token}"}
             resp = await self.http_client.get(url, headers=headers)
             resp.raise_for_status()
             content_type = resp.headers.get("content-type")

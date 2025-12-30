@@ -176,6 +176,7 @@ class DatabaseService:
             ("orders", [("phone_numbers", 1)], {}),
             ("orders", [("fulfillment_status_internal", 1), ("created_at", 1)], {}),
             ("orders", [("updated_at", -1)], {}),  # For performance metrics
+            ("orders", [("business_id", 1), ("fulfillment_status_internal", 1), ("fulfilled_at", 1), ("packed_by", 1)], {}),  # For KPI cards and leaderboard queries
             ("customers", [("phone_number", 1)], {"unique": True}),
             ("customers", [("last_interaction", -1)], {}),
             ("security_events", [("timestamp", -1)], {}),

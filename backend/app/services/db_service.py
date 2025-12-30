@@ -2231,71 +2231,60 @@ class DatabaseService:
 
     # ==================== Webhook Processing ====================
 
-    async def process_new_order_webhook(self, payload: Dict[str, Any], shop_domain: str = "") -> None:
+    async def process_new_order_webhook(self, order_data: Dict[str, Any], shop_domain: str = "") -> None:
         """
-        Process new order webhook from Shopify.
-        
-        Args:
-            payload: Shopify order webhook payload
-            shop_domain: Shopify shop domain from X-Shopify-Shop-Domain header
+        Ingest a new order from Shopify.
+        Maps the Shopify Domain to our internal business_id.
         """
-        order_id = payload.get("id")
-        if not order_id:
-            logger.warning("Received order webhook without ID")
-            return
-
-        # Map shop_domain to business_id
-        business_id = self._map_shop_domain_to_business_id(shop_domain)
-
-        # Get product images for line items
-        line_items_with_images = []
-        for item in payload.get("line_items", []):
-            image_url = None
-            if item.get("product_id"):
-                image_url = await shopify_service.get_product_image_url(item["product_id"])
-            
-            line_items_with_images.append({
-                "title": item.get("title"),
-                "quantity": item.get("quantity"),
-                "sku": item.get("sku"),
-                "image_url": image_url
-            })
-
-        # Check if inventory is sufficient
-        needs_stock_check = await self._check_inventory_availability(payload)
-        initial_status = OrderStatus.NEEDS_STOCK_CHECK.value if needs_stock_check else OrderStatus.PENDING.value
-        
-        # Extract and sanitize phone numbers
-        clean_phones = self._extract_phones_from_payload(payload)
-
-        order_doc = {
-            "id": order_id,
-            "order_number": payload.get("order_number"),
-            "created_at": self._parse_iso_utc(payload.get("created_at")), # <-- Use the new helper
-            "raw": payload,
-            "line_items_with_images": line_items_with_images,
-            "phone_numbers": clean_phones,
-            "fulfillment_status_internal": initial_status,
-            "business_id": business_id,  # Add business_id for multi-tenancy
-            "last_synced": self._now_utc(),
-            "updated_at": self._now_utc()
-        }
-        
-        await self.db.orders.update_one(
-            {"id": order_id},
-            {"$set": order_doc},
-            upsert=True
-        )
-        
-        # Send packing alert
         try:
-            from app.services.order_service import send_packing_alert_background
-            await send_packing_alert_background(payload)
-        except Exception:
-            logger.exception("Failed to send packing alert")
-        
-        # Send customer confirmation
-        await self._send_order_confirmation(payload)
+            # 1. Map Shop Domain to Business ID
+            business_id = "feelori" # Default
+            if "goldencollections" in shop_domain:
+                business_id = "goldencollections"
+            elif "godjewellery" in shop_domain:
+                business_id = "godjewellery9"
+            
+            # 2. Extract Customer Info
+            customer = order_data.get("customer", {})
+            phone = customer.get("phone") or order_data.get("phone")
+            
+            # 3. Prepare the Document
+            order_doc = {
+                "id": order_data["id"],
+                "order_number": str(order_data.get("order_number", "")),
+                "name": order_data.get("name", ""),
+                "business_id": business_id, # <--- CRITICAL for Dashboard
+                
+                # Packing Dashboard Statuses
+                "fulfillment_status_internal": "Pending", 
+                "fulfillment_status": order_data.get("fulfillment_status"),
+                
+                # Financials
+                "financial_status": order_data.get("financial_status"),
+                "total_price": float(order_data.get("total_price", 0)),
+                
+                # Items & Customer
+                "items": order_data.get("line_items", []),
+                "customer": {
+                    "id": customer.get("id"),
+                    "name": f"{customer.get('first_name', '')} {customer.get('last_name', '')}".strip(),
+                    "phone": phone
+                },
+                
+                "created_at": datetime.now(timezone.utc),
+                "updated_at": datetime.now(timezone.utc)
+            }
+            
+            # 4. Upsert (Insert if new, Update if exists)
+            await self.db.orders.update_one(
+                {"id": order_data["id"]},
+                {"$set": order_doc},
+                upsert=True
+            )
+            logger.info(f"Order {order_doc['name']} ingested for {business_id} from {shop_domain}")
+            
+        except Exception as e:
+            logger.error(f"Failed to process order webhook: {e}", exc_info=True)
 
     async def _check_inventory_availability(self, payload: Dict[str, Any]) -> bool:
         """Check if all line items have sufficient inventory."""

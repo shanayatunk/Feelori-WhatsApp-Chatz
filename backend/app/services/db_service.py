@@ -2059,161 +2059,64 @@ class DatabaseService:
         )
 
     async def get_packing_dashboard_metrics(self, business_id: str) -> Dict[str, Any]:
-        """
-        Get simple packing dashboard metrics.
-        
-        Args:
-            business_id: Business ID to filter metrics by
-            
-        Returns:
-            Dictionary with status counts
-        """
+        """Get live status counts and today's completion stats."""
+        # 1. Current Queue Status (Pending, In Progress, On Hold)
         pipeline = [
-            {"$match": {"business_id": business_id}},  # Added Scope
+            {"$match": {"business_id": business_id}},
             {"$group": {"_id": "$fulfillment_status_internal", "count": {"$sum": 1}}}
         ]
-        results = await self.db.orders.aggregate(pipeline).to_list(length=None)
-        status_counts = {item['_id']: item['count'] for item in results if item['_id']}
-        return {"status_counts": status_counts}
-
-    async def get_packer_performance_metrics(self, days: int = 7) -> Dict[str, Any]:
-        """
-        Calculate advanced packer performance metrics.
+        status_counts = await self.db.orders.aggregate(pipeline).to_list(length=None)
+        stats = {doc["_id"]: doc["count"] for doc in status_counts if doc.get("_id")}
         
-        Args:
-            days: Number of days to include in analysis
-            
-        Returns:
-            Dictionary with KPIs, leaderboard, and hold analysis
+        # 2. Completed TODAY count (Uses the new index efficiently)
+        start_of_day = self._now_utc().replace(hour=0, minute=0, second=0, microsecond=0)
+        completed_today = await self.db.orders.count_documents({
+            "business_id": business_id,
+            "fulfillment_status_internal": "Completed",
+            "fulfilled_at": {"$gte": start_of_day}
+        })
+        
+        return {
+            "pending": stats.get("Pending", 0),
+            "in_progress": stats.get("In Progress", 0),
+            "on_hold": stats.get("On Hold", 0),
+            "completed_today": completed_today
+        }
+
+    async def get_packer_performance_metrics(self, days: int = 7) -> List[Dict[str, Any]]:
         """
-        start_date = self._now_utc() - timedelta(days=days)
+        Calculate per-packer throughput across ALL businesses (Global Operational View).
+        """
+        cutoff = self._now_utc() - timedelta(days=days)
         
         pipeline = [
             {
                 "$match": {
-                    "$or": [
-                        {"updated_at": {"$gte": start_date}},
-                        {"fulfilled_at": {"$gte": start_date}},
-                        {"created_at": {"$gte": start_date}}
-                    ]
+                    "fulfillment_status_internal": "Completed",
+                    "fulfilled_at": {"$gte": cutoff},
+                    "packed_by": {"$ne": None}
                 }
             },
             {
-                "$facet": {
-                    "kpi_metrics": [
-                        {
-                            "$group": {
-                                "_id": None,
-                                "total_orders": {"$sum": 1},
-                                "completed_orders": {
-                                    "$sum": {
-                                        "$cond": [
-                                            {"$eq": ["$fulfillment_status_internal", OrderStatus.COMPLETED.value]},
-                                            1,
-                                            0
-                                        ]
-                                    }
-                                },
-                                "on_hold_orders": {
-                                    "$sum": {
-                                        "$cond": [
-                                            {"$eq": ["$fulfillment_status_internal", OrderStatus.ON_HOLD.value]},
-                                            1,
-                                            0
-                                        ]
-                                    }
-                                },
-                                "avg_time_to_pack_ms": {
-                                    "$avg": {
-                                        "$cond": {
-                                            "if": {
-                                                "$and": [
-                                                    {"$ne": ["$in_progress_at", None]},
-                                                    {"$ne": ["$fulfilled_at", None]},
-                                                    {"$gt": ["$fulfilled_at", "$in_progress_at"]}
-                                                ]
-                                            },
-                                            "then": {"$subtract": ["$fulfilled_at", "$in_progress_at"]},
-                                            "else": None
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    ],
-                    "packer_leaderboard": [
-                        {
-                            "$match": {
-                                "fulfillment_status_internal": OrderStatus.COMPLETED.value,
-                                "packed_by": {"$ne": None}
-                            }
-                        },
-                        {"$group": {"_id": "$packed_by", "orders_packed": {"$sum": 1}}},
-                        {"$sort": {"orders_packed": -1}},
-                        {"$limit": 10}
-                    ],
-                    "hold_reasons": [
-                        {
-                            "$match": {
-                                "fulfillment_status_internal": OrderStatus.ON_HOLD.value,
-                                "hold_reason": {"$ne": None}
-                            }
-                        },
-                        {"$group": {"_id": "$hold_reason", "count": {"$sum": 1}}},
-                        {"$sort": {"count": -1}}
-                    ],
-                    "problem_skus": [
-                        {
-                            "$match": {
-                                "fulfillment_status_internal": OrderStatus.ON_HOLD.value,
-                                "problem_item_skus": {"$exists": True, "$nin": [[], None]}
-                            }
-                        },
-                        {"$unwind": "$problem_item_skus"},
-                        {"$group": {"_id": "$problem_item_skus", "count": {"$sum": 1}}},
-                        {"$sort": {"count": -1}},
-                        {"$limit": 5}
-                    ]
+                "$group": {
+                    "_id": "$packed_by",
+                    "total_orders": {"$sum": 1},
+                    "last_active": {"$max": "$fulfilled_at"}
                 }
-            }
+            },
+            {"$sort": {"total_orders": -1}}
         ]
         
-        result = await self.db.orders.aggregate(pipeline).to_list(length=1)
+        results = await self.db.orders.aggregate(pipeline).to_list(length=None)
         
-        if not result:
-            return self._empty_performance_metrics()
-
-        data = result[0]
-        
-        # --- FIXED: Properly handle empty kpi_metrics ---
-        kpi_list = data.get("kpi_metrics", [])
-        if kpi_list and len(kpi_list) > 0:
-            kpis = kpi_list[0]
-        else:
-            kpis = {}
-        # --- END OF FIX ---
-        
-        # Convert milliseconds to minutes
-        avg_time_ms = kpis.get("avg_time_to_pack_ms")
-        avg_time_min = round(avg_time_ms / 60000, 2) if avg_time_ms else 0
-        
-        total = max(kpis.get("total_orders", 1), 1)  # Prevent division by zero
-        on_hold = kpis.get("on_hold_orders", 0)
-
-        return {
-            "kpis": {
-                "total_orders": kpis.get("total_orders", 0),
-                "completed_orders": kpis.get("completed_orders", 0),
-                "on_hold_orders": on_hold,
-                "avg_time_to_pack_minutes": avg_time_min,
-                "hold_rate": round(on_hold / total * 100, 2)
-            },
-            "packer_leaderboard": data.get("packer_leaderboard", []),
-            "hold_analysis": {
-                "by_reason": data.get("hold_reasons", []),
-                "top_problem_skus": data.get("problem_skus", [])
+        return [
+            {
+                "name": r["_id"],
+                "count": r["total_orders"],
+                "last_active": r["last_active"]
             }
-        }
+            for r in results
+        ]
 
     def _empty_performance_metrics(self) -> Dict[str, Any]:
         """Return empty metrics structure."""

@@ -4,7 +4,7 @@ import sys
 import re
 import os
 import base64
-from typing import Dict, List, Union
+from typing import Dict, List, Union, Optional
 from pydantic import BaseModel, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings
 
@@ -30,14 +30,22 @@ class Settings(BaseSettings):
     min_pool_size: int = 1
     mongo_ssl: bool = True
 
-    # WhatsApp (Legacy – kept for backward compatibility)
-    whatsapp_access_token: str  # @deprecated
-    whatsapp_phone_id: str      # @deprecated
+    # --- WhatsApp Credentials (Multi-Tenant) ---
+    # Default / Feelori
+    whatsapp_phone_id: str = Field(..., env="WHATSAPP_PHONE_ID")
+    whatsapp_access_token: str = Field(..., env="WHATSAPP_ACCESS_TOKEN")
+    whatsapp_catalog_id: Optional[str] = Field(None, env="WHATSAPP_CATALOG_ID")
+    whatsapp_app_secret: str = Field(..., env="WHATSAPP_APP_SECRET")
+    whatsapp_business_account_id: Optional[str] = Field(None, env="WHATSAPP_BUSINESS_ACCOUNT_ID")
     whatsapp_verify_token: str
-    whatsapp_app_secret: str
-    whatsapp_catalog_id: str | None = None
-    whatsapp_business_account_id: str | None = None
     whatsapp_webhook_secret: str | None = None
+
+    # Golden Collections
+    whatsapp_phone_id_golden: Optional[str] = Field(None, env="GOLDEN_WHATSAPP_PHONE_ID")
+    whatsapp_access_token_golden: Optional[str] = Field(None, env="GOLDEN_WHATSAPP_ACCESS_TOKEN")
+    whatsapp_catalog_id_golden: Optional[str] = Field(None, env="GOLDEN_WHATSAPP_CATALOG_ID")
+    whatsapp_app_secret_golden: Optional[str] = Field(None, env="GOLDEN_WHATSAPP_APP_SECRET")
+    whatsapp_business_account_id_golden: Optional[str] = Field(None, env="GOLDEN_WHATSAPP_BUSINESS_ACCOUNT_ID")
 
     # Multi-tenant WhatsApp Business Registry
     BUSINESS_REGISTRY: Dict[str, BusinessConfig] = {}

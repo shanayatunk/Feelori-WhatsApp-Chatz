@@ -1185,6 +1185,31 @@ class DatabaseService:
         groups = await self.db.broadcast_groups.find({}).to_list(length=None)
         return self._serialize_ids(groups)
 
+    async def _get_engaged_phones(self, days: int = 30) -> List[str]:
+        """
+        Fetch distinct phone numbers that have READ a message OR REPLIED in the last X days.
+        This captures 'Hidden Readers' who have read receipts disabled but reply.
+        """
+        cutoff = self._now_utc() - timedelta(days=days)
+        try:
+            pipeline = [
+                {
+                    "$match": {
+                        "timestamp": {"$gte": cutoff},
+                        "$or": [
+                            {"status": "read"},       # Explicit Read
+                            {"direction": "inbound"}  # Implicit Read (Reply)
+                        ]
+                    }
+                },
+                {"$group": {"_id": "$phone"}},
+            ]
+            result = await self.db.message_logs.aggregate(pipeline).to_list(length=None)
+            return [doc["_id"] for doc in result if doc.get("_id")]
+        except Exception as e:
+            logger.error(f"Failed to fetch engaged phones: {e}")
+            return []
+
     async def count_audience(
         self,
         audience_type: str,
@@ -1196,7 +1221,7 @@ class DatabaseService:
         Must match get_customers_for_broadcast logic exactly.
         
         Args:
-            audience_type: One of 'all', 'active', 'recent', 'inactive', 'custom', 'custom_group'
+            audience_type: One of 'all', 'active', 'recent', 'inactive', 'engaged', 'custom', 'custom_group'
             target_phones: Specific phone numbers for 'custom' targeting
             target_group_id: Group ID for 'custom_group' targeting
             
@@ -1233,6 +1258,15 @@ class DatabaseService:
             })
         
         # Build query based on audience_type
+        if audience_type == "engaged":
+            engaged_phones = await self._get_engaged_phones(30)
+            if not engaged_phones:
+                return 0
+            return await self.db.customers.count_documents({
+                "phone_number": {"$in": engaged_phones},
+                "opted_out": {"$ne": True}
+            })
+        
         query = {"opted_out": {"$ne": True}}  # Always exclude opted-out
         now = self._now_utc()
         
@@ -1256,7 +1290,7 @@ class DatabaseService:
         Get customers for broadcast based on targeting criteria.
         
         Args:
-            target_type: One of 'all', 'active', 'recent', 'inactive', 'custom'
+            target_type: One of 'all', 'active', 'recent', 'inactive', 'engaged', 'custom', 'custom_group'
             target_phones: Specific phone numbers for 'custom' targeting
             
         Returns:
@@ -1292,6 +1326,22 @@ class DatabaseService:
                 {"phone_number": 1, "opted_out": 1}
             ).to_list(length=None)
             # Ensure opted_out field exists (default to False if missing)
+            for customer in customers:
+                if "opted_out" not in customer:
+                    customer["opted_out"] = False
+            return customers
+        
+        if target_type == "engaged":
+            engaged_phones = await self._get_engaged_phones(30)
+            if not engaged_phones:
+                return []
+                
+            customers = await self.db.customers.find(
+                {"phone_number": {"$in": engaged_phones}, "opted_out": {"$ne": True}},
+                {"phone_number": 1, "first_name": 1, "opted_out": 1}
+            ).to_list(length=None)
+            
+            # Ensure opted_out default
             for customer in customers:
                 if "opted_out" not in customer:
                     customer["opted_out"] = False

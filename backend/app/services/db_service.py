@@ -1405,33 +1405,35 @@ class DatabaseService:
             logger.error(f"Failed to link message {wamid} to job {job_id}: {e}")
     
     async def increment_job_stats(self, job_id: str, status: str):
-        """
-        Increment the counters for a job.
-        
-        Args:
-            job_id: Broadcast job ID
-            status: Status to increment ("sent", "delivered", "read", "failed")
-        """
+        """Increment the counters for a job."""
         try:
-            if isinstance(job_id, str):
-                if not self._validate_object_id(job_id):
-                    logger.warning(f"Invalid job_id format: {job_id}")
-                    return
-                _id = ObjectId(job_id)
-            else:
-                _id = job_id
-            
+            # Robust ID conversion
+            try:
+                _id = ObjectId(job_id) if isinstance(job_id, str) else job_id
+            except:
+                _id = job_id # Fallback if it's not a valid ObjectId string
+
             field_map = {
-                "sent": "stats.sent",
-                "delivered": "stats.delivered",
-                "read": "stats.read",
-                "failed": "stats.failed"
+                "sent": "sent_count",
+                "delivered": "delivered_count",
+                "read": "read_count",
+                "failed": "failed_count"
             }
+            
             if status in field_map:
-                await self.db.broadcasts.update_one(
+                # DEBUG LOG: Remove this after it works
+                logger.info(f"Incrementing {field_map[status]} for Job {_id}")
+                
+                # USE THE CORRECT COLLECTION NAME HERE (Check create_broadcast_job)
+                # create_broadcast_job uses 'broadcasts', so we use 'broadcasts'
+                result = await self.db.broadcasts.update_one( 
                     {"_id": _id},
                     {"$inc": {field_map[status]: 1}}
                 )
+                
+                if result.modified_count == 0:
+                    logger.warning(f"Failed to increment stats: Job {_id} not found in DB")
+                    
         except Exception as e:
             logger.error(f"Failed to increment stats for job {job_id}: {e}")
     

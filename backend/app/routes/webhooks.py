@@ -110,10 +110,20 @@ async def handle_whatsapp_webhook(
 # --- Shopify Webhooks ---
 
 @router.post("/shopify/orders/create")
-async def shopify_orders_create_webhook(request: Request, verified_body: bytes = Depends(verify_shopify_signature)):
+async def shopify_orders_create_webhook(
+    request: Request, 
+    verified_body: bytes = Depends(verify_shopify_signature)
+):
     """Handles new order creation from Shopify."""
     payload = json.loads(verified_body.decode("utf-8"))
-    asyncio.create_task(db_service.process_new_order_webhook(payload))
+    
+    # 1. Extract the Shop Domain to identify the Business
+    shop_domain = request.headers.get("X-Shopify-Shop-Domain", "")
+    
+    # 2. Pass it to the service
+    # We use create_task so we don't block the webhook response (Shopify needs a 200 OK fast)
+    asyncio.create_task(db_service.process_new_order_webhook(payload, shop_domain))
+    
     return JSONResponse({"status": "ok"})
 
 

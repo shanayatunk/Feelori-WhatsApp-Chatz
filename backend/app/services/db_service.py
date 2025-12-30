@@ -166,6 +166,32 @@ class DatabaseService:
         except Exception:
             logger.warning(f"Failed to parse timestamp: {value}")
             return None
+    
+    def _map_shop_domain_to_business_id(self, shop_domain: str) -> str:
+        """
+        Map Shopify shop domain to business_id for multi-tenancy.
+        
+        Args:
+            shop_domain: Shopify shop domain (e.g., "feelori.myshopify.com")
+            
+        Returns:
+            business_id string (defaults to "feelori" if mapping not found)
+        """
+        if not shop_domain:
+            return "feelori"  # Default fallback
+        
+        # Extract shop name from domain (e.g., "feelori" from "feelori.myshopify.com")
+        shop_name = shop_domain.split(".")[0].lower() if "." in shop_domain else shop_domain.lower()
+        
+        # Map known shop domains to business_ids
+        domain_to_business = {
+            "feelori": "feelori",
+            "goldencollections": "goldencollections",
+            "godjewellery9": "godjewellery9"
+        }
+        
+        return domain_to_business.get(shop_name, "feelori")  # Default to feelori if unknown
+    
     # ==================== Index Management ====================
 
     async def create_indexes(self) -> None:
@@ -2205,17 +2231,21 @@ class DatabaseService:
 
     # ==================== Webhook Processing ====================
 
-    async def process_new_order_webhook(self, payload: Dict[str, Any]) -> None:
+    async def process_new_order_webhook(self, payload: Dict[str, Any], shop_domain: str = "") -> None:
         """
         Process new order webhook from Shopify.
         
         Args:
             payload: Shopify order webhook payload
+            shop_domain: Shopify shop domain from X-Shopify-Shop-Domain header
         """
         order_id = payload.get("id")
         if not order_id:
             logger.warning("Received order webhook without ID")
             return
+
+        # Map shop_domain to business_id
+        business_id = self._map_shop_domain_to_business_id(shop_domain)
 
         # Get product images for line items
         line_items_with_images = []
@@ -2246,6 +2276,7 @@ class DatabaseService:
             "line_items_with_images": line_items_with_images,
             "phone_numbers": clean_phones,
             "fulfillment_status_internal": initial_status,
+            "business_id": business_id,  # Add business_id for multi-tenancy
             "last_synced": self._now_utc(),
             "updated_at": self._now_utc()
         }

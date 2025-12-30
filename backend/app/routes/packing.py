@@ -21,7 +21,6 @@ from app.config.settings import settings
 ALLOWED_BUSINESSES = {"feelori", "goldencollections", "godjewellery9"}
 
 router = APIRouter(
-    prefix="/packing",
     tags=["Packing Dashboard"],
     dependencies=[Depends(verify_jwt_token)]
 )

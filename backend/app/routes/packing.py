@@ -217,13 +217,13 @@ async def get_packer_performance_metrics(
     """Provides advanced packer performance metrics for the React dashboard."""
     security_service.EnhancedSecurityService.validate_admin_session(request, current_user)
     
-    # Call the correct, advanced metrics function from the database service
-    metrics = await db_service.get_packer_performance_metrics(days=days)
+    # Performance is global (across all businesses)
+    metrics = await db_service.get_packer_performance_metrics(days)
     
     return APIResponse(
         success=True,
-        message=f"Packer performance for the last {days} days retrieved.",
-        data=metrics,
+        message="Performance metrics retrieved",
+        data={"leaderboard": metrics},
         version="v1"
     )
 # --- END OF NEW ENDPOINT ---
@@ -242,7 +242,7 @@ async def get_packing_metrics(
     metrics = await db_service.get_packing_dashboard_metrics(business_id)
     return APIResponse(
         success=True,
-        message="Packing metrics retrieved successfully.",
+        message="Metrics retrieved",
         data=metrics,
         version="v1"
     )

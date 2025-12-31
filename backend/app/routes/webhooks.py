@@ -68,28 +68,25 @@ async def handle_whatsapp_webhook(
                 
                 value = change.get("value", {})
 
-                # --- [START] NEW PHONE ID FILTER ---
-                # Get the Phone ID from the incoming webhook payload
+                # --- [START] PHONE ID MAPPING ---
                 metadata = value.get("metadata", {})
                 incoming_phone_id = metadata.get("phone_number_id")
                 
-                # Get Valid Phone IDs (Feelori + Golden)
-                allowed_phone_ids = [
-                    pid for pid in [settings.whatsapp_phone_id, settings.whatsapp_phone_id_golden] 
-                    if pid
-                ]
+                # Map Phone IDs to Business Names
+                PHONE_ID_TO_BUSINESS = {
+                    settings.whatsapp_phone_id: "feelori",
+                    settings.whatsapp_phone_id_golden: "goldencollections"
+                }
 
-                # If the incoming ID is present but NOT in our allowed list, ignore it.
-                if incoming_phone_id and incoming_phone_id not in allowed_phone_ids:
-                    log.info(
-                        "Ignored event for unknown phone ID.",
-                        incoming_id=incoming_phone_id,
-                        allowed_ids=allowed_phone_ids
-                    )
-                    continue
-                # --- [END] NEW PHONE ID FILTER ---
+                # Identify Business
+                business_id = PHONE_ID_TO_BUSINESS.get(incoming_phone_id)
 
-                # --- (Your existing logic continues below) ---
+                # Security/Filter Check: If ID is unknown, ignore it.
+                if not business_id:
+                     log.info("Ignored event for unknown phone ID.", incoming_id=incoming_phone_id)
+                     continue
+                # --- [END] PHONE ID MAPPING ---
+
                 if "statuses" in value:
                     for status_data in value.get("statuses", []):
                         wamid = status_data.get("id")
@@ -102,8 +99,11 @@ async def handle_whatsapp_webhook(
                             log.info(f"Updated status for {wamid} to {status_type}")
                 elif "messages" in value:
                     for message in value.get("messages", []):
-                        log.info("Processing incoming message", message=message)
-                        asyncio.create_task(order_service.process_webhook_message(message, value))
+                        log.info("Processing incoming message", message=message, business_id=business_id)
+                        # PASS BUSINESS_ID DOWNSTREAM
+                        asyncio.create_task(
+                            order_service.process_webhook_message(message, value, business_id=business_id)
+                        )
         
         log.info("Webhook processing complete.")
         return JSONResponse({"status": "success"})

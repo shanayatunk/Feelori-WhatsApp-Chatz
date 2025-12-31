@@ -75,7 +75,7 @@ async def handle_whatsapp_webhook(
                 # Map Phone IDs to Business Names
                 PHONE_ID_TO_BUSINESS = {
                     settings.whatsapp_phone_id: "feelori",
-                    settings.whatsapp_phone_id_golden: "goldencollections"
+                    settings.golden_whatsapp_phone_id: "goldencollections"
                 }
 
                 # Identify Business

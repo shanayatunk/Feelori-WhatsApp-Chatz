@@ -41,11 +41,11 @@ class Settings(BaseSettings):
     whatsapp_webhook_secret: str | None = None
 
     # Golden Collections
-    whatsapp_phone_id_golden: Optional[str] = Field(None, env="GOLDEN_WHATSAPP_PHONE_ID")
-    whatsapp_access_token_golden: Optional[str] = Field(None, env="GOLDEN_WHATSAPP_ACCESS_TOKEN")
-    whatsapp_catalog_id_golden: Optional[str] = Field(None, env="GOLDEN_WHATSAPP_CATALOG_ID")
+    golden_whatsapp_phone_id: Optional[str] = Field(None, env="GOLDEN_WHATSAPP_PHONE_ID")
+    golden_whatsapp_access_token: Optional[str] = Field(None, env="GOLDEN_WHATSAPP_ACCESS_TOKEN")
+    golden_whatsapp_catalog_id: Optional[str] = Field(None, env="GOLDEN_WHATSAPP_CATALOG_ID")
     golden_whatsapp_app_secret: str = Field("", env="GOLDEN_WHATSAPP_APP_SECRET")
-    whatsapp_business_account_id_golden: Optional[str] = Field(None, env="GOLDEN_WHATSAPP_BUSINESS_ACCOUNT_ID")
+    golden_whatsapp_business_account_id: Optional[str] = Field(None, env="GOLDEN_WHATSAPP_BUSINESS_ACCOUNT_ID")
 
     # Multi-tenant WhatsApp Business Registry
     BUSINESS_REGISTRY: Dict[str, BusinessConfig] = {}

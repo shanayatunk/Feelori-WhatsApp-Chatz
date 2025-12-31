@@ -42,9 +42,9 @@ class WhatsAppService:
                 "catalog_id": settings.whatsapp_catalog_id
             },
             "goldencollections": {
-                "phone_id": settings.whatsapp_phone_id_golden,
-                "token": settings.whatsapp_access_token_golden,
-                "catalog_id": settings.whatsapp_catalog_id_golden
+                "phone_id": settings.golden_whatsapp_phone_id,
+                "token": settings.golden_whatsapp_access_token,
+                "catalog_id": settings.golden_whatsapp_catalog_id
             }
         }
 
@@ -246,7 +246,7 @@ class WhatsAppService:
         
         # Get business_account_id based on business_id
         bid = (business_id or "feelori").lower().replace(" ", "")
-        business_account_id = settings.whatsapp_business_account_id_golden if "golden" in bid else settings.whatsapp_business_account_id
+        business_account_id = settings.golden_whatsapp_business_account_id if "golden" in bid else settings.whatsapp_business_account_id
         
         if not business_account_id:
             logger.error("whatsapp_business_account_id_not_set")

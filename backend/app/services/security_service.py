@@ -9,6 +9,7 @@ from fastapi import Request, HTTPException
 
 from app.services.cache_service import cache_service
 from app.utils.request_utils import get_remote_address
+from app.config.settings import settings
 
 # This service provides core security functionalities, such as password hashing,
 # webhook signature verification, input sanitization, and tracking login attempts.
@@ -78,6 +79,38 @@ class EnhancedSecurityService(SecurityService):
         current_ip = get_remote_address(request)
         if token_ip and token_ip != current_ip:
             raise HTTPException(status_code=401, detail="Token IP mismatch - please login again")
+
+    @staticmethod
+    def validate_whatsapp_signature(request: Request, body_bytes: bytes) -> bool:
+        """
+        Validates WhatsApp webhook signature using multi-tenant secrets.
+        Tries both Feelori and Golden Collections app secrets.
+        """
+        signature = request.headers.get("X-Hub-Signature-256")
+        if not signature:
+            return False
+            
+        if signature.startswith("sha256="):
+            signature = signature[7:]
+
+        # List of secrets to try
+        secrets_to_try = [s for s in [settings.whatsapp_app_secret, settings.whatsapp_app_secret_golden] if s]
+
+        # Try each secret
+        for secret in secrets_to_try:
+            try:
+                expected_signature = hmac.new(
+                    secret.encode("utf-8"),
+                    body_bytes,
+                    hashlib.sha256
+                ).hexdigest()
+                
+                if hmac.compare_digest(expected_signature, signature):
+                    return True
+            except Exception:
+                continue
+
+        return False
 
 # --- Rate Limiting & Login Tracking ---
 class RedisLoginAttemptTracker:

@@ -1,12 +1,15 @@
 # /app/services/broadcast_service.py
 
-import asyncio
 import httpx
 import logging
 import re
-from typing import List, Dict
+from typing import List, Dict, Optional, Any
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 from app.config.settings import settings, BusinessConfig
+from app.services.whatsapp_service import whatsapp_service
+from app.services.db_service import db_service
 
 logger = logging.getLogger(__name__)
 
@@ -15,7 +18,11 @@ ALLOWED_TEMPLATES = {
     "hello_world",
     "order_update",
     "order_confirmation_v2",
-    "shipping_update_v1"
+    "shipping_update_v1",
+    "new_arrival_showcase",
+    "video_collection_launch",
+    "festival_sale_alert",
+    "gentle_greeting_v1"
 }
 
 
@@ -67,141 +74,166 @@ class BroadcastService:
             clean_phone = "+" + clean_phone.lstrip("+")
         return clean_phone
     
+    def is_quiet_hours(self) -> bool:
+        """
+        Check if current time is within quiet hours (8:00 PM to 9:00 AM IST).
+        
+        Returns:
+            True if within quiet hours, False otherwise
+        """
+        # Get current time in IST
+        ist = ZoneInfo("Asia/Kolkata")
+        now = datetime.now(ist)
+        
+        # Define quiet hours (20:00 to 09:00)
+        current_hour = now.hour
+        if current_hour >= 20 or current_hour < 9:
+            return True
+        return False
+    
     async def send_broadcast(
         self,
         target_business_id: str,
         template_name: str,
         recipients: List[str],
-        variables: Dict,
-        dry_run: bool = True
-    ) -> Dict:
+        variables: Dict[str, Any],
+        dry_run: bool = False,
+        job_id: Optional[str] = None
+    ) -> Dict[str, Any]:
         """
-        Send a WhatsApp template broadcast to multiple recipients.
-        
-        Args:
-            target_business_id: Business ID (e.g., "feelori")
-            template_name: WhatsApp template name
-            recipients: List of phone numbers
-            variables: Dictionary of template variables (e.g., {"body_params": [...], "header_text_param": "...", "button_url_param": "..."})
-            dry_run: If True, log but don't send actual messages
-            
-        Returns:
-            Dictionary with status and sent_count
+        Send a template message to a list of recipients.
         """
-        # Guardrail 1: Business Isolation
-        business_config = self._find_business_config(target_business_id)
-        access_token = settings.get_business_token(business_config)
-        phone_id = business_config.phone_number_id
-        
-        # Guardrail 2: Template Validation
-        self._validate_template(template_name)
-        
-        # Extract variables
-        body_params = variables.get("body_params", [])
-        header_text_param = variables.get("header_text_param")
-        header_image_url = variables.get("header_image_url")
-        button_url_param = variables.get("button_url_param")
-        
-        sent_count = 0
+        # 1. Initialize counters (Fixes F821 Undefined name)
+        success_count = 0
         failed_count = 0
         
+        # Extract variables
+        header_image_url = variables.get("header_image_url")
+        header_video_url = variables.get("header_video_url")
+        button_url_suffix = variables.get("button_url_suffix")
+        raw_body_params = variables.get("body_params", [])
+        
+        logger.info(f"Starting broadcast: {template_name} to {len(recipients)} recipients. Job: {job_id}")
+
+        # Phase 7A: Auto-append UTM tracking to dynamic button links
+        if button_url_suffix:
+            # Determine if we need '?' or '&'
+            separator = "&" if "?" in button_url_suffix else "?"
+            
+            # Clean the template name for URL usage
+            safe_campaign_name = template_name.replace(" ", "_").replace("-", "_").lower()
+            
+            # Construct parameters
+            utm_params = f"utm_source=whatsapp&utm_medium=broadcast&utm_campaign={safe_campaign_name}"
+            
+            # Add Job ID for precise ROI tracking if available
+            if job_id:
+                utm_params += f"&utm_id={job_id}"
+                
+            # Append to the suffix
+            button_url_suffix = f"{button_url_suffix}{separator}{utm_params}"
+            
+            logger.info(f"Attached UTM tracking: {button_url_suffix}")
+
         for recipient in recipients:
             try:
-                formatted_phone = self._format_phone(recipient)
-                
-                if dry_run:
-                    logger.info(
-                        "Dry run broadcast",
-                        extra={
-                            "business": target_business_id,
-                            "recipient": formatted_phone[:4] + "...",
-                            "template": template_name
-                        }
-                    )
-                    sent_count += 1
-                    await asyncio.sleep(0.5)  # Still throttle in dry run
-                    continue
-                
-                # Build template payload
-                components = []
-                
-                # Header component
-                if header_image_url and header_text_param:
-                    logger.error(f"Template '{template_name}' cannot have both image and text header")
-                    failed_count += 1
-                    continue
-                
-                if header_image_url:
-                    components.append({
-                        "type": "header",
-                        "parameters": [{"type": "image", "image": {"link": header_image_url}}]
-                    })
-                elif header_text_param:
-                    components.append({
-                        "type": "header",
-                        "parameters": [{"type": "text", "text": str(header_text_param)}]
-                    })
-                
-                # Body component
-                if body_params:
-                    components.append({
-                        "type": "body",
-                        "parameters": [{"type": "text", "text": str(p)} for p in body_params]
-                    })
-                
-                # Button component
-                if button_url_param:
-                    components.append({
-                        "type": "button",
-                        "sub_type": "url",
-                        "index": "0",
-                        "parameters": [{"type": "text", "text": button_url_param}]
-                    })
-                
-                payload = {
-                    "messaging_product": "whatsapp",
-                    "to": formatted_phone,
-                    "type": "template",
-                    "template": {
-                        "name": template_name,
-                        "language": {"code": "en"},
-                        "components": components
-                    }
-                }
-                
-                # Send HTTP request
-                url = f"{self.base_url}/{phone_id}/messages"
-                headers = {
-                    "Authorization": f"Bearer {access_token}",
-                    "Content-Type": "application/json"
-                }
-                
-                response = await self.http_client.post(url, json=payload, headers=headers)
-                
-                if response.status_code == 200:
-                    response_data = response.json()
-                    message_id = response_data.get("messages", [{}])[0].get("id")
-                    logger.info(f"Broadcast sent to {formatted_phone[:4]}... (wamid: {message_id})")
-                    sent_count += 1
+                # Format phone
+                if not recipient.startswith("+"):
+                    formatted_phone = f"+{recipient.strip()}"
                 else:
-                    error_data = response.json()
-                    error_message = (error_data.get("error") or {}).get("message", "Unknown error")
-                    logger.error(f"Broadcast failed to {formatted_phone[:4]}...: {response.status_code} - {error_message}")
+                    formatted_phone = recipient.strip()
+
+                # Smart Name Injection Logic
+                customer = await db_service.get_customer(formatted_phone)
+                customer_name = customer.get("first_name", "there") if customer else "there"
+
+                user_body_params = []
+                for param in raw_body_params:
+                    if param == "{{name}}":
+                        user_body_params.append(customer_name)
+                    else:
+                        user_body_params.append(param)
+
+                if dry_run:
+                    logger.info(f"[DRY RUN] Would send {template_name} to {formatted_phone}")
+                    success_count += 1
+                    continue
+
+                # Send to WhatsApp
+                wamid = await whatsapp_service.send_template_message(
+                    to=formatted_phone,
+                    template_name=template_name,
+                    body_params=user_body_params,
+                    header_image_url=header_image_url,
+                    header_video_url=header_video_url,
+                    button_url_param=button_url_suffix,
+                    source="broadcast"
+                )
+
+                if wamid:
+                    # 1. Try to Link (Update) first. 
+                    # This handles the case where whatsapp_service ALREADY created the log.
+                    if job_id:
+                        await db_service.link_message_to_job(wamid, job_id)
+                    
+                    # 2. Check if we need to Log (Insert).
+                    # We only log if we didn't just update it (or just rely on whatsapp_service).
+                    # Actually, let's keep it simple: Just Link.
+                    
+                    # If whatsapp_service logged it, this link works.
+                    # If whatsapp_service FAILED to log, this might miss, but that's a bigger issue.
+                    
+                    logger.info(f"Broadcast sent to {formatted_phone[:4]}... (wamid: {wamid}) linked to Job {job_id}")
+                    success_count += 1
+                else:
+                    logger.error(f"Broadcast failed to {formatted_phone[:4]}...: send_template_message returned None")
                     failed_count += 1
-                
-                # Guardrail 2: Throttling
-                await asyncio.sleep(0.5)
-                
+
             except Exception as e:
-                logger.error(f"Error sending broadcast to {recipient[:4] if recipient else 'unknown'}...: {e}", exc_info=True)
+                logger.error(f"Error sending broadcast to {recipient}: {e}")
                 failed_count += 1
-        
+
         return {
-            "status": "success",
-            "sent_count": sent_count,
+            "sent_count": success_count,
             "failed_count": failed_count,
-            "dry_run": dry_run
+            "total_processed": len(recipients)
         }
+    
+    async def execute_job(self, job_id: str, **kwargs):
+        """
+        Wrapper to run a broadcast and update the job status in DB.
+        
+        Args:
+            job_id: Broadcast job ID
+            **kwargs: Arguments to pass to send_broadcast (target_business_id, template_name, recipients, variables, dry_run)
+        """
+        try:
+            # 1. Mark as Processing
+            await db_service.update_broadcast_job(job_id, {
+                "status": "processing",
+                "started_at": datetime.utcnow()
+            })
+            
+            # 2. Run the actual broadcast
+            # Pass all kwargs (template_name, recipients, etc.) to send_broadcast
+            # Include job_id so messages can be linked to this job
+            result = await self.send_broadcast(**kwargs, job_id=job_id)
+            
+            # 3. Mark as Completed
+            await db_service.update_broadcast_job(job_id, {
+                "status": "completed",
+                "stats.sent": result.get("sent_count", 0),
+                "stats.failed": result.get("failed_count", 0),
+                "completed_at": datetime.utcnow()
+            })
+            
+        except Exception as e:
+            logger.error(f"Broadcast Job {job_id} failed: {e}", exc_info=True)
+            # Mark as Failed if it crashes
+            await db_service.update_broadcast_job(job_id, {
+                "status": "failed",
+                "error": str(e)
+            })
     
     async def close(self):
         """Close HTTP client."""

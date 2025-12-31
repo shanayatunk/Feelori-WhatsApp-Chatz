@@ -166,6 +166,32 @@ class DatabaseService:
         except Exception:
             logger.warning(f"Failed to parse timestamp: {value}")
             return None
+    
+    def _map_shop_domain_to_business_id(self, shop_domain: str) -> str:
+        """
+        Map Shopify shop domain to business_id for multi-tenancy.
+        
+        Args:
+            shop_domain: Shopify shop domain (e.g., "feelori.myshopify.com")
+            
+        Returns:
+            business_id string (defaults to "feelori" if mapping not found)
+        """
+        if not shop_domain:
+            return "feelori"  # Default fallback
+        
+        # Extract shop name from domain (e.g., "feelori" from "feelori.myshopify.com")
+        shop_name = shop_domain.split(".")[0].lower() if "." in shop_domain else shop_domain.lower()
+        
+        # Map known shop domains to business_ids
+        domain_to_business = {
+            "feelori": "feelori",
+            "goldencollections": "goldencollections",
+            "godjewellery9": "godjewellery9"
+        }
+        
+        return domain_to_business.get(shop_name, "feelori")  # Default to feelori if unknown
+    
     # ==================== Index Management ====================
 
     async def create_indexes(self) -> None:
@@ -176,6 +202,7 @@ class DatabaseService:
             ("orders", [("phone_numbers", 1)], {}),
             ("orders", [("fulfillment_status_internal", 1), ("created_at", 1)], {}),
             ("orders", [("updated_at", -1)], {}),  # For performance metrics
+            ("orders", [("business_id", 1), ("fulfillment_status_internal", 1), ("fulfilled_at", 1), ("packed_by", 1)], {}),  # For KPI cards and leaderboard queries
             ("customers", [("phone_number", 1)], {"unique": True}),
             ("customers", [("last_interaction", -1)], {}),
             ("security_events", [("timestamp", -1)], {}),
@@ -236,6 +263,38 @@ class DatabaseService:
         if customer:
             database_operations_counter.labels(operation="get_customer", status="success").inc()
         return customer
+    
+    async def toggle_opt_out(self, phone: str, status: bool) -> bool:
+        """
+        Toggle opt-out status for a customer.
+        
+        Args:
+            phone: Customer's phone number
+            status: True to opt-out, False to opt-in
+            
+        Returns:
+            True if update was successful, False otherwise
+        """
+        cleaned_phone = self._sanitize_phone(phone)
+        if not cleaned_phone:
+            logger.warning(f"Invalid phone number for opt-out toggle: {phone}")
+            return False
+        
+        try:
+            result = await self.db.customers.update_one(
+                {"phone_number": cleaned_phone},
+                {"$set": {"opted_out": status, "opt_out_updated_at": self._now_utc()}},
+                upsert=False
+            )
+            if result.modified_count > 0:
+                logger.info(f"Opt-out status updated for {cleaned_phone[:4]}...: opted_out={status}")
+                return True
+            else:
+                logger.warning(f"Customer not found for opt-out toggle: {cleaned_phone[:4]}...")
+                return False
+        except Exception:
+            logger.exception(f"Failed to toggle opt-out for {cleaned_phone[:4]}...")
+            return False
 
     async def create_customer(self, customer_data: Dict[str, Any]) -> Optional[str]:
         """
@@ -631,6 +690,81 @@ class DatabaseService:
             logger.exception(f"Failed to get chat history for {cleaned_phone[:4]}...")
             return []
     
+    async def get_last_outbound_message(self, phone_number: str) -> Optional[Dict[str, Any]]:
+        """
+        Get the last outbound message sent to a phone number.
+        
+        Args:
+            phone_number: Customer's phone number
+            
+        Returns:
+            Last outbound message document or None if not found
+        """
+        cleaned_phone = self._sanitize_phone(phone_number)
+        if not cleaned_phone:
+            return None
+        
+        try:
+            message = await self.db.message_logs.find_one(
+                {"phone": cleaned_phone, "direction": "outbound"},
+                sort=[("timestamp", -1)]
+            )
+            if message and "_id" in message:
+                message["_id"] = str(message["_id"])
+            return message
+        except Exception:
+            logger.exception(f"Failed to get last outbound message for {cleaned_phone[:4]}...")
+            return None
+    
+    async def is_within_24h_window(self, phone: str) -> bool:
+        """
+        Checks if the customer has messaged us within the last 24 hours.
+        Returns True if within window, False otherwise.
+        """
+        cleaned_phone = self._sanitize_phone(phone)
+        if not cleaned_phone:
+            return False
+        
+        try:
+            # 1. Find the last INBOUND message from this customer
+            last_msg = await self.db.message_logs.find_one(
+                {"phone": cleaned_phone, "direction": "inbound"},
+                sort=[("timestamp", -1)]
+            )
+
+            if not last_msg:
+                return False
+
+            last_ts = last_msg.get("timestamp")
+            if not last_ts:
+                return False
+
+            # 2. Fix Timezones (The Critical Fix)
+            from datetime import datetime, timezone
+            
+            # Get 'now' as UTC Aware
+            now = datetime.now(timezone.utc)
+
+            # Ensure 'last_ts' is UTC Aware
+            # If it's a string, parse it first (just in case)
+            if isinstance(last_ts, str):
+                last_ts = datetime.fromisoformat(last_ts.replace('Z', '+00:00'))
+            
+            # If it's a naive datetime object, force it to UTC
+            if last_ts.tzinfo is None:
+                last_ts = last_ts.replace(tzinfo=timezone.utc)
+            
+            # 3. Calculate difference
+            diff = now - last_ts
+            
+            # Check if less than 24 hours (86400 seconds)
+            return diff.total_seconds() < 86400
+
+        except Exception as e:
+            logger.error(f"Failed to check 24h window for {cleaned_phone[:4]}...: {e}")
+            # If check fails, default to FALSE (Safety first compliance)
+            return False
+    
     async def get_ticket_by_id(self, ticket_id: str) -> Optional[Dict[str, Any]]:
         """
         Get a ticket by its ID.
@@ -723,7 +857,7 @@ class DatabaseService:
             logger.exception(f"Failed to handoff ticket {ticket_id} to bot")
             return False
     
-    async def log_manual_message(self, phone_number: str, text: str, user_id: str) -> None:
+    async def log_manual_message(self, phone_number: str, text: str, user_id: str, source: str = "agent") -> None:
         """
         Log a manual message sent by a human agent.
         
@@ -731,6 +865,7 @@ class DatabaseService:
             phone_number: Customer's phone number
             text: Message text content
             user_id: User ID of the agent who sent the message
+            source: Message source ("agent", "system", etc.) - defaults to "agent"
         """
         cleaned_phone = self._sanitize_phone(phone_number)
         if not cleaned_phone:
@@ -743,7 +878,7 @@ class DatabaseService:
             "direction": "outbound",
             "status": "sent",
             "timestamp": self._now_utc(),
-            "source": "human",
+            "source": source,
             "user_id": user_id
         }
         
@@ -1008,7 +1143,8 @@ class DatabaseService:
             return [], {"page": page, "limit": limit, "total": 0, "pages": 0}
         
         customers = result[0].get("customers", [])
-        total_count = result[0].get("total", [{}])[0].get("count", 0)
+        total_list = result[0].get("total", [])
+        total_count = total_list[0].get("count", 0) if total_list else 0
         
         customers = self._serialize_ids(customers)
         pagination = {
@@ -1076,6 +1212,101 @@ class DatabaseService:
         groups = await self.db.broadcast_groups.find({}).to_list(length=None)
         return self._serialize_ids(groups)
 
+    async def _get_engaged_phones(self, days: int = 30) -> List[str]:
+        """
+        Fetch distinct phone numbers that have READ a message OR REPLIED in the last X days.
+        This captures 'Hidden Readers' who have read receipts disabled but reply.
+        """
+        cutoff = self._now_utc() - timedelta(days=days)
+        try:
+            pipeline = [
+                {
+                    "$match": {
+                        "timestamp": {"$gte": cutoff},
+                        "$or": [
+                            {"status": "read"},       # Explicit Read
+                            {"direction": "inbound"}  # Implicit Read (Reply)
+                        ]
+                    }
+                },
+                {"$group": {"_id": "$phone"}},
+            ]
+            result = await self.db.message_logs.aggregate(pipeline).to_list(length=None)
+            return [doc["_id"] for doc in result if doc.get("_id")]
+        except Exception as e:
+            logger.error(f"Failed to fetch engaged phones: {e}")
+            return []
+
+    async def count_audience(
+        self,
+        audience_type: str,
+        target_phones: Optional[List[str]] = None,
+        target_group_id: Optional[str] = None
+    ) -> int:
+        """
+        Count customers for broadcast audience, excluding opted-out users.
+        Must match get_customers_for_broadcast logic exactly.
+        
+        Args:
+            audience_type: One of 'all', 'active', 'recent', 'inactive', 'engaged', 'custom', 'custom_group'
+            target_phones: Specific phone numbers for 'custom' targeting
+            target_group_id: Group ID for 'custom_group' targeting
+            
+        Returns:
+            Count of eligible customers (excluding opted-out)
+        """
+        # Build query matching get_customers_for_broadcast logic
+        if audience_type == "custom_group":
+            if not target_group_id or not self._validate_object_id(target_group_id):
+                return 0
+            
+            group = await self.db.broadcast_groups.find_one({"_id": ObjectId(target_group_id)})
+            if not group:
+                return 0
+            
+            group_phones = group.get("phone_numbers", [])
+            sanitized_phones = [self._sanitize_phone(p) for p in group_phones]
+            sanitized_phones = [p for p in sanitized_phones if p]
+            
+            # Count excluding opted-out users
+            return await self.db.customers.count_documents({
+                "phone_number": {"$in": sanitized_phones},
+                "opted_out": {"$ne": True}
+            })
+        
+        if target_phones:
+            sanitized_phones = [self._sanitize_phone(p) for p in target_phones]
+            sanitized_phones = [p for p in sanitized_phones if p]
+            
+            # Count excluding opted-out users
+            return await self.db.customers.count_documents({
+                "phone_number": {"$in": sanitized_phones},
+                "opted_out": {"$ne": True}
+            })
+        
+        # Build query based on audience_type
+        if audience_type == "engaged":
+            engaged_phones = await self._get_engaged_phones(30)
+            if not engaged_phones:
+                return 0
+            return await self.db.customers.count_documents({
+                "phone_number": {"$in": engaged_phones},
+                "opted_out": {"$ne": True}
+            })
+        
+        query = {"opted_out": {"$ne": True}}  # Always exclude opted-out
+        now = self._now_utc()
+        
+        if audience_type == "active":
+            query["last_interaction"] = {"$gte": now - timedelta(hours=24)}
+        elif audience_type == "recent":
+            query["last_interaction"] = {"$gte": now - timedelta(days=7)}
+        elif audience_type == "inactive":
+            query["last_interaction"] = {"$lt": now - timedelta(days=30)}
+        # 'all' uses query with only opted_out filter
+        
+        return await self.db.customers.count_documents(query)
+    
     async def get_customers_for_broadcast(
         self, 
         target_type: str, 
@@ -1086,7 +1317,7 @@ class DatabaseService:
         Get customers for broadcast based on targeting criteria.
         
         Args:
-            target_type: One of 'all', 'active', 'recent', 'inactive', 'custom'
+            target_type: One of 'all', 'active', 'recent', 'inactive', 'engaged', 'custom', 'custom_group'
             target_phones: Specific phone numbers for 'custom' targeting
             
         Returns:
@@ -1100,15 +1331,48 @@ class DatabaseService:
             if not group:
                 return []
 
-            return [{"phone_number": p} for p in group.get("phone_numbers", [])]
+            # For custom groups, we need to fetch customer records to get opted_out status
+            group_phones = group.get("phone_numbers", [])
+            sanitized_phones = [self._sanitize_phone(p) for p in group_phones]
+            sanitized_phones = [p for p in sanitized_phones if p]
+            customers = await self.db.customers.find(
+                {"phone_number": {"$in": sanitized_phones}},
+                {"phone_number": 1, "opted_out": 1}
+            ).to_list(length=None)
+            # Ensure opted_out field exists (default to False if missing)
+            for customer in customers:
+                if "opted_out" not in customer:
+                    customer["opted_out"] = False
+            return customers
 
         if target_phones:
             sanitized_phones = [self._sanitize_phone(p) for p in target_phones]
             sanitized_phones = [p for p in sanitized_phones if p]
-            return await self.db.customers.find(
+            customers = await self.db.customers.find(
                 {"phone_number": {"$in": sanitized_phones}},
-                {"phone_number": 1}
+                {"phone_number": 1, "opted_out": 1}
             ).to_list(length=None)
+            # Ensure opted_out field exists (default to False if missing)
+            for customer in customers:
+                if "opted_out" not in customer:
+                    customer["opted_out"] = False
+            return customers
+        
+        if target_type == "engaged":
+            engaged_phones = await self._get_engaged_phones(30)
+            if not engaged_phones:
+                return []
+                
+            customers = await self.db.customers.find(
+                {"phone_number": {"$in": engaged_phones}, "opted_out": {"$ne": True}},
+                {"phone_number": 1, "first_name": 1, "opted_out": 1}
+            ).to_list(length=None)
+            
+            # Ensure opted_out default
+            for customer in customers:
+                if "opted_out" not in customer:
+                    customer["opted_out"] = False
+            return customers
         
         query = {}
         now = self._now_utc()
@@ -1121,7 +1385,12 @@ class DatabaseService:
             query["last_interaction"] = {"$lt": now - timedelta(days=30)}
         # 'all' uses empty query
         
-        return await self.db.customers.find(query, {"phone_number": 1}).to_list(length=None)
+        customers = await self.db.customers.find(query, {"phone_number": 1, "opted_out": 1}).to_list(length=None)
+        # Ensure opted_out field exists (default to False if missing)
+        for customer in customers:
+            if "opted_out" not in customer:
+                customer["opted_out"] = False
+        return customers
 
     async def create_broadcast_job(
         self, 
@@ -1143,21 +1412,139 @@ class DatabaseService:
             Broadcast job ID
         """
         job_doc = {
-            "created_at": self._now_utc(),
+            "created_at": datetime.utcnow(),
             "message": message,
             "image_url": image_url,
             "target_type": target_type,
-            "status": "pending",
+            "status": "queued",
             "stats": {
                 "total_recipients": total_recipients,
                 "sent": 0,
                 "delivered": 0,
                 "read": 0,
                 "failed": 0,
-            }
+            },
+            # Phase 6C: Flat stats fields for frontend compatibility
+            "sent_count": 0,
+            "delivered_count": 0,
+            "read_count": 0,
+            "failed_count": 0,
+            "total_recipients": total_recipients
         }
         result = await self.db.broadcasts.insert_one(job_doc)
         return str(result.inserted_id)
+    
+    async def update_broadcast_job(self, job_id: str, updates: dict) -> bool:
+        """
+        Update a broadcast job status and stats.
+        
+        Args:
+            job_id: Broadcast job ID (string or ObjectId)
+            updates: Dictionary of fields to update (e.g., {"status": "completed", "stats.sent": 10})
+            
+        Returns:
+            True if update was successful, False otherwise
+        """
+        try:
+            # Convert string ID to ObjectId if needed
+            if isinstance(job_id, str):
+                if not self._validate_object_id(job_id):
+                    logger.warning(f"Invalid job_id format: {job_id}")
+                    return False
+                _id = ObjectId(job_id)
+            else:
+                _id = job_id
+            
+            # Use the same collection as create_broadcast_job: 'broadcasts'
+            result = await self.db.broadcasts.update_one(
+                {"_id": _id},
+                {"$set": updates}
+            )
+            return result.modified_count > 0
+        except Exception as e:
+            logger.error(f"Failed to update broadcast job {job_id}: {e}")
+            return False
+    
+    async def link_message_to_job(self, wamid: str, job_id: str):
+        """
+        Tag a message log with a job_id so we can track it later.
+        
+        Args:
+            wamid: WhatsApp message ID
+            job_id: Broadcast job ID
+        """
+        try:
+            await self.db.message_logs.update_one(
+                {"wamid": wamid},
+                {"$set": {"metadata.job_id": job_id}}
+            )
+        except Exception as e:
+            logger.error(f"Failed to link message {wamid} to job {job_id}: {e}")
+    
+    async def increment_job_stats(self, job_id: str, status: str):
+        """Increment the counters for a job."""
+        try:
+            # Robust ID conversion
+            try:
+                _id = ObjectId(job_id) if isinstance(job_id, str) else job_id
+            except Exception:
+                _id = job_id # Fallback if it's not a valid ObjectId string
+            
+            field_map = {
+                "sent": "sent_count",
+                "delivered": "delivered_count",
+                "read": "read_count",
+                "failed": "failed_count"
+            }
+            
+            if status in field_map:
+                # DEBUG LOG: Remove this after it works
+                logger.info(f"Incrementing {field_map[status]} for Job {_id}")
+                
+                # USE THE CORRECT COLLECTION NAME HERE (Check create_broadcast_job)
+                # create_broadcast_job uses 'broadcasts', so we use 'broadcasts'
+                result = await self.db.broadcasts.update_one( 
+                    {"_id": _id},
+                    {"$inc": {field_map[status]: 1}}
+                )
+                
+                if result.modified_count == 0:
+                    logger.warning(f"Failed to increment stats: Job {_id} not found in DB")
+                    
+        except Exception as e:
+            logger.error(f"Failed to increment stats for job {job_id}: {e}")
+    
+    async def update_message_status(self, wamid: str, status: str):
+        """
+        Update message status and increment job stats.
+        IMPORTANT: Uses find_one_and_update to ensure we only increment ONCE per status change.
+        
+        Args:
+            wamid: WhatsApp message ID
+            status: New status ("sent", "delivered", "read", "failed")
+        """
+        try:
+            # 1. Try to find the message AND ensure the status is actually new.
+            # This prevents double-counting if WhatsApp sends 'delivered' twice.
+            updated_doc = await self.db.message_logs.find_one_and_update(
+                {"wamid": wamid, "status": {"$ne": status}},  # Query: ID match AND Status is different
+                {"$set": {"status": status, "updated_at": datetime.utcnow()}},
+                return_document=True
+            )
+            
+            # 2. If no document was returned, it means the status was ALREADY set. Do nothing.
+            if not updated_doc:
+                return
+
+            # 3. If we updated it, check if it belongs to a job and increment stats.
+            metadata = updated_doc.get("metadata", {})
+            job_id = metadata.get("job_id")
+            
+            if job_id:
+                await self.increment_job_stats(job_id, status)
+                
+        except Exception as e:
+            logger.error(f"Failed to update status for {wamid}: {e}")
 
     async def get_broadcast_jobs(
         self, 
@@ -1195,7 +1582,8 @@ class DatabaseService:
             return [], {"page": page, "limit": limit, "total": 0, "pages": 0}
         
         jobs = result[0].get("jobs", [])
-        total_count = result[0].get("total", [{}])[0].get("count", 0)
+        total_list = result[0].get("total", [])
+        total_count = total_list[0].get("count", 0) if total_list else 0
         
         jobs = self._serialize_ids(jobs)
         pagination = {
@@ -1467,9 +1855,72 @@ class DatabaseService:
 
     # ==================== Packing Dashboard ====================
 
-    async def get_all_packing_orders(self) -> List[Dict[str, Any]]:
+    async def get_global_packing_config(self) -> Dict[str, Any]:
+        """
+        Get shared configuration for the operations team.
+        
+        Returns:
+            Dictionary with packers and carriers lists
+        """
+        # Query active packer users from the users collection
+        packer_users = await self.db.users.find(
+            {"role": "packer", "disabled": {"$ne": True}},
+            {"username": 1}
+        ).to_list(length=None)
+        
+        packer_names = [user.get("username", "") for user in packer_users if user.get("username")]
+        
+        # Fallback to default packers if none found
+        if not packer_names:
+            packer_names = ["Swathi", "Dharam", "Pushpa"]
+        
+        return {
+            "packers": packer_names,
+            "carriers": ["India Post", "Delhivery", "Blue Dart", "DTDC", "FedEx"]
+        }
+
+    async def create_packer_user(self, username: str) -> bool:
+        """
+        Create a new packer user with default password 'packer123'.
+        """
+        # 1. Check if username exists (case insensitive)
+        existing = await self.db.users.find_one({"username": {"$regex": f"^{username}$", "$options": "i"}})
+        if existing:
+            # If disabled, re-enable
+            if existing.get("disabled"):
+                await self.db.users.update_one({"_id": existing["_id"]}, {"$set": {"disabled": False, "role": "packer"}})
+                return True
+            return False
+
+        # 2. Hash default password
+        from app.services import security_service
+        hashed_password = security_service.SecurityService.hash_password("packer123")
+
+        # 3. Create User
+        user_doc = {
+            "username": username.lower(),
+            "hashed_password": hashed_password,
+            "role": "packer",
+            "disabled": False,
+            "created_at": self._now_utc()
+        }
+        await self.db.users.insert_one(user_doc)
+        return True
+
+    async def remove_packer_user(self, username: str) -> bool:
+        """Soft-delete a packer."""
+        result = await self.db.users.update_one(
+            {"username": username, "role": "packer"},
+            {"$set": {"disabled": True}}
+        )
+        return result.modified_count > 0
+
+    async def get_all_packing_orders(self, business_id: str) -> List[Dict[str, Any]]:
         """
         Get all orders for packing dashboard.
+        
+        Args:
+            business_id: Business ID to filter orders
         
         Returns:
             List of formatted order documents
@@ -1477,7 +1928,7 @@ class DatabaseService:
         statuses = [status.value for status in OrderStatus]
         
         orders_cursor = self.db.orders.find(
-            {"fulfillment_status_internal": {"$in": statuses}}
+            {"fulfillment_status_internal": {"$in": statuses}, "business_id": business_id}
         ).sort("created_at", 1)
         
         orders_list = await orders_cursor.to_list(length=200)
@@ -1501,9 +1952,18 @@ class DatabaseService:
             customer_name = f"{customer.get('first_name', '')} {customer.get('last_name', '')}".strip()
             customer_phone = shipping_address.get("phone") or customer.get("phone")
 
+            # Get Shopify order ID (primary id)
+            shopify_id = order.get("id") or raw_order.get("id")
+            
+            # Get order name (e.g., "FO1067") - fallback to order_number if missing
+            order_name = order.get("name") or raw_order.get("name") or str(order.get("order_number", ""))
+            
             formatted_orders.append({
-                "order_id": raw_order.get("id"),
+                "id": shopify_id,  # Primary ID field
+                "order_id": str(shopify_id) if shopify_id else None,  # String alias for frontend
                 "order_number": order.get("order_number"),
+                "name": order_name,  # Critical for "FO1067"
+                "business_id": order.get("business_id"),
                 "status": order.get("fulfillment_status_internal"),
                 "created_at": order.get("created_at"),
                 "packer_name": order.get("packed_by"),
@@ -1521,12 +1981,13 @@ class DatabaseService:
         
         return formatted_orders
 
-    async def update_order_status(self, order_id: int, new_status: str) -> bool:
+    async def update_order_status(self, order_id: int, business_id: str, new_status: str) -> bool:
         """
         Update order status from Pending/Needs Stock Check to In Progress.
         
         Args:
             order_id: Shopify order ID
+            business_id: Business ID for isolation
             new_status: New status value
             
         Returns:
@@ -1543,6 +2004,7 @@ class DatabaseService:
         result = await self.db.orders.update_one(
             {
                 "id": order_id,
+                "business_id": business_id,
                 "fulfillment_status_internal": {
                     "$in": [OrderStatus.PENDING.value, OrderStatus.NEEDS_STOCK_CHECK.value]
                 }
@@ -1555,6 +2017,7 @@ class DatabaseService:
     async def hold_order(
         self, 
         order_id: int, 
+        business_id: str,
         reason: str, 
         notes: Optional[str] = None,
         skus: Optional[List[str]] = None
@@ -1564,12 +2027,13 @@ class DatabaseService:
         
         Args:
             order_id: Shopify order ID
+            business_id: Business ID for isolation
             reason: Hold reason
             notes: Optional additional notes
             skus: Optional list of problematic SKUs
         """
         await self.db.orders.update_one(
-            {"id": order_id},
+            {"id": order_id, "business_id": business_id},
             {"$set": {
                 "fulfillment_status_internal": OrderStatus.ON_HOLD.value,
                 "hold_reason": reason,
@@ -1579,18 +2043,19 @@ class DatabaseService:
             }}
         )
 
-    async def requeue_held_order(self, order_id: int) -> bool:
+    async def requeue_held_order(self, order_id: int, business_id: str) -> bool:
         """
         Move order from On Hold back to Pending.
         
         Args:
             order_id: Shopify order ID
+            business_id: Business ID for isolation
             
         Returns:
             True if requeued successfully
         """
         order_on_hold = await self.db.orders.find_one(
-            {"id": order_id, "fulfillment_status_internal": OrderStatus.ON_HOLD.value}
+            {"id": order_id, "business_id": business_id, "fulfillment_status_internal": OrderStatus.ON_HOLD.value}
         )
         
         if not order_on_hold:
@@ -1600,7 +2065,7 @@ class DatabaseService:
         previous_skus = order_on_hold.get("problem_item_skus", [])
 
         await self.db.orders.update_one(
-            {"id": order_id},
+            {"id": order_id, "business_id": business_id},
             {
                 "$set": {
                     "fulfillment_status_internal": OrderStatus.PENDING.value,
@@ -1621,6 +2086,7 @@ class DatabaseService:
     async def complete_order_fulfillment(
         self, 
         order_id: int, 
+        business_id: str,
         packer_name: str, 
         fulfillment_id: int
     ) -> None:
@@ -1629,13 +2095,15 @@ class DatabaseService:
         
         Args:
             order_id: Shopify order ID
+            business_id: Business ID for isolation
             packer_name: Name of person who packed the order
             fulfillment_id: Shopify fulfillment ID
         """
         await self.db.orders.update_one(
-            {"id": order_id},
+            {"id": order_id, "business_id": business_id},
             {"$set": {
                 "fulfillment_status_internal": OrderStatus.COMPLETED.value,
+                "business_id": business_id,
                 "packed_by": packer_name,
                 "fulfillment_id": fulfillment_id,
                 "fulfilled_at": self._now_utc(),
@@ -1646,6 +2114,7 @@ class DatabaseService:
     async def update_order_packing_status(
         self, 
         order_id: int, 
+        business_id: str,
         new_status: str, 
         details: Dict[str, Any]
     ) -> None:
@@ -1654,6 +2123,7 @@ class DatabaseService:
         
         Args:
             order_id: Shopify order ID
+            business_id: Business ID for isolation
             new_status: New status value
             details: Additional fields to update
         """
@@ -1667,162 +2137,69 @@ class DatabaseService:
             update_doc["in_progress_at"] = self._now_utc()
         
         await self.db.orders.update_one(
-            {"id": order_id},
+            {"id": order_id, "business_id": business_id},
             {"$set": update_doc}
         )
 
-    async def get_packing_dashboard_metrics(self) -> Dict[str, Any]:
-        """
-        Get simple packing dashboard metrics.
-        
-        Returns:
-            Dictionary with status counts
-        """
+    async def get_packing_dashboard_metrics(self, business_id: str) -> Dict[str, Any]:
+        """Get live status counts and today's completion stats."""
+        # 1. Current Queue Status (Pending, In Progress, On Hold)
         pipeline = [
+            {"$match": {"business_id": business_id}},
             {"$group": {"_id": "$fulfillment_status_internal", "count": {"$sum": 1}}}
         ]
-        results = await self.db.orders.aggregate(pipeline).to_list(length=None)
-        status_counts = {item['_id']: item['count'] for item in results if item['_id']}
-        return {"status_counts": status_counts}
-
-    async def get_packer_performance_metrics(self, days: int = 7) -> Dict[str, Any]:
-        """
-        Calculate advanced packer performance metrics.
+        status_counts = await self.db.orders.aggregate(pipeline).to_list(length=None)
+        stats = {doc["_id"]: doc["count"] for doc in status_counts if doc.get("_id")}
         
-        Args:
-            days: Number of days to include in analysis
-            
-        Returns:
-            Dictionary with KPIs, leaderboard, and hold analysis
+        # 2. Completed TODAY count (Uses the new index efficiently)
+        start_of_day = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+        completed_today = await self.db.orders.count_documents({
+            "business_id": business_id,
+            "fulfillment_status_internal": "Completed",
+            "fulfilled_at": {"$gte": start_of_day}
+        })
+        
+        return {
+            "pending": stats.get("Pending", 0),
+            "in_progress": stats.get("In Progress", 0),
+            "on_hold": stats.get("On Hold", 0),
+            "completed_today": completed_today
+        }
+
+    async def get_packer_performance_metrics(self, days: int = 7) -> List[Dict[str, Any]]:
         """
-        start_date = self._now_utc() - timedelta(days=days)
+        Calculate per-packer throughput across ALL businesses (Global Operational View).
+        """
+        cutoff = datetime.now(timezone.utc) - timedelta(days=days)
         
         pipeline = [
             {
                 "$match": {
-                    "$or": [
-                        {"updated_at": {"$gte": start_date}},
-                        {"fulfilled_at": {"$gte": start_date}},
-                        {"created_at": {"$gte": start_date}}
-                    ]
+                    "fulfillment_status_internal": "Completed",
+                    "fulfilled_at": {"$gte": cutoff},
+                    "packed_by": {"$ne": None}
                 }
             },
-            {
-                "$facet": {
-                    "kpi_metrics": [
                         {
                             "$group": {
-                                "_id": None,
+                    "_id": "$packed_by",
                                 "total_orders": {"$sum": 1},
-                                "completed_orders": {
-                                    "$sum": {
-                                        "$cond": [
-                                            {"$eq": ["$fulfillment_status_internal", OrderStatus.COMPLETED.value]},
-                                            1,
-                                            0
-                                        ]
-                                    }
-                                },
-                                "on_hold_orders": {
-                                    "$sum": {
-                                        "$cond": [
-                                            {"$eq": ["$fulfillment_status_internal", OrderStatus.ON_HOLD.value]},
-                                            1,
-                                            0
-                                        ]
-                                    }
-                                },
-                                "avg_time_to_pack_ms": {
-                                    "$avg": {
-                                        "$cond": {
-                                            "if": {
-                                                "$and": [
-                                                    {"$ne": ["$in_progress_at", None]},
-                                                    {"$ne": ["$fulfilled_at", None]},
-                                                    {"$gt": ["$fulfilled_at", "$in_progress_at"]}
-                                                ]
-                                            },
-                                            "then": {"$subtract": ["$fulfilled_at", "$in_progress_at"]},
-                                            "else": None
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    ],
-                    "packer_leaderboard": [
-                        {
-                            "$match": {
-                                "fulfillment_status_internal": OrderStatus.COMPLETED.value,
-                                "packed_by": {"$ne": None}
-                            }
-                        },
-                        {"$group": {"_id": "$packed_by", "orders_packed": {"$sum": 1}}},
-                        {"$sort": {"orders_packed": -1}},
-                        {"$limit": 10}
-                    ],
-                    "hold_reasons": [
-                        {
-                            "$match": {
-                                "fulfillment_status_internal": OrderStatus.ON_HOLD.value,
-                                "hold_reason": {"$ne": None}
-                            }
-                        },
-                        {"$group": {"_id": "$hold_reason", "count": {"$sum": 1}}},
-                        {"$sort": {"count": -1}}
-                    ],
-                    "problem_skus": [
-                        {
-                            "$match": {
-                                "fulfillment_status_internal": OrderStatus.ON_HOLD.value,
-                                "problem_item_skus": {"$exists": True, "$nin": [[], None]}
-                            }
-                        },
-                        {"$unwind": "$problem_item_skus"},
-                        {"$group": {"_id": "$problem_item_skus", "count": {"$sum": 1}}},
-                        {"$sort": {"count": -1}},
-                        {"$limit": 5}
-                    ]
+                    "last_active": {"$max": "$fulfilled_at"}
                 }
-            }
+            },
+            {"$sort": {"total_orders": -1}}
         ]
         
-        result = await self.db.orders.aggregate(pipeline).to_list(length=1)
+        results = await self.db.orders.aggregate(pipeline).to_list(length=None)
         
-        if not result:
-            return self._empty_performance_metrics()
-
-        data = result[0]
-        
-        # --- FIXED: Properly handle empty kpi_metrics ---
-        kpi_list = data.get("kpi_metrics", [])
-        if kpi_list and len(kpi_list) > 0:
-            kpis = kpi_list[0]
-        else:
-            kpis = {}
-        # --- END OF FIX ---
-        
-        # Convert milliseconds to minutes
-        avg_time_ms = kpis.get("avg_time_to_pack_ms")
-        avg_time_min = round(avg_time_ms / 60000, 2) if avg_time_ms else 0
-        
-        total = max(kpis.get("total_orders", 1), 1)  # Prevent division by zero
-        on_hold = kpis.get("on_hold_orders", 0)
-
-        return {
-            "kpis": {
-                "total_orders": kpis.get("total_orders", 0),
-                "completed_orders": kpis.get("completed_orders", 0),
-                "on_hold_orders": on_hold,
-                "avg_time_to_pack_minutes": avg_time_min,
-                "hold_rate": round(on_hold / total * 100, 2)
-            },
-            "packer_leaderboard": data.get("packer_leaderboard", []),
-            "hold_analysis": {
-                "by_reason": data.get("hold_reasons", []),
-                "top_problem_skus": data.get("problem_skus", [])
+        return [
+            {
+                "name": r["_id"],
+                "count": r["total_orders"],
+                "last_active": r["last_active"]
             }
-        }
+            for r in results
+        ]
 
     def _empty_performance_metrics(self) -> Dict[str, Any]:
         """Return empty metrics structure."""
@@ -1849,73 +2226,74 @@ class DatabaseService:
         Log inbound or outbound message.
         
         Args:
-            message_data: Message information to log
+            message_data: Message information to log (must include 'source' field:
+                         "customer", "bot", "agent", "system", or "broadcast")
         """
         message_data.setdefault("timestamp", self._now_utc())
+        # Ensure source field is present (required for message source hardening)
+        if "source" not in message_data:
+            logger.warning(f"Message logged without 'source' field: {message_data.get('wamid', 'unknown')}")
+            message_data["source"] = "unknown"
+        # Ensure metadata field is present (default to empty dict if not provided)
+        message_data.setdefault("metadata", {})
         await self.db.message_logs.insert_one(message_data)
 
     # ==================== Webhook Processing ====================
 
-    async def process_new_order_webhook(self, payload: Dict[str, Any]) -> None:
+    async def process_new_order_webhook(self, order_data: Dict[str, Any], shop_domain: str = "") -> None:
         """
-        Process new order webhook from Shopify.
-        
-        Args:
-            payload: Shopify order webhook payload
+        Ingest a new order from Shopify.
+        Maps the Shopify Domain to our internal business_id.
         """
-        order_id = payload.get("id")
-        if not order_id:
-            logger.warning("Received order webhook without ID")
-            return
-
-        # Get product images for line items
-        line_items_with_images = []
-        for item in payload.get("line_items", []):
-            image_url = None
-            if item.get("product_id"):
-                image_url = await shopify_service.get_product_image_url(item["product_id"])
-            
-            line_items_with_images.append({
-                "title": item.get("title"),
-                "quantity": item.get("quantity"),
-                "sku": item.get("sku"),
-                "image_url": image_url
-            })
-
-        # Check if inventory is sufficient
-        needs_stock_check = await self._check_inventory_availability(payload)
-        initial_status = OrderStatus.NEEDS_STOCK_CHECK.value if needs_stock_check else OrderStatus.PENDING.value
-        
-        # Extract and sanitize phone numbers
-        clean_phones = self._extract_phones_from_payload(payload)
-
-        order_doc = {
-            "id": order_id,
-            "order_number": payload.get("order_number"),
-            "created_at": self._parse_iso_utc(payload.get("created_at")), # <-- Use the new helper
-            "raw": payload,
-            "line_items_with_images": line_items_with_images,
-            "phone_numbers": clean_phones,
-            "fulfillment_status_internal": initial_status,
-            "last_synced": self._now_utc(),
-            "updated_at": self._now_utc()
-        }
-        
-        await self.db.orders.update_one(
-            {"id": order_id},
-            {"$set": order_doc},
-            upsert=True
-        )
-        
-        # Send packing alert
         try:
-            from app.services.order_service import send_packing_alert_background
-            await send_packing_alert_background(payload)
-        except Exception:
-            logger.exception("Failed to send packing alert")
-        
-        # Send customer confirmation
-        await self._send_order_confirmation(payload)
+            # 1. Map Shop Domain to Business ID
+            business_id = "feelori" # Default
+            if "goldencollections" in shop_domain:
+                business_id = "goldencollections"
+            elif "godjewellery" in shop_domain:
+                business_id = "godjewellery9"
+            
+            # 2. Extract Customer Info
+            customer = order_data.get("customer", {})
+            phone = customer.get("phone") or order_data.get("phone")
+            
+            # 3. Prepare the Document
+            order_doc = {
+                "id": order_data["id"],
+                "order_number": str(order_data.get("order_number", "")),
+                "name": order_data.get("name", ""),
+                "business_id": business_id, # <--- CRITICAL for Dashboard
+                
+                # Packing Dashboard Statuses
+                "fulfillment_status_internal": "Pending", 
+                "fulfillment_status": order_data.get("fulfillment_status"),
+                
+                # Financials
+                "financial_status": order_data.get("financial_status"),
+                "total_price": float(order_data.get("total_price", 0)),
+                
+                # Items & Customer
+                "items": order_data.get("line_items", []),
+                "customer": {
+                    "id": customer.get("id"),
+                    "name": f"{customer.get('first_name', '')} {customer.get('last_name', '')}".strip(),
+                    "phone": phone
+                },
+                
+                "created_at": datetime.now(timezone.utc),
+                "updated_at": datetime.now(timezone.utc)
+            }
+            
+            # 4. Upsert (Insert if new, Update if exists)
+            await self.db.orders.update_one(
+                {"id": order_data["id"]},
+                {"$set": order_doc},
+                upsert=True
+            )
+            logger.info(f"Order {order_doc['name']} ingested for {business_id} from {shop_domain}")
+            
+        except Exception as e:
+            logger.error(f"Failed to process order webhook: {e}", exc_info=True)
 
     async def _check_inventory_availability(self, payload: Dict[str, Any]) -> bool:
         """Check if all line items have sufficient inventory."""

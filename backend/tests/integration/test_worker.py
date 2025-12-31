@@ -39,7 +39,8 @@ async def test_worker_processing_logic_success(mocker):
         "message_type": "text",
         "wamid": "w1",
         "profile_name": "Test",
-        "quoted_wamid": None
+        "quoted_wamid": None,
+        "business_id": "feelori"  # Explicitly adding this makes the test clearer
     }
 
     # Call the worker's processing method
@@ -49,7 +50,10 @@ async def test_worker_processing_logic_success(mocker):
     mock_get_customer.assert_awaited_once()
     mock_update_name.assert_awaited_once()
     mock_process_message.assert_awaited_once()
-    mock_whatsapp.send_message.assert_awaited_once_with("123", expected_response)
+    
+    # --- FIX: Added business_id="feelori" ---
+    mock_whatsapp.send_message.assert_awaited_once_with("123", expected_response, business_id="feelori")
+    
     mock_update_history.assert_awaited_once()
 
 

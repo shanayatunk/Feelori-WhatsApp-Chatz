@@ -68,34 +68,42 @@ async def handle_whatsapp_webhook(
                 
                 value = change.get("value", {})
 
-                # --- [START] NEW PHONE ID FILTER ---
-                # Get the Phone ID from the incoming webhook payload
+                # --- [START] PHONE ID MAPPING ---
                 metadata = value.get("metadata", {})
                 incoming_phone_id = metadata.get("phone_number_id")
                 
-                # Get the Phone ID this server *expects* (from Doppler/env)
-                # This 'settings' object is already imported at the top of the file
-                expected_phone_id = settings.whatsapp_phone_id 
+                # Map Phone IDs to Business Names
+                PHONE_ID_TO_BUSINESS = {
+                    settings.whatsapp_phone_id: "feelori",
+                    settings.whatsapp_phone_id_golden: "goldencollections"
+                }
 
-                # If they don't match, log it and skip this change completely.
-                if incoming_phone_id and expected_phone_id and incoming_phone_id != expected_phone_id:
-                    log.info(
-                        "Ignored event for different phone ID.",
-                        incoming_id=incoming_phone_id,
-                        expected_id=expected_phone_id
-                    )
-                    continue  # <-- This skips to the next 'change'
-                # --- [END] NEW PHONE ID FILTER ---
+                # Identify Business
+                business_id = PHONE_ID_TO_BUSINESS.get(incoming_phone_id)
 
-                # --- (Your existing logic continues below) ---
+                # Security/Filter Check: If ID is unknown, ignore it.
+                if not business_id:
+                     log.info("Ignored event for unknown phone ID.", incoming_id=incoming_phone_id)
+                     continue
+                # --- [END] PHONE ID MAPPING ---
+
                 if "statuses" in value:
                     for status_data in value.get("statuses", []):
-                        log.info("Processing status update", status=status_data)
-                        asyncio.create_task(order_service.handle_status_update(status_data))
+                        wamid = status_data.get("id")
+                        status_type = status_data.get("status")
+                        
+                        if wamid and status_type:
+                            log.info("Processing status update", wamid=wamid, status=status_type)
+                            # The DB service now handles idempotency and job linking internally
+                            await db_service.update_message_status(wamid, status_type)
+                            log.info(f"Updated status for {wamid} to {status_type}")
                 elif "messages" in value:
                     for message in value.get("messages", []):
-                        log.info("Processing incoming message", message=message)
-                        asyncio.create_task(order_service.process_webhook_message(message, value))
+                        log.info("Processing incoming message", message=message, business_id=business_id)
+                        # PASS BUSINESS_ID DOWNSTREAM
+                        asyncio.create_task(
+                            order_service.process_webhook_message(message, value, business_id=business_id)
+                        )
         
         log.info("Webhook processing complete.")
         return JSONResponse({"status": "success"})
@@ -104,10 +112,20 @@ async def handle_whatsapp_webhook(
 # --- Shopify Webhooks ---
 
 @router.post("/shopify/orders/create")
-async def shopify_orders_create_webhook(request: Request, verified_body: bytes = Depends(verify_shopify_signature)):
+async def shopify_orders_create_webhook(
+    request: Request, 
+    verified_body: bytes = Depends(verify_shopify_signature)
+):
     """Handles new order creation from Shopify."""
     payload = json.loads(verified_body.decode("utf-8"))
-    asyncio.create_task(db_service.process_new_order_webhook(payload))
+    
+    # 1. Extract the Shop Domain to identify the Business
+    shop_domain = request.headers.get("X-Shopify-Shop-Domain", "")
+    
+    # 2. Pass it to the service
+    # We use create_task so we don't block the webhook response (Shopify needs a 200 OK fast)
+    asyncio.create_task(db_service.process_new_order_webhook(payload, shop_domain))
+    
     return JSONResponse({"status": "ok"})
 
 

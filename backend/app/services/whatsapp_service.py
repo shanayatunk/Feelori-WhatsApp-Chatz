@@ -28,19 +28,38 @@ class WhatsAppService:
 
     def _get_credentials(self, business_id: str):
         """
-        Returns (phone_id, token, catalog_id) based on the business_id.
+        Returns (phone_id, token, catalog_id) using strict dictionary mapping.
         """
-        bid = (business_id or "feelori").lower().replace(" ", "")
+        # 1. Normalize the input
+        bid = (business_id or "feelori").strip().lower()
+
+        # 2. Define the Configuration Map
+        # In the future, you can load this from a DB or Config file
+        BUSINESS_CONFIG = {
+            "feelori": {
+                "phone_id": settings.whatsapp_phone_id,
+                "token": settings.whatsapp_access_token,
+                "catalog_id": settings.whatsapp_catalog_id
+            },
+            "goldencollections": {
+                "phone_id": settings.whatsapp_phone_id_golden,
+                "token": settings.whatsapp_access_token_golden,
+                "catalog_id": settings.whatsapp_catalog_id_golden
+            }
+        }
+
+        # 3. Look up credentials (Default to Feelori if not found, or raise error)
+        creds = BUSINESS_CONFIG.get(bid)
         
-        if "golden" in bid:
-            return (
-                settings.whatsapp_phone_id_golden or settings.whatsapp_phone_id,
-                settings.whatsapp_access_token_golden or settings.whatsapp_access_token,
-                settings.whatsapp_catalog_id_golden
-            )
-        
-        # Default: Feelori
-        return (settings.whatsapp_phone_id, settings.whatsapp_access_token, settings.whatsapp_catalog_id)
+        # Fallback to Feelori if key not found (Safety net)
+        if not creds:
+             creds = BUSINESS_CONFIG["feelori"]
+
+        return (
+            creds["phone_id"],
+            creds["token"],
+            creds["catalog_id"]
+        )
 
     @tenacity.retry(
         retry=tenacity.retry_if_exception_type((httpx.RequestError, httpx.TimeoutException)),

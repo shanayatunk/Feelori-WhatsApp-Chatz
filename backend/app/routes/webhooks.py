@@ -73,18 +73,20 @@ async def handle_whatsapp_webhook(
                 metadata = value.get("metadata", {})
                 incoming_phone_id = metadata.get("phone_number_id")
                 
-                # Get the Phone ID this server *expects* (from Doppler/env)
-                # This 'settings' object is already imported at the top of the file
-                expected_phone_id = settings.whatsapp_phone_id 
+                # Get Valid Phone IDs (Feelori + Golden)
+                allowed_phone_ids = [
+                    pid for pid in [settings.whatsapp_phone_id, settings.whatsapp_phone_id_golden] 
+                    if pid
+                ]
 
-                # If they don't match, log it and skip this change completely.
-                if incoming_phone_id and expected_phone_id and incoming_phone_id != expected_phone_id:
+                # If the incoming ID is present but NOT in our allowed list, ignore it.
+                if incoming_phone_id and incoming_phone_id not in allowed_phone_ids:
                     log.info(
-                        "Ignored event for different phone ID.",
+                        "Ignored event for unknown phone ID.",
                         incoming_id=incoming_phone_id,
-                        expected_id=expected_phone_id
+                        allowed_ids=allowed_phone_ids
                     )
-                    continue  # <-- This skips to the next 'change'
+                    continue
                 # --- [END] NEW PHONE ID FILTER ---
 
                 # --- (Your existing logic continues below) ---

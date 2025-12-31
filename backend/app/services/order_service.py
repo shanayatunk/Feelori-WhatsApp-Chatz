@@ -1379,7 +1379,7 @@ def _format_orders_response(orders: List[Dict]) -> str:
 
 # --- Webhook Processing Logic ---
 
-async def process_webhook_message(message: Dict[str, Any], webhook_data: Dict[str, Any]):
+async def process_webhook_message(message: Dict[str, Any], webhook_data: Dict[str, Any], business_id: str = "feelori"):
     """
     Main function to process an incoming webhook message from a user.
     """
@@ -1440,7 +1440,8 @@ async def process_webhook_message(message: Dict[str, Any], webhook_data: Dict[st
             "content": message_text,
             "status": "received", # The initial status is 'received'
             "source": "customer",
-            "timestamp": datetime.utcnow()
+            "timestamp": datetime.utcnow(),
+            "business_id": business_id  # Add business_id for multi-tenancy
         }
         await db_service.log_message(log_data)
         # --- END OF NEW LOGIC ---
@@ -1451,7 +1452,8 @@ async def process_webhook_message(message: Dict[str, Any], webhook_data: Dict[st
             "message_type": message_type,
             "wamid": wamid,
             "profile_name": profile_name,
-            "quoted_wamid": quoted_wamid
+            "quoted_wamid": quoted_wamid,
+            "business_id": business_id  # Pass business_id through message queue
         }
         await message_queue.add_message(message_data)
 

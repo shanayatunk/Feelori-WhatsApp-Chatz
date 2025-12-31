@@ -42,11 +42,11 @@ services:
       - whatsapp_phone_id=${WHATSAPP_PHONE_ID}
       - whatsapp_verify_token=${WHATSAPP_VERIFY_TOKEN}
       - whatsapp_webhook_secret=${WHATSAPP_WEBHOOK_SECRET}
-      - golden_whatsapp_access_token=${GOLDEN_WHATSAPP_ACCESS_TOKEN}
-      - golden_whatsapp_app_secret=${GOLDEN_WHATSAPP_APP_SECRET}
-      - golden_whatsapp_business_account_id=${GOLDEN_WHATSAPP_BUSINESS_ACCOUNT_ID}
-      - golden_whatsapp_catalog_id=${GOLDEN_WHATSAPP_CATALOG_ID}
-      - golden_whatsapp_phone_id=${GOLDEN_WHATSAPP_PHONE_ID}
+      - GOLDEN_WHATSAPP_ACCESS_TOKEN=${GOLDEN_WHATSAPP_ACCESS_TOKEN}
+      - GOLDEN_WHATSAPP_APP_SECRET=${GOLDEN_WHATSAPP_APP_SECRET}
+      - GOLDEN_WHATSAPP_BUSINESS_ACCOUNT_ID=${GOLDEN_WHATSAPP_BUSINESS_ACCOUNT_ID}
+      - GOLDEN_WHATSAPP_CATALOG_ID=${GOLDEN_WHATSAPP_CATALOG_ID}
+      - GOLDEN_WHATSAPP_PHONE_ID=${GOLDEN_WHATSAPP_PHONE_ID}
 
   # 2. Dedicated scheduler service for background and periodic tasks
   scheduler:
@@ -83,11 +83,11 @@ services:
       - whatsapp_phone_id=${WHATSAPP_PHONE_ID}
       - whatsapp_verify_token=${WHATSAPP_VERIFY_TOKEN}
       - whatsapp_webhook_secret=${WHATSAPP_WEBHOOK_SECRET}
-      - golden_whatsapp_access_token=${GOLDEN_WHATSAPP_ACCESS_TOKEN}
-      - golden_whatsapp_app_secret=${GOLDEN_WHATSAPP_APP_SECRET}
-      - golden_whatsapp_business_account_id=${GOLDEN_WHATSAPP_BUSINESS_ACCOUNT_ID}
-      - golden_whatsapp_catalog_id=${GOLDEN_WHATSAPP_CATALOG_ID}
-      - golden_whatsapp_phone_id=${GOLDEN_WHATSAPP_PHONE_ID}
+      - GOLDEN_WHATSAPP_ACCESS_TOKEN=${GOLDEN_WHATSAPP_ACCESS_TOKEN}
+      - GOLDEN_WHATSAPP_APP_SECRET=${GOLDEN_WHATSAPP_APP_SECRET}
+      - GOLDEN_WHATSAPP_BUSINESS_ACCOUNT_ID=${GOLDEN_WHATSAPP_BUSINESS_ACCOUNT_ID}
+      - GOLDEN_WHATSAPP_CATALOG_ID=${GOLDEN_WHATSAPP_CATALOG_ID}
+      - GOLDEN_WHATSAPP_PHONE_ID=${GOLDEN_WHATSAPP_PHONE_ID}
 
   # 3. (Optional) ML worker – disabled to save memory
   # To re-enable, uncomment the lines below

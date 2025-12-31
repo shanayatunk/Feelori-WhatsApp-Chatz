@@ -243,7 +243,7 @@ async def _handle_triage_flow(clean_phone: str, message_text: str, message_type:
 
     return None # Fall through if no triage state was handled
 
-async def process_message(phone_number: str, message_text: str, message_type: str, quoted_wamid: str | None) -> str | None:
+async def process_message(phone_number: str, message_text: str, message_type: str, quoted_wamid: str | None, business_id: str = "feelori") -> str | None:
     """
     Processes an incoming message, handling triage states before
     routing to the AI-first intent model.
@@ -325,7 +325,7 @@ async def process_message(phone_number: str, message_text: str, message_type: st
 
         if message_type == "interactive" or message_text.startswith("visual_search_"):
             intent = await analyze_intent(message_text, message_type, customer, quoted_wamid)
-            response = await route_message(intent, clean_phone, message_text, customer, quoted_wamid)
+            response = await route_message(intent, clean_phone, message_text, customer, quoted_wamid, business_id=business_id)
             return response[:4096] if response else None
 
         # --- THIS IS THE FIX ---
@@ -333,7 +333,7 @@ async def process_message(phone_number: str, message_text: str, message_type: st
         if re.fullmatch(r'#?[A-Z]{0,3}\d{4,6}', message_text.strip(), re.IGNORECASE):
             logger.info("Order number format detected. Routing directly to order_detail_inquiry.")
             # 2. If it matches, bypass the AI and route directly.
-            response = await route_message("order_detail_inquiry", clean_phone, message_text, customer, quoted_wamid)
+            response = await route_message("order_detail_inquiry", clean_phone, message_text, customer, quoted_wamid, business_id=business_id)
             return response[:4096] if response else None
         # --- END OF FIX ---
 
@@ -342,7 +342,7 @@ async def process_message(phone_number: str, message_text: str, message_type: st
             if last_product_raw:
                 logger.info(f"Detected contextual reply (quoted_wamid: {quoted_wamid}) about a product.")
                 intent = "contextual_product_question"
-                response = await route_message(intent, clean_phone, message_text, customer, quoted_wamid)
+                response = await route_message(intent, clean_phone, message_text, customer, quoted_wamid, business_id=business_id)
                 return response[:4096] if response else None
         
         logger.debug(f"Classifying intent with AI for: '{message_text}'")
@@ -452,7 +452,7 @@ async def process_message(phone_number: str, message_text: str, message_type: st
         else: 
             logger.debug("AI intent not definitive, running rule-based analyzer.")
             intent = await analyze_intent(message_text, message_type, customer, quoted_wamid)
-            response = await route_message(intent, clean_phone, message_text, customer, quoted_wamid)
+            response = await route_message(intent, clean_phone, message_text, customer, quoted_wamid, business_id=business_id)
         
         return response[:4096] if response else None
         
@@ -584,7 +584,7 @@ async def analyze_intent(message: str, message_type: str, customer: Dict, quoted
     
     return analyze_text_intent(message_lower)
 
-async def route_message(intent: str, phone_number: str, message: str, customer: Dict, quoted_wamid: Optional[str] = None) -> Optional[str]:
+async def route_message(intent: str, phone_number: str, message: str, customer: Dict, quoted_wamid: Optional[str] = None, business_id: str = "feelori") -> Optional[str]:
     """Routes the message to the appropriate handler based on intent."""
     handler_map = {
         "product_search": handle_product_search,
@@ -612,7 +612,7 @@ async def route_message(intent: str, phone_number: str, message: str, customer: 
         "general": handle_general_inquiry
     }
     handler = handler_map.get(intent, handle_general_inquiry)
-    return await handler(phone_number=phone_number, message=message, customer=customer, quoted_wamid=quoted_wamid)
+    return await handler(phone_number=phone_number, message=message, customer=customer, quoted_wamid=quoted_wamid, business_id=business_id)
 
 
 # --- Handler Functions ---
@@ -620,6 +620,7 @@ async def route_message(intent: str, phone_number: str, message: str, customer: 
 async def handle_product_search(message: List[str] | str, customer: Dict, **kwargs) -> Optional[str]:
     """Handles a product search request with intelligent filtering."""
     try:
+        business_id = kwargs.get("business_id", "feelori")
         config = SearchConfig()
         query_builder = QueryBuilder(config, customer=customer)
 
@@ -670,7 +671,7 @@ async def handle_product_search(message: List[str] | str, customer: Dict, **kwar
             else:
                 return await _handle_no_results(customer, message_str)
 
-        return await _handle_standard_search(filtered_products, message_str, customer)
+        return await _handle_standard_search(filtered_products, message_str, customer, business_id=business_id)
     except Exception:
         safe_msg = (original_message if 'original_message' in locals()
                     else (message if isinstance(message, str) else " ".join(message)))
@@ -823,6 +824,7 @@ async def handle_show_unfiltered_products(customer: Dict, **kwargs) -> Optional[
 
 async def handle_contextual_product_question(message: str, customer: Dict, **kwargs) -> Optional[str]:
     """Handles questions asked in reply to a specific product message."""
+    business_id = kwargs.get("business_id", "feelori")
     phone_number = customer["phone_number"]
     last_product_raw = await cache_service.redis.get(CacheKeys.LAST_SINGLE_PRODUCT.format(phone=phone_number))
     if not last_product_raw: 
@@ -835,7 +837,7 @@ async def handle_contextual_product_question(message: str, customer: Dict, **kwa
     category = _identify_search_category(keywords)
     
     if category != "unknown" and category != "sets":
-        return await handle_product_search(message, customer)
+        return await handle_product_search(message, customer, business_id=business_id)
 
     if any(keyword in message.lower() for keyword in ["price", "cost", "how much", "rate"]):
         return f"The price for the *{last_product.title}* is ₹{last_product.price:,.2f}. ✨"
@@ -846,7 +848,7 @@ async def handle_contextual_product_question(message: str, customer: Dict, **kwa
     prompt = ai_service.create_qa_prompt(last_product, message)
     try:
         ai_answer = await asyncio.wait_for(ai_service.generate_response(prompt), timeout=15.0)
-        await _send_product_card(products=[last_product], customer=customer, header_text="This is the product we're discussing:", body_text="Tap to view details.")
+        await whatsapp_service.send_product_detail_with_buttons(phone_number, last_product, business_id=business_id)
         return ai_answer
     except asyncio.TimeoutError:
         logger.warning(f"Contextual Q&A timed out for product {last_product.id}")
@@ -879,8 +881,9 @@ async def handle_interactive_button_response(message: str, customer: Dict, **kwa
     return "I didn't understand that selection. How can I help?"
 
 
-async def handle_buy_request(product_id: str, customer: Dict) -> Optional[str]:
+async def handle_buy_request(product_id: str, customer: Dict, **kwargs) -> Optional[str]:
     """Handles a 'Buy Now' request, checking for product variants."""
+    business_id = kwargs.get("business_id", "feelori")
     product = await shopify_service.get_product_by_id(product_id)
     if not product: 
         return "Sorry, that product is no longer available."
@@ -891,7 +894,8 @@ async def handle_buy_request(product_id: str, customer: Dict) -> Optional[str]:
         await whatsapp_service.send_quick_replies(
             customer["phone_number"],
             f"Please select an option for *{product.title}*:",
-            variant_options
+            variant_options,
+            business_id=business_id
         )
         return "[Bot asked for variant selection]"
     elif variants:
@@ -908,7 +912,8 @@ async def handle_buy_request(product_id: str, customer: Dict) -> Optional[str]:
         # 3. Send the plain text message instead of a template.
         await whatsapp_service.send_message(
             to_phone=customer["phone_number"],
-            message=response_text
+            message=response_text,
+            business_id=business_id
         )
         
         return f"[Sent plain text checkout link for {product.title}]"
@@ -964,18 +969,20 @@ async def handle_product_detail(message: str, customer: Dict, **kwargs) -> Optio
 
 async def handle_latest_arrivals(customer: Dict, **kwargs) -> Optional[str]:
     """Shows the newest products."""
+    business_id = kwargs.get("business_id", "feelori")
     products, _ = await shopify_service.get_products(query="", limit=5, sort_key="CREATED_AT")
     if not products: 
         return "I couldn't fetch the latest arrivals right now. Please try again shortly."
-    await _send_product_card(products=products, customer=customer, header_text="Here are our latest arrivals! ✨", body_text="Freshly added to our collection.")
+    await _send_product_card(products=products, customer=customer, header_text="Here are our latest arrivals! ✨", body_text="Freshly added to our collection.", business_id=business_id)
     return "[Sent latest arrival recommendations]"
 
 async def handle_bestsellers(customer: Dict, **kwargs) -> Optional[str]:
     """Shows the top-selling products."""
+    business_id = kwargs.get("business_id", "feelori")
     products, _ = await shopify_service.get_products(query="", limit=5, sort_key="BEST_SELLING")
     if not products: 
         return "I couldn't fetch our bestsellers right now. Please try again shortly."
-    await _send_product_card(products=products, customer=customer, header_text="Check out our bestsellers! 🌟", body_text="These are the items our customers love most.")
+    await _send_product_card(products=products, customer=customer, header_text="Check out our bestsellers! 🌟", body_text="These are the items our customers love most.", business_id=business_id)
     return "[Sent bestseller recommendations]"
 
 async def handle_more_results(message: str, customer: Dict, **kwargs) -> Optional[str]:
@@ -1006,10 +1013,11 @@ async def handle_more_results(message: str, customer: Dict, **kwargs) -> Optiona
     if not search_query: 
         return "More of what? Please search for a product first (e.g., 'show me necklaces')."
 
+    business_id = kwargs.get("business_id", "feelori")
     products, _ = await shopify_service.get_products(search_query, limit=5, filters=price_filter)
     if not products: 
         return f"I couldn't find any more designs for '{raw_query_for_display}'. Try something else."
-    await _send_product_card(products=products, customer=customer, header_text=header_text, body_text="Here are a few more options.")
+    await _send_product_card(products=products, customer=customer, header_text=header_text, body_text="Here are a few more options.", business_id=business_id)
     return f"[Sent more results for '{raw_query_for_display}']"
 
 async def handle_shipping_inquiry(message: str, customer: Dict, **kwargs) -> Optional[str]:
@@ -1036,13 +1044,14 @@ async def handle_shipping_inquiry(message: str, customer: Dict, **kwargs) -> Opt
 async def handle_visual_search(message: str, customer: Dict, **kwargs) -> Optional[str]:
     """Handles a visual search request using an uploaded image."""
     try:
+        business_id = kwargs.get("business_id", "feelori")
         media_id = message.replace("visual_search_", "").strip().split("_caption_")[0]
         phone_number = customer["phone_number"]
         if not media_id: 
             return "I couldn't read the image. Please try uploading it again."
 
-        await whatsapp_service.send_message(phone_number, "🔍 Analyzing your image and searching our catalog... ✨")
-        image_bytes, mime_type = await whatsapp_service.get_media_content(media_id)
+        await whatsapp_service.send_message(phone_number, "🔍 Analyzing your image and searching our catalog... ✨", business_id=business_id)
+        image_bytes, mime_type = await whatsapp_service.get_media_content(media_id, business_id=business_id)
         if not image_bytes or not mime_type: 
             return "I had trouble downloading your image. Please try again."
 
@@ -1061,7 +1070,7 @@ async def handle_visual_search(message: str, customer: Dict, **kwargs) -> Option
         elif match_type == 'very_similar': 
             header_text = f"🌟 Found {len(products)} Excellent Matches"
         
-        await _send_product_card(products=products, customer=customer, header_text=header_text, body_text="Here are some products matching your style!")
+        await _send_product_card(products=products, customer=customer, header_text=header_text, body_text="Here are some products matching your style!", business_id=business_id)
         return "[Sent visual search results]"
     except asyncio.TimeoutError:
         logger.warning(f"Visual search timed out for media ID {media_id}")
@@ -1188,6 +1197,7 @@ async def handle_human_escalation(phone_number: str, customer: Dict, **kwargs) -
     STARTS the automated triage flow instead of immediately escalating.
     It proactively finds the user's orders and asks them to confirm.
     """
+    business_id = kwargs.get("business_id", "feelori")
     logger.info(f"Starting triage flow for {phone_number} instead of escalating.")
     
     # 1. Proactively search our database for recent orders
@@ -1213,6 +1223,8 @@ async def handle_human_escalation(phone_number: str, customer: Dict, **kwargs) -
         await whatsapp_service.send_quick_replies(
             phone_number,
             f"I'm sorry to hear you're having an issue. I see your most recent order is **{order_num}**. Is this the one you need help with?",
+            options,
+            business_id=business_id
             options
         )
         return "[Bot is asking to confirm order for triage]"
@@ -1293,7 +1305,7 @@ async def _handle_unclear_request(customer: Dict, original_message: str) -> str:
     """Handles cases where the search intent is unclear."""
     return "I'd love to help! Could you tell me what type of jewelry you're looking for? (e.g., Necklaces, Earrings, Sets)"
 
-async def _handle_standard_search(products: List[Product], message: str, customer: Dict) -> str:
+async def _handle_standard_search(products: List[Product], message: str, customer: Dict, business_id: str = "feelori") -> str:
     """Handles standard product search results."""
     phone_number = customer["phone_number"]
     await cache_service.set(
@@ -1309,7 +1321,7 @@ async def _handle_standard_search(products: List[Product], message: str, custome
 
     
     header_text = f"Found {len(products)} match{'es' if len(products) != 1 else ''} for you ✨"
-    await _send_product_card(products=products, customer=customer, header_text=header_text, body_text="Tap any product for details!")
+    await _send_product_card(products=products, customer=customer, header_text=header_text, body_text="Tap any product for details!", business_id=business_id)
 
     pending_question_raw = await cache_service.redis.get(CacheKeys.PENDING_QUESTION.format(phone=phone_number))
     if pending_question_raw:
@@ -1327,9 +1339,9 @@ async def _handle_standard_search(products: List[Product], message: str, custome
     
     return f"[Sent {len(products)} product recommendations]"
 
-async def _send_product_card(products: List[Product], customer: Dict, header_text: str, body_text: str):
+async def _send_product_card(products: List[Product], customer: Dict, header_text: str, body_text: str, business_id: str = "feelori"):
     """Sends a rich multi-product message card."""
-    catalog_id = await whatsapp_service.get_catalog_id()
+    catalog_id = await whatsapp_service.get_catalog_id(business_id=business_id)
     
     available_products = [p for p in products if p.availability == "in_stock" and p.id]
 
@@ -1344,7 +1356,8 @@ async def _send_product_card(products: List[Product], customer: Dict, header_tex
     await whatsapp_service.send_multi_product_message(
         to=customer["phone_number"], header_text=header_text, body_text=body_text,
         footer_text="Powered by FeelOri", catalog_id=catalog_id,
-        section_title="Products", product_items=product_items, fallback_products=available_products
+        section_title="Products", product_items=product_items, fallback_products=available_products,
+        business_id=business_id
     )
 
 async def _handle_error(customer: Dict) -> str:

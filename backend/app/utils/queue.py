@@ -96,7 +96,8 @@ class RedisMessageQueue:
                 phone_number=from_number,
                 message_text=data["message_text"],
                 message_type=data["message_type"],
-                quoted_wamid=data.get("quoted_wamid")
+                quoted_wamid=data.get("quoted_wamid"),
+                business_id=data.get("business_id", "feelori")
             )
 
             # If there's a response to send or log, handle it
@@ -107,7 +108,8 @@ class RedisMessageQueue:
                 # --- THIS IS THE FIX SUGGESTED BY CODERABBIT ---
                 if not is_log_only:
                     try:
-                        wamid = await whatsapp_service.send_message(from_number, response_text)
+                        business_id = data.get("business_id", "feelori")
+                        wamid = await whatsapp_service.send_message(from_number, response_text, business_id=business_id)
                     except Exception as e:
                         logger.error(f"WhatsApp send failed for {from_number}: {e}", exc_info=True)
                         wamid = None  # Ensure wamid is None on failure

@@ -1225,7 +1225,6 @@ async def handle_human_escalation(phone_number: str, customer: Dict, **kwargs) -
             f"I'm sorry to hear you're having an issue. I see your most recent order is **{order_num}**. Is this the one you need help with?",
             options,
             business_id=business_id
-            options
         )
         return "[Bot is asking to confirm order for triage]"
 

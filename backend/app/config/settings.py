@@ -44,7 +44,7 @@ class Settings(BaseSettings):
     whatsapp_phone_id_golden: Optional[str] = Field(None, env="GOLDEN_WHATSAPP_PHONE_ID")
     whatsapp_access_token_golden: Optional[str] = Field(None, env="GOLDEN_WHATSAPP_ACCESS_TOKEN")
     whatsapp_catalog_id_golden: Optional[str] = Field(None, env="GOLDEN_WHATSAPP_CATALOG_ID")
-    whatsapp_app_secret_golden: Optional[str] = Field(None, env="GOLDEN_WHATSAPP_APP_SECRET")
+    golden_whatsapp_app_secret: str = Field("", env="GOLDEN_WHATSAPP_APP_SECRET")
     whatsapp_business_account_id_golden: Optional[str] = Field(None, env="GOLDEN_WHATSAPP_BUSINESS_ACCOUNT_ID")
 
     # Multi-tenant WhatsApp Business Registry

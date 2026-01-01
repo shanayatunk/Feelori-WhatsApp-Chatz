@@ -421,10 +421,10 @@ async def process_message(phone_number: str, message_text: str, message_type: st
             ai_keywords = qb._extract_keywords(message_text) or [message_text]
 
         if ai_intent == "product_search":
-            response = await handle_product_search(message=ai_keywords, customer=customer, phone_number=clean_phone, quoted_wamid=quoted_wamid)
+            response = await handle_product_search(message=ai_keywords, customer=customer, phone_number=clean_phone, quoted_wamid=quoted_wamid, business_id=business_id)
         
         elif ai_intent == "human_escalation":
-             response = await handle_human_escalation(phone_number=clean_phone, customer=customer)
+             response = await handle_human_escalation(phone_number=clean_phone, customer=customer, business_id=business_id)
 
         elif ai_intent == "product_inquiry":
             try:
@@ -444,10 +444,16 @@ async def process_message(phone_number: str, message_text: str, message_type: st
                 response = await _handle_error(customer)
 
         elif ai_intent == "greeting":
-            response = await handle_greeting(phone_number=clean_phone, customer=customer, message=ai_keywords, quoted_wamid=quoted_wamid)
+            response = await handle_greeting(phone_number=clean_phone, customer=customer, message=ai_keywords, quoted_wamid=quoted_wamid, business_id=business_id)
 
         elif ai_intent == "smalltalk":
-            response = await handle_general_inquiry(message=ai_keywords, customer=customer, phone_number=clean_phone, quoted_wamid=quoted_wamid)
+            response = await handle_general_inquiry(
+                message=ai_keywords,
+                customer=customer,
+                phone_number=clean_phone,
+                quoted_wamid=quoted_wamid,
+                business_id=business_id  # <--- CRITICAL FIX
+            )
 
         else: 
             logger.debug("AI intent not definitive, running rule-based analyzer.")

@@ -33,6 +33,8 @@ class BusinessConfig(BaseModel):
     support_phone: str
     website_url: str
     business_address: str
+    google_review_url: Optional[str] = None
+    shipping_policy_url: Optional[str] = None
 
 
 class Settings(BaseSettings):
@@ -198,16 +200,20 @@ BUSINESS_REGISTRY: Dict[str, BusinessConfig] = {
     "feelori": BusinessConfig(
         business_name="FeelOri",
         support_email="support@feelori.com",
-        support_phone="+91 9967680579",
+        support_phone="+91 8374864499",
         website_url="https://feelori.com",
-        business_address="Sai Nidhi, Plot 9, Krishnapuri Colony, West Marredpally, Hyderabad, Telangana 500026, India"
+        business_address="Sai Nidhi, Plot 9, Krishnapuri Colony, Lakshmi Nagar, West Marredpally, Secunderabad, Hyderabad, Telangana 500026, India",
+        google_review_url="https://g.page/r/CbA6KqXz4_UpEBM/review",
+        shipping_policy_url="https://feelori.com/policies/shipping-policy"
     ),
     "goldencollections": BusinessConfig(
         business_name="Golden Collections",
-        support_email="support@goldencollections.com",
-        support_phone="+91 9967680579",  # TODO: Update with correct Golden Collections phone number
+        support_email="info@goldencollections.com",
+        support_phone="+91 7337294499",
         website_url="https://goldencollections.com",
-        business_address="Sai Nidhi, Plot 9, Krishnapuri Colony, West Marredpally, Hyderabad, Telangana 500026, India"  # TODO: Update with Golden Collections specific address if different
+        business_address="Sai Nidhi, Plot 9, Krishnapuri Colony, Lakshmi Nagar, West Marredpally, Secunderabad, Hyderabad, Telangana 500026, India",
+        google_review_url="https://g.page/r/CSSXrZR11xK9EBM/review",
+        shipping_policy_url="https://goldencollections.com/policies/shipping-policy"
     )
 }
 

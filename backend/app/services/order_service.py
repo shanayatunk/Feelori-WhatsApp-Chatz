@@ -847,7 +847,7 @@ async def handle_contextual_product_question(message: str, customer: Dict, **kwa
 
     prompt = ai_service.create_qa_prompt(last_product, message)
     try:
-        ai_answer = await asyncio.wait_for(ai_service.generate_response(prompt), timeout=15.0)
+        ai_answer = await asyncio.wait_for(ai_service.generate_response(prompt, business_id=business_id), timeout=15.0)
         await whatsapp_service.send_product_detail_with_buttons(phone_number, last_product, business_id=business_id)
         return ai_answer
     except asyncio.TimeoutError:
@@ -1169,9 +1169,10 @@ async def handle_greeting(phone_number: str, customer: Dict, **kwargs) -> str:
 async def handle_general_inquiry(message: str, customer: Dict, **kwargs) -> str:
     """Handles general questions using the AI model."""
     try:
+        business_id = kwargs.get("business_id", "feelori")
         context = {"conversation_history": customer.get("conversation_history", [])[-5:]}
         return await asyncio.wait_for(
-            ai_service.generate_response(message, context),
+            ai_service.generate_response(message, context, business_id=business_id),
             timeout=15.0
         )
     except asyncio.TimeoutError:

@@ -409,7 +409,7 @@ async def update_rule(rule_id: str, rule: Rule, request: Request, current_user: 
 async def get_strings(request: Request, current_user: dict = Depends(verify_jwt_token)):
     """Get all string resources."""
     security_service.EnhancedSecurityService.validate_admin_session(request, current_user)
-    strings = await db_service.get_all_strings()
+    strings = string_service.get_all_strings()
     return APIResponse(success=True, message="Strings retrieved successfully", data={"strings": strings}, version=settings.api_version)
 
 @router.put("/strings", response_model=APIResponse)

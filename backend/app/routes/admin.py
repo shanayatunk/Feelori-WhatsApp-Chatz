@@ -452,11 +452,13 @@ async def get_packer_performance(
     """Provides advanced analytics for the packer performance dashboard."""
     security_service.EnhancedSecurityService.validate_admin_session(request, current_user)
     metrics = await db_service.get_packer_performance_metrics(days=days)
+    
     return APIResponse(
         success=True,
         message="Packer performance metrics retrieved successfully.",
-        data=metrics,
-        version=settings.api_version # <-- THIS LINE IS THE FIX
+        # FIX: Wrap the list 'metrics' in a dictionary
+        data={"metrics": metrics}, 
+        version=settings.api_version
     )
 
 @router.post("/packers", response_model=APIResponse)

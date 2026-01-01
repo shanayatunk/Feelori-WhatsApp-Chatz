@@ -274,7 +274,7 @@ class ShopifyService:
     async def create_cart(self, business_id: str = "feelori") -> Optional[str]:
         store_url, _, storefront_token = self._get_credentials(business_id)
         gql_mutation = "mutation { cartCreate { cart { id checkoutUrl } userErrors { field message } } }"
-        data = await self._execute_storefront_gql_query(gql_mutation, store_url, storefront_token)
+        data = await self._execute_storefront_gql_query(gql_mutation, store_url, storefront_token, variables=None)
         return (data.get("cartCreate") or {}).get("cart", {}).get("id")
 
     async def add_item_to_cart(self, cart_id: str, variant_id: str, quantity: int = 1, business_id: str = "feelori") -> bool:
@@ -510,7 +510,7 @@ class ShopifyService:
         resp.raise_for_status()
         return resp.json().get("data", {})
 
-    async def _execute_storefront_gql_query(self, query: str, store_url: str, storefront_token: Optional[str], variables: Optional[Dict] = None) -> Dict:
+    async def _execute_storefront_gql_query(self, query: str, store_url: str, storefront_token: str, variables: Optional[Dict] = None) -> Dict:
         """Executes a GraphQL query against the Shopify Storefront API."""
         if not storefront_token: 
             return {}

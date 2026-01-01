@@ -2,6 +2,7 @@ import logging
 from typing import Dict, List
 from app.services.db_service import db_service
 from app.config import persona
+from app.config.settings import get_business_config
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +38,47 @@ class StringService:
     def get_all_strings(self) -> List[Dict[str, str]]:
         """Returns the full list of cached items so the Admin UI sees both defaults and edits."""
         return [{"key": key, "value": value} for key, value in self._strings_cache.items()]
+
+    def get_formatted_string(self, key: str, business_id: str, **kwargs) -> str:
+        """
+        Gets a string template and formats it with business configuration and optional variables.
+        
+        Args:
+            key: The string key to retrieve from the cache
+            business_id: The business identifier (e.g., 'feelori', 'goldencollections')
+            **kwargs: Optional override variables for formatting (e.g., order_number, customer_name)
+            
+        Returns:
+            Formatted string with business config variables and kwargs substituted.
+            Falls back to raw string if formatting fails.
+        """
+        # 1. Fetch the raw string template
+        raw_string = self.get_string(key)
+        
+        # 2. Fetch the business configuration
+        business_config = get_business_config(business_id)
+        
+        # 3. Create context dictionary with business config fields
+        context = {
+            "business_name": business_config.business_name,
+            "support_email": business_config.support_email,
+            "support_phone": business_config.support_phone,
+            "website_url": business_config.website_url,
+            "business_address": business_config.business_address
+        }
+        
+        # 4. Update context with any kwargs (allows one-off overrides)
+        context.update(kwargs)
+        
+        # 5. Safe formatting with try/except
+        try:
+            return raw_string.format(**context)
+        except KeyError as e:
+            logger.warning(f"Missing format key '{e}' in string template '{key}'. Returning raw string.")
+            return raw_string
+        except Exception as e:
+            logger.warning(f"Error formatting string '{key}': {e}. Returning raw string.")
+            return raw_string
 
 # Globally accessible instance
 string_service = StringService()

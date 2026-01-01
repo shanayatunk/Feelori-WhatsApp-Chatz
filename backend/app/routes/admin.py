@@ -12,7 +12,8 @@ from fastapi.responses import StreamingResponse
 from app.config.settings import settings
 from app.models.api import APIResponse, BroadcastGroupCreate, BroadcastRequest, Rule, StringUpdateRequest, TemplateBroadcastRequest, PackerRequest
 from app.utils.dependencies import verify_jwt_token
-from app.services import security_service, shopify_service, cache_service
+from app.services import security_service, cache_service
+from app.services.shopify_service import shopify_service
 from app.services.db_service import db_service
 from app.services.whatsapp_service import whatsapp_service
 from app.services.string_service import string_service

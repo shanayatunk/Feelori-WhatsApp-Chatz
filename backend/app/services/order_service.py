@@ -661,7 +661,7 @@ async def handle_product_search(message: List[str] | str, customer: Dict, **kwar
             return await _handle_unclear_request(customer, message_str)
 
         filtered_products, unfiltered_count = await shopify_service.get_products(
-            query=text_query, filters=price_filter, limit=config.MAX_SEARCH_RESULTS
+            query=text_query, filters=price_filter, limit=config.MAX_SEARCH_RESULTS, business_id=business_id
         )
 
         if not filtered_products:
@@ -793,7 +793,7 @@ async def handle_order_detail_inquiry(message: str, customer: Dict, **kwargs) ->
     # --- END OF NEW SECURITY LOGIC ---
 
     # 5. If the user IS verified, fetch the full details from Shopify, clear the flag, and show the details.
-    order_to_display = await shopify_service.get_order_by_name(order_name)
+    order_to_display = await shopify_service.get_order_by_name(order_name, business_id=business_id)
     if not order_to_display:
         # And use the corrected string here one last time for safety
         return string_service.get_formatted_string('ORDER_NOT_FOUND_SPECIFIC', business_id=business_id, order_number=order_name)
@@ -819,7 +819,8 @@ async def handle_show_unfiltered_products(customer: Dict, **kwargs) -> Optional[
     config = SearchConfig()
     query_builder = QueryBuilder(config, customer=customer)
     text_query, _ = query_builder.build_query_parts(original_message)
-    products, _ = await shopify_service.get_products(query=text_query, filters=None, limit=config.MAX_SEARCH_RESULTS)
+    business_id = kwargs.get("business_id", "feelori")
+    products, _ = await shopify_service.get_products(query=text_query, filters=None, limit=config.MAX_SEARCH_RESULTS, business_id=business_id)
 
     if not products: 
         return f"I'm sorry, I still couldn't find any results for '{original_message}'."
@@ -862,23 +863,24 @@ async def handle_contextual_product_question(message: str, customer: Dict, **kwa
 
 async def handle_interactive_button_response(message: str, customer: Dict, **kwargs) -> Optional[str]:
     """Handles replies from interactive buttons on a product card."""
+    business_id = kwargs.get("business_id", "feelori")
     
     if message.startswith("buy_"):
         product_id = message.replace("buy_", "")
-        return await handle_buy_request(product_id, customer)
+        return await handle_buy_request(product_id, customer, business_id=business_id)
     elif message.startswith("more_"):
         product_id = message.replace("more_", "")
-        product = await shopify_service.get_product_by_id(product_id)
+        product = await shopify_service.get_product_by_id(product_id, business_id=business_id)
         return product.description if product else "Details not found."
     elif message.startswith("similar_"):
         product_id = message.replace("similar_", "")
-        product = await shopify_service.get_product_by_id(product_id)
+        product = await shopify_service.get_product_by_id(product_id, business_id=business_id)
         if product and product.tags: 
-            return await handle_product_search(product.tags[0], customer)
+            return await handle_product_search(product.tags[0], customer, business_id=business_id)
         return "What kind of similar items are you looking for?"
     elif message.startswith("option_"):
         variant_id = message.replace("option_", "")
-        cart_url = shopify_service.get_add_to_cart_url(variant_id)
+        cart_url = shopify_service.get_add_to_cart_url(variant_id, business_id=business_id)
         return f"Perfect! I've added that to your cart. Complete your purchase here:\n{cart_url}"
     
     return "I didn't understand that selection. How can I help?"
@@ -887,11 +889,11 @@ async def handle_interactive_button_response(message: str, customer: Dict, **kwa
 async def handle_buy_request(product_id: str, customer: Dict, **kwargs) -> Optional[str]:
     """Handles a 'Buy Now' request, checking for product variants."""
     business_id = kwargs.get("business_id", "feelori")
-    product = await shopify_service.get_product_by_id(product_id)
+    product = await shopify_service.get_product_by_id(product_id, business_id=business_id)
     if not product: 
         return "Sorry, that product is no longer available."
 
-    variants = await shopify_service.get_product_variants(product.id)
+    variants = await shopify_service.get_product_variants(product.id, business_id=business_id)
     if len(variants) > 1:
         variant_options = {f"option_{v['id']}": v['title'] for v in variants[:3]}
         await whatsapp_service.send_quick_replies(
@@ -904,7 +906,7 @@ async def handle_buy_request(product_id: str, customer: Dict, **kwargs) -> Optio
     elif variants:
         # --- THIS IS THE FIX ---
         # 1. Get the direct add-to-cart URL.
-        cart_url = shopify_service.get_add_to_cart_url(variants[0]["id"])
+        cart_url = shopify_service.get_add_to_cart_url(variants[0]["id"], business_id=business_id)
 
         # 2. Create a simple text message.
         response_text = (
@@ -922,11 +924,12 @@ async def handle_buy_request(product_id: str, customer: Dict, **kwargs) -> Optio
         return f"[Sent plain text checkout link for {product.title}]"
         # --- END OF FIX ---
     else:
-        product_url = shopify_service.get_product_page_url(product.handle)
+        product_url = shopify_service.get_product_page_url(product.handle, business_id=business_id)
         return f"This product is currently unavailable. You can view it here: {product_url}"
 
 async def handle_price_inquiry(message: str, customer: Dict, **kwargs) -> Optional[str]:
     """Handles direct questions about price, considering context."""
+    business_id = kwargs.get("business_id", "feelori")
     phone_number = customer["phone_number"]
     product_list_raw = await cache_service.redis.get(CacheKeys.LAST_PRODUCT_LIST.format(phone=phone_number))
     
@@ -942,13 +945,14 @@ async def handle_price_inquiry(message: str, customer: Dict, **kwargs) -> Option
     product_to_price_raw = await cache_service.redis.get(CacheKeys.LAST_SINGLE_PRODUCT.format(phone=phone_number))
     if product_to_price_raw:
         product_to_price = Product.parse_raw(product_to_price_raw)
-        await whatsapp_service.send_product_detail_with_buttons(phone_number, product_to_price)
+        await whatsapp_service.send_product_detail_with_buttons(phone_number, product_to_price, business_id=business_id)
         return "[Bot sent product details]"
     
     return "I can help with prices! Which product are you interested in? Try searching for something like 'gold necklaces' first."
 
 async def handle_product_detail(message: str, customer: Dict, **kwargs) -> Optional[str]:
     """Shows a detailed card for a specific product."""
+    business_id = kwargs.get("business_id", "feelori")
     numeric_product_id = message.replace("product_", "")
 
     # --- THIS IS THE FIX ---
@@ -957,7 +961,7 @@ async def handle_product_detail(message: str, customer: Dict, **kwargs) -> Optio
     # --- END OF FIX ---
 
     # Pass the correctly formatted GID to the service.
-    product = await shopify_service.get_product_by_id(graphql_gid)
+    product = await shopify_service.get_product_by_id(graphql_gid, business_id=business_id)
 
     if product:
         await cache_service.set(
@@ -965,7 +969,7 @@ async def handle_product_detail(message: str, customer: Dict, **kwargs) -> Optio
             product.json(),
             ttl=900
         )
-        await whatsapp_service.send_product_detail_with_buttons(customer["phone_number"], product)
+        await whatsapp_service.send_product_detail_with_buttons(customer["phone_number"], product, business_id=business_id)
         return "[Bot sent product details]"
 
     return "Sorry, I couldn't find details for that product."
@@ -973,7 +977,7 @@ async def handle_product_detail(message: str, customer: Dict, **kwargs) -> Optio
 async def handle_latest_arrivals(customer: Dict, **kwargs) -> Optional[str]:
     """Shows the newest products."""
     business_id = kwargs.get("business_id", "feelori")
-    products, _ = await shopify_service.get_products(query="", limit=5, sort_key="CREATED_AT")
+    products, _ = await shopify_service.get_products(query="", limit=5, sort_key="CREATED_AT", business_id=business_id)
     if not products: 
         return "I couldn't fetch the latest arrivals right now. Please try again shortly."
     await _send_product_card(products=products, customer=customer, header_text="Here are our latest arrivals! ✨", body_text="Freshly added to our collection.", business_id=business_id)
@@ -982,7 +986,7 @@ async def handle_latest_arrivals(customer: Dict, **kwargs) -> Optional[str]:
 async def handle_bestsellers(customer: Dict, **kwargs) -> Optional[str]:
     """Shows the top-selling products."""
     business_id = kwargs.get("business_id", "feelori")
-    products, _ = await shopify_service.get_products(query="", limit=5, sort_key="BEST_SELLING")
+    products, _ = await shopify_service.get_products(query="", limit=5, sort_key="BEST_SELLING", business_id=business_id)
     if not products: 
         return "I couldn't fetch our bestsellers right now. Please try again shortly."
     await _send_product_card(products=products, customer=customer, header_text="Check out our bestsellers! 🌟", body_text="These are the items our customers love most.", business_id=business_id)
@@ -1017,7 +1021,7 @@ async def handle_more_results(message: str, customer: Dict, **kwargs) -> Optiona
         return "More of what? Please search for a product first (e.g., 'show me necklaces')."
 
     business_id = kwargs.get("business_id", "feelori")
-    products, _ = await shopify_service.get_products(search_query, limit=5, filters=price_filter)
+    products, _ = await shopify_service.get_products(search_query, limit=5, filters=price_filter, business_id=business_id)
     if not products: 
         return f"I couldn't find any more designs for '{raw_query_for_display}'. Try something else."
     await _send_product_card(products=products, customer=customer, header_text=header_text, body_text="Here are a few more options.", business_id=business_id)

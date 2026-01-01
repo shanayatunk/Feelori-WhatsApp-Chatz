@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings
 
 
-class BusinessConfig(BaseModel):
+class WhatsAppBusinessConfig(BaseModel):
     """
     Configuration model for a WhatsApp business account.
     Stores metadata and references to environment variables for secure token management.
@@ -21,6 +21,18 @@ class BusinessConfig(BaseModel):
 
     class Config:
         frozen = True
+
+
+class BusinessConfig(BaseModel):
+    """
+    Configuration model for business metadata (contact info, address, etc.).
+    Used for business information display and customer support.
+    """
+    business_name: str
+    support_email: str
+    support_phone: str
+    website_url: str
+    business_address: str
 
 
 class Settings(BaseSettings):
@@ -48,7 +60,7 @@ class Settings(BaseSettings):
     golden_whatsapp_business_account_id: Optional[str] = Field(None, env="GOLDEN_WHATSAPP_BUSINESS_ACCOUNT_ID")
 
     # Multi-tenant WhatsApp Business Registry
-    BUSINESS_REGISTRY: Dict[str, BusinessConfig] = {}
+    WHATSAPP_BUSINESS_REGISTRY: Dict[str, WhatsAppBusinessConfig] = {}
 
     # Shopify
     shopify_store_url: str = "feelori.myshopify.com"
@@ -158,9 +170,9 @@ class Settings(BaseSettings):
         return v
 
     @model_validator(mode="after")
-    def initialize_business_registry(self):
-        if not self.BUSINESS_REGISTRY and self.whatsapp_phone_id:
-            self.BUSINESS_REGISTRY[self.whatsapp_phone_id] = BusinessConfig(
+    def initialize_whatsapp_business_registry(self):
+        if not self.WHATSAPP_BUSINESS_REGISTRY and self.whatsapp_phone_id:
+            self.WHATSAPP_BUSINESS_REGISTRY[self.whatsapp_phone_id] = WhatsAppBusinessConfig(
                 business_id="feelori",
                 business_name="Feelori",
                 phone_number_id=self.whatsapp_phone_id,
@@ -168,7 +180,7 @@ class Settings(BaseSettings):
             )
         return self
 
-    def get_business_token(self, business_config: BusinessConfig) -> str:
+    def get_business_token(self, business_config: WhatsAppBusinessConfig) -> str:
         token = os.getenv(business_config.token_env_key)
         if not token:
             raise RuntimeError(
@@ -179,6 +191,40 @@ class Settings(BaseSettings):
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"
+
+
+# Business Configuration Registry
+BUSINESS_REGISTRY: Dict[str, BusinessConfig] = {
+    "feelori": BusinessConfig(
+        business_name="FeelOri",
+        support_email="support@feelori.com",
+        support_phone="+91 9967680579",
+        website_url="https://feelori.com",
+        business_address="Sai Nidhi, Plot 9, Krishnapuri Colony, West Marredpally, Hyderabad, Telangana 500026, India"
+    ),
+    "goldencollections": BusinessConfig(
+        business_name="Golden Collections",
+        support_email="support@goldencollections.com",
+        support_phone="+91 9967680579",  # TODO: Update with correct Golden Collections phone number
+        website_url="https://goldencollections.com",
+        business_address="Sai Nidhi, Plot 9, Krishnapuri Colony, West Marredpally, Hyderabad, Telangana 500026, India"  # TODO: Update with Golden Collections specific address if different
+    )
+}
+
+
+def get_business_config(business_id: str) -> BusinessConfig:
+    """
+    Returns the business configuration for the given business_id.
+    Defaults to 'feelori' if the business_id is not found in the registry.
+    
+    Args:
+        business_id: The business identifier (e.g., 'feelori', 'goldencollections')
+        
+    Returns:
+        BusinessConfig instance for the requested business
+    """
+    normalized_id = (business_id or "feelori").strip().lower()
+    return BUSINESS_REGISTRY.get(normalized_id, BUSINESS_REGISTRY["feelori"])
 
 
 def validate_environment(settings_obj: Settings):

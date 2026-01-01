@@ -11,10 +11,11 @@ from openai import AsyncOpenAI
 from tenacity import retry, wait_exponential, stop_after_attempt, retry_if_exception_type
 from app.models.domain import Product
 from app.config.settings import settings
-from app.config.persona import AI_SYSTEM_PROMPT, VISUAL_SEARCH_PROMPT, QA_PROMPT_TEMPLATE
+from app.config import persona
+from app.config.persona import VISUAL_SEARCH_PROMPT, QA_PROMPT_TEMPLATE
 from app.utils.circuit_breaker import CircuitBreaker
 from app.utils.metrics import ai_requests_counter
-from app.services import shopify_service
+from app.services import shopify_service, string_service
 
 
 # This service encapsulates all interactions with external AI models like
@@ -162,13 +163,13 @@ class AIService:
             return self.gemini_client.models.generate_content(model=m, contents=c, config=cfg)
         return _inner(model, contents, config)
 
-    async def generate_response(self, message: str, context: dict | None = None) -> str:
+    async def generate_response(self, message: str, context: dict | None = None, business_id: str = "feelori") -> str:
         """Generate AI response for general text-based inquiries with failover."""
         serializable_context = json.loads(json.dumps(context, default=str)) if context else {}
 
         if self.gemini_client:
             try:
-                response = await self._generate_gemini_response(message, serializable_context)
+                response = await self._generate_gemini_response(message, serializable_context, business_id)
                 if response:
                     ai_requests_counter.labels(model="gemini", status="success").inc()
                     return response
@@ -178,7 +179,7 @@ class AIService:
 
         if self.openai_client:
             try:
-                response = await self.openai_breaker.call(self._generate_openai_response, message, serializable_context)
+                response = await self.openai_breaker.call(self._generate_openai_response, message, serializable_context, business_id)
                 if response:
                     ai_requests_counter.labels(model="openai", status="success").inc()
                     return response
@@ -211,9 +212,19 @@ class AIService:
             ai_requests_counter.labels(model="openai-json", status="error").inc()
             return None # Return None on failure
 
-    async def _generate_openai_response(self, message: str, context: dict) -> str:
+    async def _generate_openai_response(self, message: str, context: dict, business_id: str = "feelori") -> str:
         """Generate OpenAI response with conversation context."""
-        messages = [{"role": "system", "content": AI_SYSTEM_PROMPT}]
+        # Select the appropriate system prompt based on business_id
+        if business_id == "goldencollections":
+            prompt_key = "GOLDEN_SYSTEM_PROMPT"
+            fallback_text = persona.GOLDEN_SYSTEM_PROMPT
+        else:
+            prompt_key = "FEELORI_SYSTEM_PROMPT"
+            fallback_text = persona.FEELORI_SYSTEM_PROMPT
+            
+        system_prompt = string_service.get_string(prompt_key, default=fallback_text)
+        
+        messages = [{"role": "system", "content": system_prompt}]
         if context.get("conversation_history"):
             for exchange in context["conversation_history"]:
                 messages.append({"role": "user", "content": exchange.get("message", "")})
@@ -225,7 +236,7 @@ class AIService:
         )
         return response.choices[0].message.content.strip()
 
-    async def _generate_gemini_response(self, message: str, context: dict) -> str:
+    async def _generate_gemini_response(self, message: str, context: dict, business_id: str = "feelori") -> str:
         """Generate response using the new google-genai client."""
         if not self.gemini_client:
             raise Exception("Gemini client not available")
@@ -234,7 +245,16 @@ class AIService:
         if not self.model_name:
             raise Exception("No Gemini model available")
 
-        full_prompt = f"{AI_SYSTEM_PROMPT}\n\nContext: {json.dumps(context)}\n\nMessage: {message}"
+        # Select the appropriate system prompt based on business_id
+        if business_id == "goldencollections":
+            prompt_key = "GOLDEN_SYSTEM_PROMPT"
+            fallback_text = persona.GOLDEN_SYSTEM_PROMPT
+        else:
+            prompt_key = "FEELORI_SYSTEM_PROMPT"
+            fallback_text = persona.FEELORI_SYSTEM_PROMPT
+            
+        system_prompt = string_service.get_string(prompt_key, default=fallback_text)
+        full_prompt = f"{system_prompt}\n\nContext: {json.dumps(context)}\n\nMessage: {message}"
 
         # Call the sync client inside a thread, with simple retry wrapper
         try:

@@ -74,10 +74,10 @@ class StringService:
         try:
             return raw_string.format(**context)
         except KeyError as e:
-            logger.warning(f"Missing format key '{e}' in string template '{key}'. Returning raw string.")
-            return raw_string
+            logger.warning(f"[TEMPLATE] Missing placeholder {e} in string {key} | business={business_id}")
+            return raw_string  # Fallback: Return raw string, do not crash
         except Exception as e:
-            logger.warning(f"Error formatting string '{key}': {e}. Returning raw string.")
+            logger.error(f"Formatting error for {key}: {e}")
             return raw_string
 
 # Globally accessible instance

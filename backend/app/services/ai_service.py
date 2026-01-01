@@ -15,7 +15,8 @@ from app.config import persona
 from app.config.persona import VISUAL_SEARCH_PROMPT, QA_PROMPT_TEMPLATE
 from app.utils.circuit_breaker import CircuitBreaker
 from app.utils.metrics import ai_requests_counter
-from app.services import shopify_service, string_service
+from app.services.shopify_service import shopify_service
+from app.services.string_service import string_service
 
 
 # This service encapsulates all interactions with external AI models like

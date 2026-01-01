@@ -160,7 +160,7 @@ async def _handle_security_verification(clean_phone: str, message_text: str, cus
         await cache_service.delete(CacheKeys.AWAITING_ORDER_VERIFICATION.format(phone=clean_phone))
         return None # Fall through to normal processing
 
-async def _handle_triage_flow(clean_phone: str, message_text: str, message_type: str) -> Optional[str]:
+async def _handle_triage_flow(clean_phone: str, message_text: str, message_type: str, business_id: str = "feelori") -> Optional[str]:
     """Handles the entire automated triage state machine."""
     triage_state_raw = await cache_service.get(CacheKeys.TRIAGE_STATE.format(phone=clean_phone))
     if not triage_state_raw and not message_text.startswith(TriageButtons.SELECT_ORDER_PREFIX):
@@ -215,7 +215,7 @@ async def _handle_triage_flow(clean_phone: str, message_text: str, message_type:
                 "created_at": datetime.utcnow()
             }
             await db_service.db.triage_tickets.insert_one(triage_ticket)
-            return string_service.get_string("HUMAN_ESCALATION", strings.HUMAN_ESCALATION)
+            return string_service.get_formatted_string("HUMAN_ESCALATION", business_id=business_id)
 
     elif current_state == TriageStates.AWAITING_PHOTO and (message_type == "image" or message_text.startswith("visual_search_")):
         order_number = triage_state.get("order_number")
@@ -232,7 +232,7 @@ async def _handle_triage_flow(clean_phone: str, message_text: str, message_type:
             "created_at": datetime.utcnow()
         }
         await db_service.db.triage_tickets.insert_one(triage_ticket)
-        return string_service.get_string("HUMAN_ESCALATION", strings.HUMAN_ESCALATION)
+        return string_service.get_formatted_string("HUMAN_ESCALATION", business_id=business_id)
 
     if message_text.startswith(TriageButtons.SELECT_ORDER_PREFIX):
         order_number = message_text.replace(TriageButtons.SELECT_ORDER_PREFIX, "")
@@ -252,7 +252,7 @@ async def process_message(phone_number: str, message_text: str, message_type: st
         clean_phone = EnhancedSecurityService.sanitize_phone_number(phone_number)
         
         if clean_phone == settings.packing_dept_whatsapp_number:
-            return string_service.get_string("PACKING_DEPT_REDIRECT", strings.PACKING_DEPT_REDIRECT)
+            return string_service.get_formatted_string("PACKING_DEPT_REDIRECT", business_id=business_id)
 
         # --- BOT SUPPRESSION CHECK ---
         # Check if there is an active ticket handled by a human
@@ -307,7 +307,7 @@ async def process_message(phone_number: str, message_text: str, message_type: st
         # --- Refactored State Handling ---
         if response := await _handle_security_verification(clean_phone, message_text, customer):
             return response
-        if response := await _handle_triage_flow(clean_phone, message_text, message_type):
+        if response := await _handle_triage_flow(clean_phone, message_text, message_type, business_id=business_id):
             return response
         # --- End of Refactored State Handling ---
 
@@ -458,7 +458,7 @@ async def process_message(phone_number: str, message_text: str, message_type: st
         
     except Exception as e:
         logger.error(f"Message processing error for {phone_number}: {e}", exc_info=True)
-        return string_service.get_string("ERROR_GENERAL", strings.ERROR_GENERAL)
+        return string_service.get_formatted_string("ERROR_GENERAL", business_id=business_id)
 
 
 # --- Helper function to get or create a customer ---
@@ -738,6 +738,7 @@ def _format_single_order(order: Dict, detailed: bool = False) -> str:
 
 async def handle_order_detail_inquiry(message: str, customer: Dict, **kwargs) -> str:
     """Handles a request for order details, including a new security verification step."""
+    business_id = kwargs.get("business_id", "feelori")
     order_name_match = re.search(r'#?[a-zA-Z]*\d{4,}', message)
     if not order_name_match:
         return await _handle_unclear_request(customer, message)
@@ -750,10 +751,8 @@ async def handle_order_detail_inquiry(message: str, customer: Dict, **kwargs) ->
     order_from_db = await db_service.db.orders.find_one({"order_number": order_name})
     if not order_from_db:
         # --- THIS IS THE FIX ---
-        # 1. Get the string template first.
-        error_template = string_service.get_string('ORDER_NOT_FOUND_SPECIFIC')
-        # 2. Then, format it with the order name.
-        return error_template.format(order_number=order_name)
+        # Use get_formatted_string with order_number as a kwarg
+        return string_service.get_formatted_string('ORDER_NOT_FOUND_SPECIFIC', business_id=business_id, order_number=order_name)
         # --- END OF FIX ---
 
     # --- ✅ NEW SECURITY LOGIC ---
@@ -766,8 +765,7 @@ async def handle_order_detail_inquiry(message: str, customer: Dict, **kwargs) ->
         if not order_phones:
             logger.warning(f"Security check failed: No phone numbers found in DB for order {order_name} to verify against.")
             # Use the corrected string here as well
-            error_template = string_service.get_string('ORDER_NOT_FOUND_SPECIFIC')
-            return error_template.format(order_number=order_name)
+            return string_service.get_formatted_string('ORDER_NOT_FOUND_SPECIFIC', business_id=business_id, order_number=order_name)
 
         # 3. Store the expected last 4 digits and set the user's state to 'awaiting_order_verification'.
         if not order_phones or not isinstance(order_phones[0], str) or len(order_phones[0]) < 4:
@@ -792,8 +790,7 @@ async def handle_order_detail_inquiry(message: str, customer: Dict, **kwargs) ->
     order_to_display = await shopify_service.get_order_by_name(order_name)
     if not order_to_display:
         # And use the corrected string here one last time for safety
-        error_template = string_service.get_string('ORDER_NOT_FOUND_SPECIFIC')
-        return error_template.format(order_number=order_name)
+        return string_service.get_formatted_string('ORDER_NOT_FOUND_SPECIFIC', business_id=business_id, order_number=order_name)
         
     await cache_service.delete(CacheKeys.ORDER_VERIFIED.format(phone=customer['phone_number'], order_name=order_name))
     return _format_single_order(order_to_display, detailed=True)
@@ -1022,12 +1019,13 @@ async def handle_more_results(message: str, customer: Dict, **kwargs) -> Optiona
 
 async def handle_shipping_inquiry(message: str, customer: Dict, **kwargs) -> Optional[str]:
     """Provides shipping information and handles contextual delivery time questions."""
+    business_id = kwargs.get("business_id", "feelori")
     message_lower = message.lower()
     if any(k in message_lower for k in {"policy", "cost", "charge", "fee"}):
         city_info = ""
         if "delhi" in message_lower: 
             city_info = "For Delhi, delivery is typically within **3-5 business days!** 🏙️\n\n"
-        return string_service.get_string("SHIPPING_POLICY_INFO", strings.SHIPPING_POLICY_INFO).format(city_info=city_info)
+        return string_service.get_formatted_string("SHIPPING_POLICY_INFO", business_id=business_id, city_info=city_info)
 
     cities = ["hyderabad", "delhi", "mumbai", "bangalore", "chennai", "kolkata"]
     found_city = next((city for city in cities if city in message_lower), None)
@@ -1084,16 +1082,16 @@ async def handle_order_inquiry(phone_number: str, customer: Dict, **kwargs) -> s
     Handles general order status inquiries by proactively searching for the
     customer's recent orders in the database.
     """
-    
+    business_id = kwargs.get("business_id", "feelori")
     # 1. Proactively search our database for recent orders
     recent_orders = await db_service.get_recent_orders_by_phone(phone_number, limit=3)
 
     if not recent_orders:
         # 2. NO ORDERS FOUND: Fall back to the original behavior
         logger.info(f"No orders found for {phone_number}. Asking for order number.")
-        return string_service.get_string(
+        return string_service.get_formatted_string(
             "ORDER_INQUIRY_PROMPT",
-            "I can help with that! Please reply with your order number (e.g., #FO1039), and I'll look it up for you. You can find it in your order confirmation email. 📧"
+            business_id=business_id
         )
     
     elif len(recent_orders) == 1:
@@ -1121,10 +1119,11 @@ async def handle_order_inquiry(phone_number: str, customer: Dict, **kwargs) -> s
 
 async def handle_support_request(message: str, customer: Dict, **kwargs) -> str:
     """Handles support requests for damaged items, returns, etc."""
+    business_id = kwargs.get("business_id", "feelori")
     complaint_keywords = {"damaged", "broken", "defective", "wrong", "incorrect", "bad", "poor", "dull"}
     if any(keyword in message.lower() for keyword in complaint_keywords):
-        return string_service.get_string("SUPPORT_COMPLAINT_RESPONSE", strings.SUPPORT_COMPLAINT_RESPONSE)
-    return string_service.get_string("SUPPORT_GENERAL_RESPONSE", strings.SUPPORT_GENERAL_RESPONSE)
+        return string_service.get_formatted_string("SUPPORT_COMPLAINT_RESPONSE", business_id=business_id)
+    return string_service.get_formatted_string("SUPPORT_GENERAL_RESPONSE", business_id=business_id)
 
 def get_last_conversation_date(history: list) -> Optional[datetime]:
     if not history: 
@@ -1177,20 +1176,34 @@ async def handle_general_inquiry(message: str, customer: Dict, **kwargs) -> str:
         )
     except asyncio.TimeoutError:
         logger.warning("General inquiry AI timed out.")
-        return string_service.get_string("ERROR_AI_GENERAL", strings.ERROR_AI_GENERAL)
+        return string_service.get_formatted_string("ERROR_AI_GENERAL", business_id=business_id)
     except Exception as e:
         logger.error(f"General inquiry AI error: {e}")
-        return string_service.get_string("ERROR_AI_GENERAL", strings.ERROR_AI_GENERAL)
+        return string_service.get_formatted_string("ERROR_AI_GENERAL", business_id=business_id)
 
 # --- Handlers for string constants ---
 
-async def handle_price_feedback(**kwargs) -> str: return string_service.get_string("PRICE_FEEDBACK_RESPONSE", strings.PRICE_FEEDBACK_RESPONSE)
-async def handle_discount_inquiry(**kwargs) -> str: return string_service.get_string("DISCOUNT_INFO", strings.DISCOUNT_INFO)
-async def handle_review_inquiry(**kwargs) -> str: return string_service.get_string("REVIEW_INFO", strings.REVIEW_INFO)
-async def handle_bulk_order_inquiry(**kwargs) -> str: return string_service.get_string("BULK_ORDER_INFO", strings.BULK_ORDER_INFO)
-async def handle_reseller_inquiry(**kwargs) -> str: return string_service.get_string("RESELLER_INFO", strings.RESELLER_INFO)
-async def handle_contact_inquiry(**kwargs) -> str: return string_service.get_string("CONTACT_INFO", strings.CONTACT_INFO)
-async def handle_thank_you(**kwargs) -> str: return string_service.get_string("THANK_YOU_RESPONSE", strings.THANK_YOU_RESPONSE)
+async def handle_price_feedback(**kwargs) -> str:
+    business_id = kwargs.get("business_id", "feelori")
+    return string_service.get_formatted_string("PRICE_FEEDBACK_RESPONSE", business_id=business_id)
+async def handle_discount_inquiry(**kwargs) -> str:
+    business_id = kwargs.get("business_id", "feelori")
+    return string_service.get_formatted_string("DISCOUNT_INFO", business_id=business_id)
+async def handle_review_inquiry(**kwargs) -> str:
+    business_id = kwargs.get("business_id", "feelori")
+    return string_service.get_formatted_string("REVIEW_INFO", business_id=business_id)
+async def handle_bulk_order_inquiry(**kwargs) -> str:
+    business_id = kwargs.get("business_id", "feelori")
+    return string_service.get_formatted_string("BULK_ORDER_INFO", business_id=business_id)
+async def handle_reseller_inquiry(**kwargs) -> str:
+    business_id = kwargs.get("business_id", "feelori")
+    return string_service.get_formatted_string("RESELLER_INFO", business_id=business_id)
+async def handle_contact_inquiry(**kwargs) -> str:
+    business_id = kwargs.get("business_id", "feelori")
+    return string_service.get_formatted_string("CONTACT_INFO", business_id=business_id)
+async def handle_thank_you(**kwargs) -> str:
+    business_id = kwargs.get("business_id", "feelori")
+    return string_service.get_formatted_string("THANK_YOU_RESPONSE", business_id=business_id)
 
 
 async def handle_human_escalation(phone_number: str, customer: Dict, **kwargs) -> str:

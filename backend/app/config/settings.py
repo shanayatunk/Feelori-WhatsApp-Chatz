@@ -71,6 +71,11 @@ class Settings(BaseSettings):
     shopify_storefront_access_token: str | None = None
     product_search_source: str = "storefront"
 
+    # Golden Collections Shopify
+    golden_shopify_store_url: Optional[str] = Field(None, env="GOLDEN_SHOPIFY_STORE_URL")
+    golden_shopify_access_token: Optional[str] = Field(None, env="GOLDEN_SHOPIFY_ACCESS_TOKEN")
+    golden_shopify_storefront_access_token: Optional[str] = Field(None, env="GOLDEN_SHOPIFY_STOREFRONT_ACCESS_TOKEN")
+
     # AI APIs
     gemini_api_key: str | None = None
     openai_api_key: str | None = None

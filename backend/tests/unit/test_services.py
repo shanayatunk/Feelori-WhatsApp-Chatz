@@ -44,17 +44,24 @@ async def test_shopify_get_products_success(mocker):
         }]
     }]}
     
-    # 2. The http_client is an attribute of the service instance. We patch it after creation.
-    service = ShopifyService(settings.shopify_store_url, settings.shopify_access_token, settings.shopify_storefront_access_token)
+    # 2. Create service instance (no longer takes credentials in constructor)
+    service = ShopifyService()
     
-    # 3. Create a mock that can be awaited and has the correct methods
+    # 3. Mock _get_credentials to return test values
+    mocker.patch.object(
+        service,
+        '_get_credentials',
+        return_value=("test-store.myshopify.com", "test-token", "test-storefront-token")
+    )
+    
+    # 4. Create a mock that can be awaited and has the correct methods
     async def mock_get(*args, **kwargs):
         response = MagicMock(status_code=200, json=lambda: mock_rest_response)
         response.raise_for_status = MagicMock()
         return response
 
     mocker.patch.object(service, 'http_client', new_callable=AsyncMock)
-    # 4. Mock the 'get' method, not 'post'
+    # 5. Mock the 'get' method, not 'post'
     service.http_client.get = mock_get
     
     products, _ = await service.get_products(query="Test", limit=1)

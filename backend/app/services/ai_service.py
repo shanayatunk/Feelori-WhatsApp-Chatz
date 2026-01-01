@@ -10,7 +10,7 @@ from google.genai.types import GenerateContentConfig, HttpOptions
 from openai import AsyncOpenAI
 from tenacity import retry, wait_exponential, stop_after_attempt, retry_if_exception_type
 from app.models.domain import Product
-from app.config.settings import settings
+from app.config.settings import settings, get_business_config
 from app.config import persona
 from app.config.persona import VISUAL_SEARCH_PROMPT, QA_PROMPT_TEMPLATE
 from app.utils.circuit_breaker import CircuitBreaker
@@ -225,12 +225,37 @@ class AIService:
             
         system_prompt = string_service.get_string(prompt_key, default=fallback_text)
         
-        messages = [{"role": "system", "content": system_prompt}]
+        # Fetch business configuration and create facts dictionary
+        config = get_business_config(business_id)
+        business_facts = {
+            "business_name": config.business_name,
+            "support_email": config.support_email,
+            "support_phone": config.support_phone,
+            "website_url": config.website_url,
+            "address": config.business_address,
+            "shipping_policy": config.shipping_policy_url
+        }
+        
+        # Build enhanced system prompt with business facts
+        enhanced_system_prompt = f"""{system_prompt}
+
+[OFFICIAL BUSINESS FACTS - USE THESE FOR ANSWERS]
+{json.dumps(business_facts, indent=2)}
+"""
+        
+        messages = [{"role": "system", "content": enhanced_system_prompt}]
         if context.get("conversation_history"):
             for exchange in context["conversation_history"]:
                 messages.append({"role": "user", "content": exchange.get("message", "")})
                 messages.append({"role": "assistant", "content": exchange.get("response", "")})
-        messages.append({"role": "user", "content": message})
+        
+        # Include context and message in user content
+        user_content = f"""[CONVERSATION CONTEXT]
+{json.dumps(context)}
+
+[USER MESSAGE]
+{message}"""
+        messages.append({"role": "user", "content": user_content})
 
         response = await self.openai_client.chat.completions.create(
             model="gpt-3.5-turbo", messages=messages, max_tokens=150, temperature=0.7
@@ -255,7 +280,30 @@ class AIService:
             fallback_text = persona.FEELORI_SYSTEM_PROMPT
             
         system_prompt = string_service.get_string(prompt_key, default=fallback_text)
-        full_prompt = f"{system_prompt}\n\nContext: {json.dumps(context)}\n\nMessage: {message}"
+        
+        # Fetch business configuration and create facts dictionary
+        config = get_business_config(business_id)
+        business_facts = {
+            "business_name": config.business_name,
+            "support_email": config.support_email,
+            "support_phone": config.support_phone,
+            "website_url": config.website_url,
+            "address": config.business_address,
+            "shipping_policy": config.shipping_policy_url
+        }
+        
+        # Build enhanced prompt with business facts
+        full_prompt = f"""{system_prompt}
+
+[OFFICIAL BUSINESS FACTS - USE THESE FOR ANSWERS]
+{json.dumps(business_facts, indent=2)}
+
+[CONVERSATION CONTEXT]
+{json.dumps(context)}
+
+[USER MESSAGE]
+{message}
+"""
 
         # Call the sync client inside a thread, with simple retry wrapper
         try:

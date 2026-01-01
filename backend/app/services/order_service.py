@@ -13,7 +13,7 @@ from typing import Set, Dict, List, Tuple, Optional, Any
 from rapidfuzz import process, fuzz
 
 from app.config.settings import settings
-from app.config import strings, rules as default_rules
+from app.config import rules as default_rules
 from app.models.domain import Product
 from app.services.security_service import EnhancedSecurityService
 from app.services.ai_service import ai_service

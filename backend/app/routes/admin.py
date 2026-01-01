@@ -415,11 +415,15 @@ async def get_strings(request: Request, current_user: dict = Depends(verify_jwt_
 @router.put("/strings", response_model=APIResponse)
 async def update_strings(update_data: StringUpdateRequest, request: Request, current_user: dict = Depends(verify_jwt_token)):
     """Update all string resources."""
-    security_service.EnhancedSecurityService.validate_admin_session(request, current_user)
-    # Use the 'strings' attribute from the new model
-    await db_service.update_strings(update_data.strings)
-    await string_service.load_strings() # Reload the cache
-    return APIResponse(success=True, message="Strings updated successfully", version=settings.api.version)
+    try:
+        security_service.EnhancedSecurityService.validate_admin_session(request, current_user)
+        # Use the 'strings' attribute from the new model
+        await db_service.update_strings(update_data.strings)
+        await string_service.load_strings() # Reload the cache
+        return APIResponse(success=True, message="Strings updated successfully", version=settings.api_version)
+    except Exception as e:
+        logger.error(f"Failed to update strings: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/escalations", response_model=APIResponse)
 @limiter.limit("10/minute")

@@ -102,7 +102,7 @@ class ShopifyService:
         return products[0] if products else None
 
     async def get_products(self, query: str, limit: int = 25, sort_key: str = "RELEVANCE", filters: Optional[Dict] = None, business_id: str = "feelori") -> Tuple[List[Product], int]:
-        """Executes a product search via the Admin REST API."""
+        """Executes a product search via the Admin GraphQL API with smart query logic."""
         store_url, access_token, _ = self._get_credentials(business_id)
         cache_key = f"shopify_search:{business_id}:{query}:{limit}:{sort_key}"
         cached_products = await cache_service.get(cache_key)
@@ -115,39 +115,80 @@ class ShopifyService:
                 logger.warning(f"Corrupted product search cache for query: {query}")
 
         try:
-            keywords = query.split(' AND ')
+            # Smart Query Logic: Handle singular/plural and wildcards
+            keywords = query.split(' AND ') if ' AND ' in query else [query]
             
             query_parts = []
             for keyword in keywords:
-                # --- THIS IS THE FIX ---
-                # We remove the wildcards (*) to make the search more precise.
-                # A search for "earring" is better than "*earring*".
-                part = f'(title:"{keyword}" OR product_type:"{keyword}" OR tag:"{keyword}")'
-                # --- END OF FIX ---
+                keyword = keyword.strip()
+                if not keyword:
+                    continue
+                
+                # Strip trailing 's' to get singular form
+                singular = keyword.rstrip('s') if keyword.endswith('s') and len(keyword) > 1 else keyword
+                
+                # Build search with wildcards for both singular and plural
+                part = f'(title:{singular}* OR title:{keyword}* OR product_type:{singular}* OR product_type:{keyword}* OR tag:{singular} OR tag:{keyword})'
                 query_parts.append(part)
+            
+            if not query_parts:
+                return [], 0
             
             search_query = " AND ".join(query_parts)
             
-            url = f"https://{store_url}/admin/api/2025-07/products.json?limit={limit}&query={search_query}"
+            # GraphQL Query
+            gql_query = """
+            query($query: String!, $limit: Int!) {
+              products(first: $limit, query: $query, sortKey: RELEVANCE) {
+                edges {
+                  node {
+                    id
+                    title
+                    handle
+                    descriptionHtml
+                    tags
+                    productType
+                    variants(first: 1) {
+                      edges {
+                        node {
+                          id
+                          price
+                          inventoryQuantity
+                        }
+                      }
+                    }
+                    images(first: 1) {
+                      edges {
+                        node {
+                          originalSrc
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+            """
             
-            headers = {"X-Shopify-Access-Token": access_token}
+            # Execute GraphQL query
+            data = await self._execute_gql_query(
+                gql_query,
+                variables={"query": search_query, "limit": limit},
+                store_url=store_url,
+                access_token=access_token
+            )
+            
+            # Parse response
+            product_edges = data.get("products", {}).get("edges", [])
+            products = self._parse_products(product_edges)
 
-            resp = await self.resilient_api_call(self.http_client.get, url, headers=headers)
-            resp.raise_for_status()
-
-            data = resp.json()
-            products = []
-            for product_data in data.get("products", []):
-                product = Product.from_shopify_api(product_data)
-                if product:
-                    products.append(product)
-
+            # Cache results
             await cache_service.set(cache_key, json.dumps([p.dict() for p in products]), ttl=600)
 
             return products, len(products)
 
         except Exception as e:
-            logger.error(f"shopify_get_products_error using Admin API: {e}", exc_info=True)
+            logger.error(f"shopify_get_products_error using GraphQL API: {e}", exc_info=True)
             return [], 0
 
     async def get_product_by_id(self, product_id: str, business_id: str = "feelori") -> Optional[Product]:
@@ -493,7 +534,9 @@ class ShopifyService:
             image_edge = node.get("images", {}).get("edges", [])
             # Use `inventoryQuantity` for Admin API results
             inventory = variant_edge[0]["node"].get("inventoryQuantity")
-            clean_description = html.unescape(re.sub("<[^<]+?>", "", node.get("bodyHtml", "")))
+            # Handle both descriptionHtml (GraphQL) and bodyHtml (REST) for compatibility
+            description_html = node.get("descriptionHtml") or node.get("bodyHtml", "")
+            clean_description = html.unescape(re.sub("<[^<]+?>", "", description_html))
 
             products.append(Product(
                 id=node.get("id"), title=node.get("title"), description=clean_description,

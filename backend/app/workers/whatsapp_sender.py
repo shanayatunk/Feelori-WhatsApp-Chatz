@@ -14,7 +14,7 @@ import httpx
 from datetime import datetime, timezone
 from typing import Optional, Tuple
 from pymongo import MongoClient
-from pymongo.errors import PyMongoError
+
 
 # Configure logging
 logging.basicConfig(

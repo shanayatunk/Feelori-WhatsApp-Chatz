@@ -177,10 +177,11 @@ async def get_conversation_stats(
                 stats["resolved"] = count
             elif status == "triaged":
                 stats["triaged"] = count
-            # Handle any other status values by adding to total
+            # Handle any other status values (future-proof for new statuses)
         
-        # Calculate total: sum of open, resolved, and triaged
-        stats["total"] = stats["open"] + stats["resolved"] + stats["triaged"]
+        # Calculate total dynamically: sum ALL aggregation results
+        # This ensures correctness even if new statuses are added
+        stats["total"] = sum(r.get("count", 0) for r in results)
         
         return APIResponse(
             success=True,
@@ -232,8 +233,9 @@ async def get_conversation_thread(
         conversation["_id"] = str(conversation["_id"])
         
         # Find all messages for this conversation, sorted by created_at ascending
+        # Use ObjectId for referential integrity (matches conversations._id)
         messages_cursor = db_service.db.message_logs.find({
-            "conversation_id": conversation_id,
+            "conversation_id": conv_object_id,  # Use ObjectId, not string
             "tenant_id": tenant_id
         }).sort("created_at", 1)
         
@@ -476,9 +478,10 @@ async def send_agent_message(
         now = datetime.now(timezone.utc)
         
         # 1. Insert message into message_logs
+        # Use ObjectId for referential integrity (matches conversations._id)
         message_doc = {
             "tenant_id": tenant_id,
-            "conversation_id": conversation_id,
+            "conversation_id": conv_object_id,  # Use ObjectId, not string
             "source": "agent",
             "type": "text",
             "text": message_data.message,

@@ -10,14 +10,10 @@ import os
 import asyncio
 import logging
 from datetime import datetime, timezone
-from typing import Optional
 from pymongo import MongoClient
-from pymongo.errors import PyMongoError
-from bson import ObjectId
 
 # Import AI service
 from app.services.ai_service import ai_service
-from app.config.settings import settings
 
 # Configure logging
 logging.basicConfig(
@@ -53,179 +49,131 @@ async def generate_ai_response(user_text: str, tenant_id: str) -> str:
         # Use business_id from tenant_id (default to "feelori")
         business_id = tenant_id if tenant_id in ["feelori", "goldencollections"] else "feelori"
         
-        # Simple context (can be enhanced later)
-        context = {}
-        
-        # Generate response using AI service
         response = await ai_service.generate_response(
             message=user_text,
-            context=context,
-            business_id=business_id
+            business_id=business_id,
+            conversation_history=[] # We could pass history here in future
         )
-        
-        return response or f"Echo: {user_text}"  # Fallback to echo if AI fails
-        
+        return response
     except Exception as e:
-        logger.error(f"Failed to generate AI response: {e}", exc_info=True)
-        # Fallback to simple echo
-        return f"Echo: {user_text}"
+        logger.error(f"AI Generation failed: {e}")
+        return "I apologize, but I'm having trouble processing your request right now."
 
 
-async def process_conversation_candidate(db, conversation: dict) -> bool:
+async def find_and_process_candidates(db):
     """
-    Process a single conversation candidate that needs an AI response.
+    Find conversations needing AI reply and process them.
+    Returns the number of processed conversations.
+    """
+    # Criteria:
+    # 1. Status is Open
+    # 2. AI is Enabled
+    # 3. AI is NOT paused by anyone
+    # 4. Last message exists and is text
+    query = {
+        "status": "open",
+        "ai_enabled": True,
+        "ai_paused_by": None,
+        "last_message.type": "text"
+    }
     
-    Args:
-        db: MongoDB database object
-        conversation: Conversation document
+    # Find candidates
+    # Limit to 5 to prevent massive batches blocking the loop
+    candidates = list(db.conversations.find(query).limit(5))
+    
+    processed_count = 0
+    
+    for conv in candidates:
+        conv_id = conv["_id"]
+        tenant_id = conv["tenant_id"]
         
-    Returns:
-        True if conversation was processed, False if skipped
-    """
-    try:
-        conv_id = conversation.get("_id")
-        conv_id_str = str(conv_id)
-        tenant_id = conversation.get("tenant_id", "")
-        last_message = conversation.get("last_message", {})
-        user_text = last_message.get("text", "")
-        
-        if not user_text:
-            logger.debug(f"Skipping conversation {conv_id_str}: no text in last_message")
-            return False
-        
-        # CRITICAL SAFETY CHECK: Verify the last message in message_logs was from user
-        # Find the most recent message for this conversation
-        latest_log = db.message_logs.find_one(
-            {"conversation_id": conv_id},  # Use ObjectId for referential integrity
+        # CRITICAL SAFETY CHECK:
+        # Verify the LAST message in the log is actually from the 'user'.
+        # The 'conversations' collection summary might be slightly out of sync or
+        # we just want to be 100% sure we don't reply to ourselves or an agent.
+        last_msg = db.message_logs.find_one(
+            {"conversation_id": str(conv_id)}, # message_logs uses string ID in current schema? Checking...
             sort=[("created_at", -1)]
         )
         
-        if not latest_log:
-            logger.debug(f"Skipping conversation {conv_id_str}: no messages in message_logs")
-            return False
+        # Note: In Backend Step 2 we enforced ObjectId for conversation_id in message_logs.
+        # But let's check both just in case of old data, or trust the new schema.
+        if not last_msg:
+            # Try with ObjectId just in case
+            last_msg = db.message_logs.find_one(
+                {"conversation_id": conv_id},
+                sort=[("created_at", -1)]
+            )
+            
+        if not last_msg:
+            continue # Should not happen if last_message exists, but safe to skip
+            
+        if last_msg.get("source") != "user":
+            continue # The last message was from 'agent' or 'ai'. Do NOT reply.
+            
+        # Process this conversation
+        user_text = last_msg.get("text", "")
+        if not user_text:
+            continue
+            
+        logger.info(f"Generating AI reply for conversation {conv_id}")
         
-        # Check if the latest message was from user/customer
-        # CRITICAL: Only respond if the last message was from the user, not AI or agent
-        latest_source = latest_log.get("source", "")
-        if latest_source not in ["user", "customer"]:
-            # AI or Agent already replied, skip
-            logger.debug(f"Skipping conversation {conv_id_str}: last message source is '{latest_source}', not 'user'/'customer'")
-            return False
-        
-        logger.info(f"Processing conversation {conv_id_str} for AI response (user: {latest_log.get('phone', 'unknown')[:4]}...)")
-        
-        # Generate AI response
-        ai_response = await generate_ai_response(user_text, tenant_id)
+        # Generate Response
+        ai_reply_text = await generate_ai_response(user_text, tenant_id)
         
         now = datetime.now(timezone.utc)
         
-        # Step A: Insert into message_logs (source="ai")
-        message_log_doc = {
+        # 1. Insert into message_logs
+        ai_msg_doc = {
             "tenant_id": tenant_id,
-            "conversation_id": conv_id,  # Use ObjectId for referential integrity
+            "conversation_id": conv_id, # Keep ObjectId consistency
             "source": "ai",
             "type": "text",
-            "text": ai_response,
+            "text": ai_reply_text,
             "created_at": now
         }
+        db.message_logs.insert_one(ai_msg_doc)
         
-        message_log_result = db.message_logs.insert_one(message_log_doc)
-        message_log_id = str(message_log_result.inserted_id)
-        
-        # Step B: Insert into outbound_messages (source="ai", status="pending")
+        # 2. Insert into outbound_messages (Ledger)
         outbound_doc = {
             "tenant_id": tenant_id,
-            "conversation_id": conv_id,  # Use ObjectId for referential integrity
+            "conversation_id": conv_id,
             "channel": "whatsapp",
-            "recipient": conversation.get("external_user_id", ""),  # Phone number
+            "recipient": conv["external_user_id"],
             "payload": {
                 "type": "text",
-                "text": ai_response
+                "text": ai_reply_text
             },
             "source": "ai",
-            "status": "pending",  # Worker will pick this up
+            "status": "pending",
             "attempts": 0,
-            "last_error": None,
             "created_at": now,
             "sent_at": None
         }
-        
         db.outbound_messages.insert_one(outbound_doc)
         
-        # Step C: Update conversations (last_message, last_message_at, updated_at)
-        new_last_message = {
-            "type": "text",
-            "text": ai_response
-        }
-        
+        # 3. Update conversation summary
         db.conversations.update_one(
             {"_id": conv_id},
             {
                 "$set": {
-                    "last_message": new_last_message,
+                    "last_message": {
+                        "type": "text",
+                        "text": ai_reply_text
+                    },
                     "last_message_at": now,
                     "updated_at": now
-                }
+                    }
             }
         )
         
-        logger.info(f"AI response generated and enqueued for conversation {conv_id_str}")
-        return True
+        processed_count += 1
         
-    except PyMongoError as e:
-        logger.error(f"MongoDB error processing conversation: {e}", exc_info=True)
-        return False
-    except Exception as e:
-        logger.error(f"Unexpected error processing conversation: {e}", exc_info=True)
-        return False
-
-
-async def find_and_process_candidates(db) -> int:
-    """
-    Find conversation candidates that need AI responses and process them.
-    
-    Args:
-        db: MongoDB database object
-        
-    Returns:
-        Number of conversations processed
-    """
-    try:
-        # Find candidate conversations
-        candidates = list(db.conversations.find({
-            "ai_enabled": True,
-            "ai_paused_by": None,
-            "status": "open",
-            "last_message.type": "text"  # Ignore images for now
-        }))
-        
-        if not candidates:
-            return 0
-        
-        logger.info(f"Found {len(candidates)} candidate conversations for AI response")
-        
-        processed_count = 0
-        
-        # Process each candidate
-        for conversation in candidates:
-            processed = await process_conversation_candidate(db, conversation)
-            if processed:
-                processed_count += 1
-        
-        return processed_count
-        
-    except PyMongoError as e:
-        logger.error(f"MongoDB error finding candidates: {e}", exc_info=True)
-        return 0
-    except Exception as e:
-        logger.error(f"Unexpected error finding candidates: {e}", exc_info=True)
-        return 0
+    return processed_count
 
 
 async def run_worker_loop():
-    """
-    Main async worker loop that continuously polls for conversations needing AI responses.
-    """
+    """Async worker loop."""
     if not MONGO_URI:
         logger.error("MONGO_ATLAS_URI or MONGODB_URI environment variable is required")
         return
@@ -233,16 +181,13 @@ async def run_worker_loop():
     logger.info("Starting AI Responder Worker...")
     
     # Connect to MongoDB
+    client = None
     try:
         client = get_mongo_client()
         db = client.get_default_database()
         logger.info(f"Connected to MongoDB database: {db.name}")
-    except Exception as e:
-        logger.error(f"Failed to connect to MongoDB: {e}")
-        return
-    
-    # Main polling loop
-    try:
+        
+        # Main polling loop
         while True:
             try:
                 # Find and process candidates
@@ -250,17 +195,18 @@ async def run_worker_loop():
                 
                 if processed > 0:
                     logger.info(f"Processed {processed} conversation(s) with AI responses")
+                
                 # Always sleep to prevent hammering the DB
                 await asyncio.sleep(2)
                 
-            except KeyboardInterrupt:
-                logger.info("Worker stopped by user")
+            except asyncio.CancelledError:
+                logger.info("Worker stopped")
                 break
             except Exception as e:
                 logger.error(f"Unexpected error in worker loop: {e}", exc_info=True)
-                await asyncio.sleep(2)  # Sleep on error to prevent tight error loop
+                await asyncio.sleep(2)
     finally:
-        if 'client' in locals():
+        if client:
             client.close()
             logger.info("MongoDB connection closed")
 
@@ -274,4 +220,3 @@ def run_worker():
 
 if __name__ == "__main__":
     run_worker()
-

@@ -2,8 +2,9 @@
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from bson import ObjectId
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
+from pydantic import BaseModel
 
 from app.dependencies.tenant import get_tenant_id
 from app.services.db_service import db_service
@@ -14,6 +15,19 @@ router = APIRouter(
     prefix="/conversations",
     tags=["Conversations"]
 )
+
+
+# Request models for conversation actions
+class AssignRequest(BaseModel):
+    user_id: str
+
+
+class AIControlRequest(BaseModel):
+    enabled: bool
+
+
+class SendMessageRequest(BaseModel):
+    message: str
 
 
 @router.get("/", response_model=APIResponse)
@@ -246,4 +260,268 @@ async def get_conversation_thread(
         raise HTTPException(
             status_code=500,
             detail=f"Failed to retrieve conversation thread: {str(e)}"
+        )
+
+
+@router.post("/{conversation_id}/assign", response_model=APIResponse)
+async def assign_conversation(
+    conversation_id: str,
+    assign_data: AssignRequest,
+    tenant_id: str = Depends(get_tenant_id)
+):
+    """
+    Assign a conversation to an agent.
+    """
+    try:
+        # Convert conversation_id to ObjectId
+        try:
+            conv_object_id = ObjectId(conversation_id)
+        except Exception:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid conversation ID format: {conversation_id}"
+            )
+        
+        # Update conversation with tenant_id check (security)
+        now = datetime.now(timezone.utc)
+        result = await db_service.db.conversations.update_one(
+            {
+                "_id": conv_object_id,
+                "tenant_id": tenant_id  # Security: ensure tenant isolation
+            },
+            {
+                "$set": {
+                    "assigned_to": assign_data.user_id,
+                    "updated_at": now
+                }
+            }
+        )
+        
+        if result.matched_count == 0:
+            raise HTTPException(
+                status_code=404,
+                detail="Conversation not found"
+            )
+        
+        return APIResponse(
+            success=True,
+            message="Conversation assigned successfully",
+            version=settings.api_version
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to assign conversation: {str(e)}"
+        )
+
+
+@router.put("/{conversation_id}/resolve", response_model=APIResponse)
+async def resolve_conversation(
+    conversation_id: str,
+    tenant_id: str = Depends(get_tenant_id)
+):
+    """
+    Mark a conversation as resolved.
+    """
+    try:
+        # Convert conversation_id to ObjectId
+        try:
+            conv_object_id = ObjectId(conversation_id)
+        except Exception:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid conversation ID format: {conversation_id}"
+            )
+        
+        # Update conversation with tenant_id check (security)
+        now = datetime.now(timezone.utc)
+        result = await db_service.db.conversations.update_one(
+            {
+                "_id": conv_object_id,
+                "tenant_id": tenant_id  # Security: ensure tenant isolation
+            },
+            {
+                "$set": {
+                    "status": "resolved",
+                    "updated_at": now
+                }
+            }
+        )
+        
+        if result.matched_count == 0:
+            raise HTTPException(
+                status_code=404,
+                detail="Conversation not found"
+            )
+        
+        return APIResponse(
+            success=True,
+            message="Conversation resolved successfully",
+            version=settings.api_version
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to resolve conversation: {str(e)}"
+        )
+
+
+@router.post("/{conversation_id}/ai", response_model=APIResponse)
+async def control_ai(
+    conversation_id: str,
+    ai_data: AIControlRequest,
+    tenant_id: str = Depends(get_tenant_id)
+):
+    """
+    Pause or resume AI for a conversation.
+    """
+    try:
+        # Convert conversation_id to ObjectId
+        try:
+            conv_object_id = ObjectId(conversation_id)
+        except Exception:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid conversation ID format: {conversation_id}"
+            )
+        
+        # Build update document based on enabled flag
+        now = datetime.now(timezone.utc)
+        if ai_data.enabled:
+            # Resume AI: enable AI and clear paused_by
+            update_doc = {
+                "$set": {
+                    "ai_enabled": True,
+                    "ai_paused_by": None,
+                    "updated_at": now
+                }
+            }
+        else:
+            # Pause AI: disable AI and set paused_by to "agent"
+            update_doc = {
+                "$set": {
+                    "ai_enabled": False,
+                    "ai_paused_by": "agent",
+                    "updated_at": now
+                }
+            }
+        
+        # Update conversation with tenant_id check (security)
+        result = await db_service.db.conversations.update_one(
+            {
+                "_id": conv_object_id,
+                "tenant_id": tenant_id  # Security: ensure tenant isolation
+            },
+            update_doc
+        )
+        
+        if result.matched_count == 0:
+            raise HTTPException(
+                status_code=404,
+                detail="Conversation not found"
+            )
+        
+        return APIResponse(
+            success=True,
+            message=f"AI {'enabled' if ai_data.enabled else 'paused'} successfully",
+            version=settings.api_version
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to control AI: {str(e)}"
+        )
+
+
+@router.post("/{conversation_id}/send", response_model=APIResponse)
+async def send_agent_message(
+    conversation_id: str,
+    message_data: SendMessageRequest,
+    tenant_id: str = Depends(get_tenant_id)
+):
+    """
+    Send an agent reply message in a conversation.
+    """
+    try:
+        # Convert conversation_id to ObjectId
+        try:
+            conv_object_id = ObjectId(conversation_id)
+        except Exception:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid conversation ID format: {conversation_id}"
+            )
+        
+        # Verify conversation exists and belongs to tenant (security)
+        conversation = await db_service.db.conversations.find_one({
+            "_id": conv_object_id,
+            "tenant_id": tenant_id  # Security: ensure tenant isolation
+        })
+        
+        if not conversation:
+            raise HTTPException(
+                status_code=404,
+                detail="Conversation not found"
+            )
+        
+        now = datetime.now(timezone.utc)
+        
+        # 1. Insert message into message_logs
+        message_doc = {
+            "tenant_id": tenant_id,
+            "conversation_id": conversation_id,
+            "source": "agent",
+            "type": "text",
+            "text": message_data.message,
+            "created_at": now
+        }
+        
+        message_result = await db_service.db.message_logs.insert_one(message_doc)
+        message_id = str(message_result.inserted_id)
+        
+        # 2. Update conversation
+        last_message = {
+            "type": "text",
+            "text": message_data.message
+        }
+        
+        await db_service.db.conversations.update_one(
+            {
+                "_id": conv_object_id,
+                "tenant_id": tenant_id  # Security: ensure tenant isolation
+            },
+            {
+                "$set": {
+                    "last_message": last_message,
+                    "last_message_at": now,
+                    "updated_at": now,
+                    "status": "open",  # Re-open if resolved
+                    "ai_enabled": False,  # Critical: Disable AI when agent sends message
+                    "ai_paused_by": "agent"  # Critical: Track that agent paused AI
+                }
+            }
+        )
+        
+        return APIResponse(
+            success=True,
+            message="Message sent successfully",
+            data={"message_id": message_id},
+            version=settings.api_version
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to send message: {str(e)}"
         )

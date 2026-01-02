@@ -491,7 +491,27 @@ async def send_agent_message(
         message_result = await db_service.db.message_logs.insert_one(message_doc)
         message_id = str(message_result.inserted_id)
         
-        # 2. Update conversation
+        # 2. Insert into outbound_messages ledger for async processing
+        outbound_doc = {
+            "tenant_id": tenant_id,
+            "conversation_id": conv_object_id,  # Must be ObjectId for referential integrity
+            "channel": "whatsapp",
+            "recipient": conversation["external_user_id"],  # Phone number
+            "payload": {
+                "type": "text",
+                "text": message_data.message
+            },
+            "source": "agent",
+            "status": "pending",  # Critical: worker will pick this up
+            "attempts": 0,
+            "last_error": None,
+            "created_at": now,
+            "sent_at": None
+        }
+        
+        await db_service.db.outbound_messages.insert_one(outbound_doc)
+        
+        # 3. Update conversation
         last_message = {
             "type": "text",
             "text": message_data.message

@@ -43,6 +43,10 @@ def get_tenant_id(credentials: HTTPAuthorizationCredentials = Depends(security))
     # Extract tenant_id from payload
     tenant_id = payload.get("tenant_id")
     
+    # Apply defensive whitespace stripping
+    if isinstance(tenant_id, str):
+        tenant_id = tenant_id.strip()
+    
     # Critical: Raise 403 if tenant_id is missing
     if not tenant_id:
         raise HTTPException(

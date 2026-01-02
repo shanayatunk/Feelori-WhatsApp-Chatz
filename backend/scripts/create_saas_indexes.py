@@ -5,7 +5,7 @@ One-time database setup script for SaaS multi-tenancy indexes.
 Creates indexes on:
 - conversations collection: unique index on (tenant_id, external_user_id)
 - conversations collection: sorting index on (tenant_id, status, updated_at)
-- messages collection: index on (conversation_id, created_at)
+- message_logs collection: index on (conversation_id, created_at)
 
 Usage:
     python scripts/create_saas_indexes.py
@@ -78,10 +78,10 @@ async def create_saas_indexes():
         except Exception as e:
             logger.warning(f"Index creation warning (may already exist): {e}")
         
-        # 3. Create index on messages: (conversation_id, created_at)
-        logger.info("Creating index on messages: (conversation_id, created_at)")
+        # 3. Create index on message_logs: (conversation_id, created_at)
+        logger.info("Creating index on message_logs: (conversation_id, created_at)")
         try:
-            await db.messages.create_index(
+            await db.message_logs.create_index(
                 [("conversation_id", 1), ("created_at", 1)],
                 name="conversation_created"
             )
@@ -96,8 +96,8 @@ async def create_saas_indexes():
         conversations_indexes = await db.conversations.list_indexes().to_list(length=None)
         logger.info(f"Conversations indexes: {[idx['name'] for idx in conversations_indexes]}")
         
-        messages_indexes = await db.messages.list_indexes().to_list(length=None)
-        logger.info(f"Messages indexes: {[idx['name'] for idx in messages_indexes]}")
+        message_logs_indexes = await db.message_logs.list_indexes().to_list(length=None)
+        logger.info(f"Message logs indexes: {[idx['name'] for idx in message_logs_indexes]}")
         
     except Exception as e:
         logger.error(f"Error creating indexes: {e}", exc_info=True)

@@ -122,6 +122,66 @@ async def list_conversations(
         )
 
 
+@router.get("/stats", response_model=APIResponse)
+async def get_conversation_stats(
+    tenant_id: str = Depends(get_tenant_id)
+):
+    """
+    Get conversation statistics aggregated by status for the authenticated tenant.
+    
+    Returns counts for open, resolved, triaged, and total conversations.
+    """
+    try:
+        # Initialize defaults to ensure frontend never crashes
+        stats = {"open": 0, "resolved": 0, "triaged": 0, "total": 0}
+        
+        # Build aggregation pipeline
+        pipeline = [
+            # Match conversations for this tenant
+            {"$match": {"tenant_id": tenant_id}},
+            # Group by status and count documents
+            {
+                "$group": {
+                    "_id": "$status",
+                    "count": {"$sum": 1}
+                }
+            }
+        ]
+        
+        # Execute aggregation
+        results = await db_service.db.conversations.aggregate(pipeline).to_list(length=None)
+        
+        # Merge aggregation results into stats dictionary
+        for result in results:
+            status = result.get("_id", "").lower()
+            count = result.get("count", 0)
+            
+            # Map status values to our stats keys
+            if status == "open":
+                stats["open"] = count
+            elif status == "resolved":
+                stats["resolved"] = count
+            elif status == "triaged":
+                stats["triaged"] = count
+            # Handle any other status values by adding to total
+        
+        # Calculate total: sum of open, resolved, and triaged
+        stats["total"] = stats["open"] + stats["resolved"] + stats["triaged"]
+        
+        return APIResponse(
+            success=True,
+            message="Conversation statistics retrieved successfully",
+            data={"stats": stats},
+            version=settings.api_version
+        )
+        
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to retrieve conversation statistics: {str(e)}"
+        )
+
+
 @router.get("/{conversation_id}", response_model=APIResponse)
 async def get_conversation_thread(
     conversation_id: str,

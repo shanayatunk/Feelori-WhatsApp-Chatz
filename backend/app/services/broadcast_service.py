@@ -7,7 +7,7 @@ from typing import List, Dict, Optional, Any
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-from app.config.settings import settings, BusinessConfig
+from app.config.settings import settings, WhatsAppBusinessConfig
 from app.services.whatsapp_service import whatsapp_service
 from app.services.db_service import db_service
 
@@ -35,20 +35,20 @@ class BroadcastService:
         self.base_url = "https://graph.facebook.com/v18.0"
         self.http_client = httpx.AsyncClient(timeout=15.0)
     
-    def _find_business_config(self, target_business_id: str) -> BusinessConfig:
+    def _find_business_config(self, target_business_id: str) -> WhatsAppBusinessConfig:
         """
-        Find business configuration from BUSINESS_REGISTRY.
+        Find business configuration from WHATSAPP_BUSINESS_REGISTRY.
         
         Args:
             target_business_id: The business ID to find
             
         Returns:
-            BusinessConfig instance
+            WhatsAppBusinessConfig instance
             
         Raises:
             ValueError: If business ID is not found in registry
         """
-        for config in settings.BUSINESS_REGISTRY.values():
+        for config in settings.WHATSAPP_BUSINESS_REGISTRY.values():
             if config.business_id == target_business_id:
                 return config
         

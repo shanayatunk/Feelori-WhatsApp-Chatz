@@ -23,14 +23,39 @@ def _mask_phone_for_log(phone: str) -> str:
     return f"***{sanitized[-4:]}" if sanitized else "N/A"
 
 class ShopifyService:
-    def __init__(self, store_url: str, access_token: str, storefront_token: Optional[str]):
-        self.store_url = store_url.replace('https://', '').replace('http://', '')
-        self.access_token = access_token
-        self.storefront_token = storefront_token
+    def __init__(self):
         self.circuit_breaker = RedisCircuitBreaker(cache_service.redis, "shopify")
         self.http_client = httpx.AsyncClient(
             timeout=httpx.Timeout(10.0, read=30.0, connect=5.0)
         )
+
+    def _get_credentials(self, business_id: str) -> Tuple[str, str, Optional[str]]:
+        """
+        Returns (store_url, access_token, storefront_access_token) based on business_id.
+        
+        Args:
+            business_id: Business identifier (e.g., 'feelori', 'goldencollections')
+            
+        Returns:
+            Tuple of (store_url, access_token, storefront_access_token)
+        """
+        normalized_id = (business_id or "feelori").strip().lower()
+        
+        if normalized_id == "goldencollections" and settings.golden_shopify_store_url:
+            store_url = settings.golden_shopify_store_url.replace('https://', '').replace('http://', '')
+            return (
+                store_url,
+                settings.golden_shopify_access_token or "",
+                settings.golden_shopify_storefront_access_token
+            )
+        else:
+            # Default to Feelori
+            store_url = settings.shopify_store_url.replace('https://', '').replace('http://', '')
+            return (
+                store_url,
+                settings.shopify_access_token,
+                settings.shopify_storefront_access_token
+            )
 
     @tenacity.retry(
         retry=tenacity.retry_if_exception_type((httpx.RequestError, httpx.TimeoutException)),
@@ -43,11 +68,12 @@ class ShopifyService:
 
     # --- Product Lookups ---
     
-    async def get_product_image_url(self, product_id: int) -> Optional[str]:
+    async def get_product_image_url(self, product_id: int, business_id: str = "feelori") -> Optional[str]:
         """Gets a product's primary image URL using the REST API."""
         try:
-            url = f"https://{self.store_url}/admin/api/2025-07/products/{product_id}/images.json"
-            headers = {"X-Shopify-Access-Token": self.access_token}
+            store_url, access_token, _ = self._get_credentials(business_id)
+            url = f"https://{store_url}/admin/api/2025-07/products/{product_id}/images.json"
+            headers = {"X-Shopify-Access-Token": access_token}
             resp = await self.resilient_api_call(self.http_client.get, url, headers=headers)
             resp.raise_for_status()
             images = resp.json().get("images", [])
@@ -56,11 +82,12 @@ class ShopifyService:
             logger.error(f"get_product_image_url_error for product_id {product_id}: {e}")
             return None
 
-    async def get_inventory_for_variant(self, variant_id: int) -> Optional[int]:
+    async def get_inventory_for_variant(self, variant_id: int, business_id: str = "feelori") -> Optional[int]:
         """Gets the inventory quantity for a single variant ID."""
         try:
-            url = f"https://{self.store_url}/admin/api/2025-07/variants/{variant_id}.json"
-            headers = {"X-Shopify-Access-Token": self.access_token}
+            store_url, access_token, _ = self._get_credentials(business_id)
+            url = f"https://{store_url}/admin/api/2025-07/variants/{variant_id}.json"
+            headers = {"X-Shopify-Access-Token": access_token}
             resp = await self.resilient_api_call(self.http_client.get, url, headers=headers)
             resp.raise_for_status()
             variant_data = resp.json().get("variant", {})
@@ -69,14 +96,15 @@ class ShopifyService:
             logger.error(f"get_inventory_for_variant_error for variant_id {variant_id}: {e}")
             return None
 
-    async def get_product_by_handle(self, handle: str) -> Optional[Product]:
+    async def get_product_by_handle(self, handle: str, business_id: str = "feelori") -> Optional[Product]:
         """Gets a single product by its handle (URL slug)."""
-        products, _ = await self.get_products(f'handle:"{handle}"', limit=1)
+        products, _ = await self.get_products(f'handle:"{handle}"', limit=1, business_id=business_id)
         return products[0] if products else None
 
-    async def get_products(self, query: str, limit: int = 25, sort_key: str = "RELEVANCE", filters: Optional[Dict] = None) -> Tuple[List[Product], int]:
-        """Executes a product search via the Admin REST API."""
-        cache_key = f"shopify_search:{query}:{limit}:{sort_key}"
+    async def get_products(self, query: str, limit: int = 25, sort_key: str = "RELEVANCE", filters: Optional[Dict] = None, business_id: str = "feelori") -> Tuple[List[Product], int]:
+        """Executes a product search via the Admin GraphQL API with smart query logic."""
+        store_url, access_token, _ = self._get_credentials(business_id)
+        cache_key = f"shopify_search:{business_id}:{query}:{limit}:{sort_key}"
         cached_products = await cache_service.get(cache_key)
         if cached_products:
             try:
@@ -87,43 +115,85 @@ class ShopifyService:
                 logger.warning(f"Corrupted product search cache for query: {query}")
 
         try:
-            keywords = query.split(' AND ')
+            # Smart Query Logic: Handle singular/plural and wildcards
+            keywords = query.split(' AND ') if ' AND ' in query else [query]
             
             query_parts = []
             for keyword in keywords:
-                # --- THIS IS THE FIX ---
-                # We remove the wildcards (*) to make the search more precise.
-                # A search for "earring" is better than "*earring*".
-                part = f'(title:"{keyword}" OR product_type:"{keyword}" OR tag:"{keyword}")'
-                # --- END OF FIX ---
+                keyword = keyword.strip()
+                if not keyword:
+                    continue
+                
+                # Strip trailing 's' to get singular form
+                singular = keyword.rstrip('s') if keyword.endswith('s') and len(keyword) > 1 else keyword
+                
+                # Build search with wildcards for both singular and plural
+                part = f'(title:{singular}* OR title:{keyword}* OR product_type:{singular}* OR product_type:{keyword}* OR tag:{singular} OR tag:{keyword})'
                 query_parts.append(part)
+            
+            if not query_parts:
+                return [], 0
             
             search_query = " AND ".join(query_parts)
             
-            url = f"https://{self.store_url}/admin/api/2025-07/products.json?limit={limit}&query={search_query}"
+            # GraphQL Query
+            gql_query = """
+            query($query: String!, $limit: Int!) {
+              products(first: $limit, query: $query, sortKey: RELEVANCE) {
+                edges {
+                  node {
+                    id
+                    title
+                    handle
+                    descriptionHtml
+                    tags
+                    productType
+                    variants(first: 1) {
+                      edges {
+                        node {
+                          id
+                          price
+                          inventoryQuantity
+                        }
+                      }
+                    }
+                    images(first: 1) {
+                      edges {
+                        node {
+                          originalSrc
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+            """
             
-            headers = {"X-Shopify-Access-Token": self.access_token}
+            # Execute GraphQL query
+            data = await self._execute_gql_query(
+                gql_query,
+                variables={"query": search_query, "limit": limit},
+                store_url=store_url,
+                access_token=access_token
+            )
+            
+            # Parse response
+            product_edges = data.get("products", {}).get("edges", [])
+            products = self._parse_products(product_edges)
 
-            resp = await self.resilient_api_call(self.http_client.get, url, headers=headers)
-            resp.raise_for_status()
-
-            data = resp.json()
-            products = []
-            for product_data in data.get("products", []):
-                product = Product.from_shopify_api(product_data)
-                if product:
-                    products.append(product)
-
+            # Cache results
             await cache_service.set(cache_key, json.dumps([p.dict() for p in products]), ttl=600)
 
             return products, len(products)
 
         except Exception as e:
-            logger.error(f"shopify_get_products_error using Admin API: {e}", exc_info=True)
+            logger.error(f"shopify_get_products_error using GraphQL API: {e}", exc_info=True)
             return [], 0
 
-    async def get_product_by_id(self, product_id: str) -> Optional[Product]:
+    async def get_product_by_id(self, product_id: str, business_id: str = "feelori") -> Optional[Product]:
         """Gets a single product by its GraphQL GID using the Admin API."""
+        store_url, access_token, _ = self._get_credentials(business_id)
         gql_query = """
         query($id: ID!) {
           node(id: $id) { ... on Product { ...productFields } }
@@ -135,7 +205,7 @@ class ShopifyService:
         }
         """
         try:
-            data = await self._execute_gql_query(gql_query, {"id": product_id})
+            data = await self._execute_gql_query(gql_query, {"id": product_id}, store_url, access_token)
             if not data.get("node"): 
                 return None
             products = self._parse_products([{"node": data.get("node")}])
@@ -144,8 +214,9 @@ class ShopifyService:
             logger.error(f"shopify_product_by_id_error for {product_id}: {e}")
             return None
 
-    async def get_product_variants(self, product_id: str) -> List[Dict]:
+    async def get_product_variants(self, product_id: str, business_id: str = "feelori") -> List[Dict]:
         """Gets all variants for a given product ID using the Admin API."""
+        store_url, access_token, _ = self._get_credentials(business_id)
         gql_query = """
         query($id: ID!) {
           node(id: $id) {
@@ -156,23 +227,24 @@ class ShopifyService:
         }
         """
         try:
-            data = await self._execute_gql_query(gql_query, {"id": product_id})
+            data = await self._execute_gql_query(gql_query, {"id": product_id}, store_url, access_token)
             variant_edges = data.get("node", {}).get("variants", {}).get("edges", [])
             return [edge["node"] for edge in variant_edges]
         except Exception as e:
             logger.error(f"get_product_variants_error for {product_id}: {e}")
             return []
 
-    async def get_all_products(self) -> List[Product]:
+    async def get_all_products(self, business_id: str = "feelori") -> List[Product]:
         """Fetches all published products from Shopify, handling pagination."""
+        store_url, access_token, _ = self._get_credentials(business_id)
         products = []
-        url = f"https://{self.store_url}/admin/api/2025-07/products.json?status=active&limit=250"
+        url = f"https://{store_url}/admin/api/2025-07/products.json?status=active&limit=250"
         
         logger.info("Starting to fetch all products from Shopify...")
         
         while url:
             try:
-                headers = {"X-Shopify-Access-Token": self.access_token}
+                headers = {"X-Shopify-Access-Token": access_token}
                 response = await self.http_client.get(url, headers=headers)
                 response.raise_for_status()
                 
@@ -199,41 +271,45 @@ class ShopifyService:
 
     # --- Cart and Checkout ---
     
-    async def create_cart(self) -> Optional[str]:
+    async def create_cart(self, business_id: str = "feelori") -> Optional[str]:
+        store_url, _, storefront_token = self._get_credentials(business_id)
         gql_mutation = "mutation { cartCreate { cart { id checkoutUrl } userErrors { field message } } }"
-        data = await self._execute_storefront_gql_query(gql_mutation)
+        data = await self._execute_storefront_gql_query(gql_mutation, store_url, storefront_token, variables=None)
         return (data.get("cartCreate") or {}).get("cart", {}).get("id")
 
-    async def add_item_to_cart(self, cart_id: str, variant_id: str, quantity: int = 1) -> bool:
+    async def add_item_to_cart(self, cart_id: str, variant_id: str, quantity: int = 1, business_id: str = "feelori") -> bool:
+        store_url, _, storefront_token = self._get_credentials(business_id)
         gql_mutation = '''
         mutation($cartId: ID!, $lines: [CartLineInput!]!) {
           cartLinesAdd(cartId: $cartId, lines: $lines) { cart { id } userErrors { field message } }
         }'''
         variables = {"cartId": cart_id, "lines": [{"merchandiseId": variant_id, "quantity": quantity}]}
-        data = await self._execute_storefront_gql_query(gql_mutation, variables)
+        data = await self._execute_storefront_gql_query(gql_mutation, store_url, storefront_token, variables)
         return not ((data.get("cartLinesAdd") or {}).get("userErrors"))
 
-    async def get_checkout_url(self, cart_id: str) -> Optional[str]:
+    async def get_checkout_url(self, cart_id: str, business_id: str = "feelori") -> Optional[str]:
+        store_url, _, storefront_token = self._get_credentials(business_id)
         gql_query = "query($cartId: ID!) { cart(id: $cartId) { checkoutUrl } }"
-        data = await self._execute_storefront_gql_query(gql_query, {"cartId": cart_id})
+        data = await self._execute_storefront_gql_query(gql_query, store_url, storefront_token, {"cartId": cart_id})
         return (data.get("cart") or {}).get("checkoutUrl")
 
     # --- Order Management ---
     
 # In /app/services/shopify_service.py
 
-    async def search_orders_by_phone(self, phone_number: str, max_fetch: int = 50) -> List[Dict]:
+    async def search_orders_by_phone(self, phone_number: str, max_fetch: int = 50, business_id: str = "feelori") -> List[Dict]:
         """Search for recent orders using a customer's phone number via the REST API.
         Ensures strict filtering to prevent leaking other customers' orders.
         """
+        store_url, access_token, _ = self._get_credentials(business_id)
         sanitized_user_phone = EnhancedSecurityService.sanitize_phone_number(phone_number)
-        cache_key = f"shopify:orders_by_phone:{sanitized_user_phone}"
+        cache_key = f"shopify:orders_by_phone:{business_id}:{sanitized_user_phone}"
         cached = await cache_service.get(cache_key)
         if cached:
             return json.loads(cached)
 
-        rest_url = f"https://{self.store_url}/admin/api/2025-07/orders.json"
-        headers = {"X-Shopify-Access-Token": self.access_token}
+        rest_url = f"https://{store_url}/admin/api/2025-07/orders.json"
+        headers = {"X-Shopify-Access-Token": access_token}
 
         params = {
             "status": "any",
@@ -301,22 +377,23 @@ class ShopifyService:
 
     
 
-    async def get_order_by_name(self, order_name: str) -> Optional[Dict]:
+    async def get_order_by_name(self, order_name: str, business_id: str = "feelori") -> Optional[Dict]:
         """
         Gets a single order by its name (e.g., "#1037").
         The name format should include the '#'.
         """
+        store_url, access_token, _ = self._get_credentials(business_id)
         # Ensure correct format
         if not order_name.startswith('#'):
             order_name = f"#{order_name}"
 
-        cache_key = f"shopify:order_by_name:{order_name}"
+        cache_key = f"shopify:order_by_name:{business_id}:{order_name}"
         cached = await cache_service.get(cache_key)
         if cached:
             return json.loads(cached)
 
-        rest_url = f"https://{self.store_url}/admin/api/2025-07/orders.json"
-        headers = {"X-Shopify-Access-Token": self.access_token}
+        rest_url = f"https://{store_url}/admin/api/2025-07/orders.json"
+        headers = {"X-Shopify-Access-Token": access_token}
 
         params = {
             "name": order_name,
@@ -344,11 +421,12 @@ class ShopifyService:
             logger.error(f"Shopify get_order_by_name error for {order_name}: {e}", exc_info=True)
             return None
 
-    async def fulfill_order(self, order_id: int, tracking_number: str, packer_name: str, carrier: str = "India Post") -> Tuple[bool, Optional[int], Optional[str]]:
+    async def fulfill_order(self, order_id: int, tracking_number: str, packer_name: str, carrier: str = "India Post", business_id: str = "feelori") -> Tuple[bool, Optional[int], Optional[str]]:
         """Fulfills an order using the Fulfillment Orders API and returns the tracking URL."""
         try:
-            fo_url = f"https://{self.store_url}/admin/api/2025-07/orders/{order_id}/fulfillment_orders.json"
-            headers = {"X-Shopify-Access-Token": self.access_token}
+            store_url, access_token, _ = self._get_credentials(business_id)
+            fo_url = f"https://{store_url}/admin/api/2025-07/orders/{order_id}/fulfillment_orders.json"
+            headers = {"X-Shopify-Access-Token": access_token}
             fo_resp = await self.resilient_api_call(self.http_client.get, fo_url, headers=headers)
             fo_resp.raise_for_status()
             fulfillment_orders = fo_resp.json().get("fulfillment_orders", [])
@@ -364,7 +442,7 @@ class ShopifyService:
                     "notify_customer": True
                 }
             }
-            fulfillment_url = f"https://{self.store_url}/admin/api/2025-07/fulfillments.json"
+            fulfillment_url = f"https://{store_url}/admin/api/2025-07/fulfillments.json"
             resp = await self.resilient_api_call(self.http_client.post, fulfillment_url, json=payload, headers=headers)
             
             if resp.status_code == 201:
@@ -386,19 +464,22 @@ class ShopifyService:
             
     # --- URL Generation Helpers ---
 
-    def get_add_to_cart_url(self, variant_gid: str) -> str:
+    def get_add_to_cart_url(self, variant_gid: str, business_id: str = "feelori") -> str:
+        store_url, _, _ = self._get_credentials(business_id)
         numeric_variant_id = variant_gid.split('/')[-1]
-        return f"https://{self.store_url}/cart/{numeric_variant_id}:1"
+        return f"https://{store_url}/cart/{numeric_variant_id}:1"
 
-    def get_product_page_url(self, handle: str) -> str:
-        return f"https://{self.store_url}/products/{handle}"
+    def get_product_page_url(self, handle: str, business_id: str = "feelori") -> str:
+        store_url, _, _ = self._get_credentials(business_id)
+        return f"https://{store_url}/products/{handle}"
 
 
     # --- Private Helper Methods ---
 
-    async def _shopify_search(self, query: str, limit: int, sort_key: str, filters: Optional[Dict]) -> List[Dict]:
+    async def _shopify_search(self, query: str, limit: int, sort_key: str, filters: Optional[Dict], business_id: str = "feelori") -> List[Dict]:
         """Executes a GraphQL query against the Shopify Storefront API."""
-        if not self.storefront_token: 
+        store_url, _, storefront_token = self._get_credentials(business_id)
+        if not storefront_token: 
             return []
         graphql_payload = {
             "query": """
@@ -410,8 +491,8 @@ class ShopifyService:
               }
             }""", "variables": {"query": query, "limit": limit, "sortKey": sort_key}
         }
-        url = f"https://{self.store_url}/api/2025-07/graphql.json"
-        headers = {"Content-Type": "application/json", "X-Shopify-Storefront-Access-Token": self.storefront_token}
+        url = f"https://{store_url}/api/2025-07/graphql.json"
+        headers = {"Content-Type": "application/json", "X-Shopify-Storefront-Access-Token": storefront_token}
         try:
             resp = await self.http_client.post(url, headers=headers, json=graphql_payload)
             resp.raise_for_status()
@@ -421,20 +502,20 @@ class ShopifyService:
             logger.error(f"Shopify _shopify_search error: {e}")
             return []
 
-    async def _execute_gql_query(self, query: str, variables: Dict) -> Dict:
+    async def _execute_gql_query(self, query: str, variables: Dict, store_url: str, access_token: str) -> Dict:
         """Executes a GraphQL query against the Shopify Admin API."""
-        url = f"https://{self.store_url}/admin/api/2025-07/graphql.json"
-        headers = {"X-Shopify-Access-Token": self.access_token, "Content-Type": "application/json"}
+        url = f"https://{store_url}/admin/api/2025-07/graphql.json"
+        headers = {"X-Shopify-Access-Token": access_token, "Content-Type": "application/json"}
         resp = await self.resilient_api_call(self.http_client.post, url, json={"query": query, "variables": variables}, headers=headers)
         resp.raise_for_status()
         return resp.json().get("data", {})
 
-    async def _execute_storefront_gql_query(self, query: str, variables: Optional[Dict] = None) -> Dict:
+    async def _execute_storefront_gql_query(self, query: str, store_url: str, storefront_token: str, variables: Optional[Dict] = None) -> Dict:
         """Executes a GraphQL query against the Shopify Storefront API."""
-        if not self.storefront_token: 
+        if not storefront_token: 
             return {}
-        url = f"https://{self.store_url}/api/2025-07/graphql.json"
-        headers = {"X-Shopify-Storefront-Access-Token": self.storefront_token, "Content-Type": "application/json"}
+        url = f"https://{store_url}/api/2025-07/graphql.json"
+        headers = {"X-Shopify-Storefront-Access-Token": storefront_token, "Content-Type": "application/json"}
         resp = await self.resilient_api_call(self.http_client.post, url, json={"query": query, "variables": variables or {}}, headers=headers)
         resp.raise_for_status()
         return resp.json().get("data", {})
@@ -453,7 +534,9 @@ class ShopifyService:
             image_edge = node.get("images", {}).get("edges", [])
             # Use `inventoryQuantity` for Admin API results
             inventory = variant_edge[0]["node"].get("inventoryQuantity")
-            clean_description = html.unescape(re.sub("<[^<]+?>", "", node.get("bodyHtml", "")))
+            # Handle both descriptionHtml (GraphQL) and bodyHtml (REST) for compatibility
+            description_html = node.get("descriptionHtml") or node.get("bodyHtml", "")
+            clean_description = html.unescape(re.sub("<[^<]+?>", "", description_html))
 
             products.append(Product(
                 id=node.get("id"), title=node.get("title"), description=clean_description,
@@ -466,8 +549,4 @@ class ShopifyService:
         return products
 
 # Globally accessible instance
-shopify_service = ShopifyService(
-    settings.shopify_store_url,
-    settings.shopify_access_token,
-    settings.shopify_storefront_access_token
-)
+shopify_service = ShopifyService()

@@ -92,6 +92,9 @@ async def process_abandoned_checkouts():
             checkout_id = checkout.get("id")
             customer = checkout.get("customer", {})
             
+            # Retrieve business_id from the checkout document
+            business_id = checkout.get("business_id", "feelori")
+            
             phone = customer.get("phone") or (checkout.get("shipping_address") or {}).get("phone")
             if not phone:
                 await db_service.mark_reminder_as_sent(checkout_id)
@@ -113,7 +116,8 @@ async def process_abandoned_checkouts():
                 template_name="abandoned_cart_reminder_v1",
                 header_text_param=customer_name, # Pass the customer's name to the header
                 body_params=[customer_name], # The body still needs its own parameters
-                button_url_param=button_param
+                button_url_param=button_param,
+                business_id=business_id
             )
             # --- END OF FIX ---
             

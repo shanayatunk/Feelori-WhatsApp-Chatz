@@ -22,7 +22,6 @@ DEFAULT_QUERY_LIMIT = 100
 RECENT_ORDERS_LIMIT = 3
 PAGINATION_DEFAULT_LIMIT = 20
 CONVERSATION_HISTORY_MAX = 100  # Limit conversation history growth
-ABANDONED_CHECKOUT_WINDOW_HOURS = (1, 2)  # (min, max) hours
 
 
 class OrderStatus(str, Enum):
@@ -947,15 +946,14 @@ class DatabaseService:
 
     async def get_pending_abandoned_checkouts(self) -> List[Dict[str, Any]]:
         """
-        Find checkouts ready for reminder (between 1-2 hours old).
+        Find checkouts ready for reminder (between 45 minutes and 3 hours old).
         
         Returns:
             List of checkout documents
         """
         now = self._now_utc()
-        min_hours, max_hours = ABANDONED_CHECKOUT_WINDOW_HOURS
-        min_time = now - timedelta(hours=min_hours)
-        max_time = now - timedelta(hours=max_hours)
+        min_time = now - timedelta(minutes=45)
+        max_time = now - timedelta(hours=3)
         
         cursor = self.db.abandoned_checkouts.find({
             "updated_at": {"$gte": max_time, "$lt": min_time},
@@ -1095,6 +1093,19 @@ class DatabaseService:
         customer_stats = data.get("customer_stats", [{}])[0]
         conversation_volume = data.get("conversation_volume", [])
 
+        # Calculate abandoned cart stats for the last 24 hours
+        abandoned_stats = await self.db.abandoned_checkouts.aggregate([
+            {"$match": {"updated_at": {"$gte": last_24_hours}}},
+            {"$group": {
+                "_id": None,
+                "total": {"$sum": 1},
+                "recovered": {"$sum": {"$cond": [{"$ifNull": ["$completed_at", False]}, 1, 0]}},
+                "revenue": {"$sum": {"$cond": [{"$ifNull": ["$completed_at", False]}, {"$toDouble": "$total_price"}, 0]}}
+            }}
+        ]).to_list(length=1)
+        
+        abandoned_data = abandoned_stats[0] if abandoned_stats else {"total": 0, "recovered": 0, "revenue": 0}
+
         return {
             "customers": {
                 "total": customer_stats.get("total_customers", 0),
@@ -1102,7 +1113,12 @@ class DatabaseService:
             },
             "escalations": {"count": escalation_count},
             "messages": {"avg_response_time_minutes": "N/A"},
-            "conversation_volume": conversation_volume
+            "conversation_volume": conversation_volume,
+            "abandoned_carts": {
+                "total": abandoned_data.get("total", 0),
+                "recovered": abandoned_data.get("recovered", 0),
+                "revenue": abandoned_data.get("revenue", 0)
+            }
         }
 
     async def get_paginated_customers(
@@ -2291,6 +2307,20 @@ class DatabaseService:
                 upsert=True
             )
             logger.info(f"Order {order_doc['name']} ingested for {business_id} from {shop_domain}")
+            
+            # 5. Track conversion from abandoned checkout if checkout_id exists
+            checkout_id = order_data.get("checkout_id") or order_data.get("checkout_token")
+            if checkout_id:
+                await self.db.abandoned_checkouts.update_one(
+                    {"id": checkout_id},
+                    {
+                        "$set": {
+                            "completed_at": self._now_utc(),
+                            "converted_order_id": order_data["id"]
+                        }
+                    }
+                )
+                logger.info(f"Marked abandoned checkout {checkout_id} as converted for order {order_data['id']}")
             
         except Exception as e:
             logger.error(f"Failed to process order webhook: {e}", exc_info=True)

@@ -94,7 +94,7 @@ class EnhancedSecurityService(SecurityService):
             signature = signature[7:]
 
         # List of secrets to try
-        secrets_to_try = [s for s in [settings.whatsapp_app_secret, settings.whatsapp_app_secret_golden] if s]
+        secrets_to_try = [s for s in [settings.whatsapp_app_secret, settings.golden_whatsapp_app_secret] if s]
 
         # Try each secret
         for secret in secrets_to_try:

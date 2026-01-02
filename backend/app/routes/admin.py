@@ -12,7 +12,8 @@ from fastapi.responses import StreamingResponse
 from app.config.settings import settings
 from app.models.api import APIResponse, BroadcastGroupCreate, BroadcastRequest, Rule, StringUpdateRequest, TemplateBroadcastRequest, PackerRequest
 from app.utils.dependencies import verify_jwt_token
-from app.services import security_service, shopify_service, cache_service
+from app.services import security_service, cache_service
+from app.services.shopify_service import shopify_service
 from app.services.db_service import db_service
 from app.services.whatsapp_service import whatsapp_service
 from app.services.string_service import string_service
@@ -409,17 +410,21 @@ async def update_rule(rule_id: str, rule: Rule, request: Request, current_user: 
 async def get_strings(request: Request, current_user: dict = Depends(verify_jwt_token)):
     """Get all string resources."""
     security_service.EnhancedSecurityService.validate_admin_session(request, current_user)
-    strings = await db_service.get_all_strings()
+    strings = string_service.get_all_strings()
     return APIResponse(success=True, message="Strings retrieved successfully", data={"strings": strings}, version=settings.api_version)
 
 @router.put("/strings", response_model=APIResponse)
 async def update_strings(update_data: StringUpdateRequest, request: Request, current_user: dict = Depends(verify_jwt_token)):
     """Update all string resources."""
-    security_service.EnhancedSecurityService.validate_admin_session(request, current_user)
-    # Use the 'strings' attribute from the new model
-    await db_service.update_strings(update_data.strings)
-    await string_service.load_strings() # Reload the cache
-    return APIResponse(success=True, message="Strings updated successfully", version=settings.api.version)
+    try:
+        security_service.EnhancedSecurityService.validate_admin_session(request, current_user)
+        # Use the 'strings' attribute from the new model
+        await db_service.update_strings(update_data.strings)
+        await string_service.load_strings() # Reload the cache
+        return APIResponse(success=True, message="Strings updated successfully", version=settings.api_version)
+    except Exception as e:
+        logger.error(f"Failed to update strings: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
 
 @router.get("/escalations", response_model=APIResponse)
 @limiter.limit("10/minute")
@@ -452,11 +457,13 @@ async def get_packer_performance(
     """Provides advanced analytics for the packer performance dashboard."""
     security_service.EnhancedSecurityService.validate_admin_session(request, current_user)
     metrics = await db_service.get_packer_performance_metrics(days=days)
+    
     return APIResponse(
         success=True,
         message="Packer performance metrics retrieved successfully.",
-        data=metrics,
-        version=settings.api_version # <-- THIS LINE IS THE FIX
+        # FIX: Wrap the list 'metrics' in a dictionary
+        data={"metrics": metrics}, 
+        version=settings.api_version
     )
 
 @router.post("/packers", response_model=APIResponse)

@@ -35,14 +35,28 @@ async def verify_jwt_token(token: str = Depends(oauth2_scheme)) -> dict:
 async def verify_webhook_signature(request: Request):
     body = await request.body()
     signature = request.headers.get("x-hub-signature-256", "")
-    if not security_service.SecurityService.verify_webhook_signature(body, signature, settings.whatsapp_app_secret):
-        webhook_signature_counter.labels(status="invalid").inc()
-        await db_service.log_security_event("invalid_webhook_signature", get_remote_address(request), {"signature": signature[:50]})
-        log.error("Invalid webhook signature.", signature=signature) # Add this
-        raise HTTPException(status_code=403, detail="Invalid signature")
-    webhook_signature_counter.labels(status="valid").inc()
-    log.info("Webhook signature verified successfully.") # And this
-    return body
+    
+    # Try Feelori secret first
+    if security_service.SecurityService.verify_webhook_signature(body, signature, settings.whatsapp_app_secret):
+        webhook_signature_counter.labels(status="valid").inc()
+        log.info("Webhook signature verified successfully with Feelori secret.")
+        return body
+    
+    # If Feelori secret fails, try Golden Collections secret (if set)
+    if settings.golden_whatsapp_app_secret:
+        if security_service.SecurityService.verify_webhook_signature(body, signature, settings.golden_whatsapp_app_secret):
+            webhook_signature_counter.labels(status="valid").inc()
+            log.info("Webhook signature verified successfully with Golden Collections secret.")
+            return body
+        else:
+            log.error("Webhook signature verification failed with both secrets.", signature=signature[:50])
+    else:
+        log.error("Webhook signature verification failed with Feelori secret, and Golden Collections secret not configured.", signature=signature[:50])
+    
+    # Both checks failed
+    webhook_signature_counter.labels(status="invalid").inc()
+    await db_service.log_security_event("invalid_webhook_signature", get_remote_address(request), {"signature": signature[:50]})
+    raise HTTPException(status_code=403, detail="Invalid signature")
 
 async def verify_shopify_signature(request: Request) -> bytes:
     if not settings.shopify_webhook_secret:

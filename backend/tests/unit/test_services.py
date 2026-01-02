@@ -32,36 +32,74 @@ async def test_whatsapp_send_message_success(mocker):
 # --- ShopifyService tests ---
 @pytest.mark.asyncio
 async def test_shopify_get_products_success(mocker):
-    """Test successfully fetching products from Shopify."""
-    # --- THIS IS THE FIX ---
-    # 1. Mock the REST API response, not GraphQL
-    mock_rest_response = { "products": [{
-        "id": 1, "title": "Test Product", "handle": "test-product",
-        "body_html": "A great product", "tags": "test",
-        "images": [{"src": "http://example.com/image.png"}],
-        "variants": [{
-            "id": 1, "price": "19.99", "sku": "SKU123", "inventory_quantity": 10
-        }]
-    }]}
+    """Test successfully fetching products from Shopify using GraphQL."""
+    # 1. Setup the Service (No args needed now)
+    service = ShopifyService()
     
-    # 2. The http_client is an attribute of the service instance. We patch it after creation.
-    service = ShopifyService(settings.shopify_store_url, settings.shopify_access_token, settings.shopify_storefront_access_token)
-    
-    # 3. Create a mock that can be awaited and has the correct methods
-    async def mock_get(*args, **kwargs):
-        response = MagicMock(status_code=200, json=lambda: mock_rest_response)
-        response.raise_for_status = MagicMock()
-        return response
+    # 2. Mock the Credentials lookup
+    mocker.patch.object(
+        service, 
+        '_get_credentials', 
+        return_value=("test.myshopify.com", "test-token", "test-storefront")
+    )
 
-    mocker.patch.object(service, 'http_client', new_callable=AsyncMock)
-    # 4. Mock the 'get' method, not 'post'
-    service.http_client.get = mock_get
-    
-    products, _ = await service.get_products(query="Test", limit=1)
+    # 3. Create the GraphQL Response Structure (Edges/Nodes)
+    graphql_data = {
+        "data": {
+            "products": {
+                "edges": [
+                    {
+                        "node": {
+                            "id": "gid://shopify/Product/123",
+                            "title": "Test Crown",
+                            "handle": "test-crown",
+                            "descriptionHtml": "Beautiful crown",
+                            "tags": ["crowns"],
+                            "productType": "Accessories",
+                            "variants": {
+                                "edges": [{
+                                    "node": {
+                                        "id": "gid://shopify/ProductVariant/456",
+                                        "price": "100.00",
+                                        "inventoryQuantity": 5
+                                    }
+                                }]
+                            },
+                            "images": {
+                                "edges": [{
+                                    "node": {
+                                        "originalSrc": "http://example.com/crown.jpg"
+                                    }
+                                }]
+                            }
+                        }
+                    }
+                ]
+            }
+        }
+    }
 
+    # 4. Mock the HTTP Response (Standard Mock, NOT AsyncMock)
+    mock_response = mocker.Mock()
+    mock_response.status_code = 200
+    mock_response.json.return_value = graphql_data
+    mock_response.raise_for_status.return_value = None
+
+    # 5. Mock resilient_api_call to return our mock_response
+    # Since _execute_gql_query uses resilient_api_call, we need to mock that
+    mocker.patch.object(
+        service,
+        'resilient_api_call',
+        new_callable=mocker.AsyncMock,
+        return_value=mock_response
+    )
+
+    # 6. Run & Assert
+    products, count = await service.get_products("crowns", business_id="goldencollections")
+    
     assert len(products) == 1
-    assert products[0].title == "Test Product"
-    # --- END OF FIX ---
+    assert products[0].title == "Test Crown"
+    assert products[0].price == 100.0
 
 # --- AIService tests ---
 @pytest.mark.asyncio

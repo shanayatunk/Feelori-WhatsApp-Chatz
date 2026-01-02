@@ -1544,8 +1544,10 @@ async def handle_abandoned_checkout(payload: dict, business_id: str = "feelori")
     if not checkout_id:
         return # Ignore if there is no ID
     
+    # Inject business_id into the payload for multi-tenant support
+    payload["business_id"] = business_id
+    
     # Just save the data. The scheduler will do the rest.
-    # Note: business_id is passed for future multi-tenant support in save_abandoned_checkout
     await db_service.save_abandoned_checkout(payload)
     logger.info(f"Saved abandoned checkout {checkout_id} to database for future processing.")
 

@@ -149,5 +149,16 @@ async def shopify_fulfillments_create_webhook(request: Request, verified_body: b
 async def shopify_checkouts_update_webhook(request: Request, verified_body: bytes = Depends(verify_shopify_signature)):
     """Handles abandoned checkout events from Shopify."""
     payload = json.loads(verified_body.decode("utf-8"))
-    asyncio.create_task(order_service.handle_abandoned_checkout(payload))
+    
+    # 1. Extract the Shop Domain to identify the Business
+    shop_domain = request.headers.get("X-Shopify-Shop-Domain", "")
+    
+    # 2. Map Domain to Business ID
+    if "golden" in shop_domain.lower():
+        business_id = "goldencollections"
+    else:
+        business_id = "feelori"
+    
+    # 3. Pass business_id to the service
+    asyncio.create_task(order_service.handle_abandoned_checkout(payload, business_id=business_id))
     return JSONResponse({"status": "scheduled"})

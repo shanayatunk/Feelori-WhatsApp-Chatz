@@ -1535,7 +1535,7 @@ async def handle_status_update(status_data: Dict):
         logger.error(f"Error handling status update: {e}", exc_info=True)
 
 
-async def handle_abandoned_checkout(payload: dict):
+async def handle_abandoned_checkout(payload: dict, business_id: str = "feelori"):
     """
     Receives an abandoned checkout webhook and saves it to the database.
     The central scheduler will handle sending the reminder later.
@@ -1545,6 +1545,7 @@ async def handle_abandoned_checkout(payload: dict):
         return # Ignore if there is no ID
     
     # Just save the data. The scheduler will do the rest.
+    # Note: business_id is passed for future multi-tenant support in save_abandoned_checkout
     await db_service.save_abandoned_checkout(payload)
     logger.info(f"Saved abandoned checkout {checkout_id} to database for future processing.")
 

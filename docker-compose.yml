@@ -95,7 +95,96 @@ services:
       - GOLDEN_SHOPIFY_ACCESS_TOKEN=${GOLDEN_SHOPIFY_ACCESS_TOKEN}
       - GOLDEN_SHOPIFY_STOREFRONT_ACCESS_TOKEN=${GOLDEN_SHOPIFY_STOREFRONT_ACCESS_TOKEN}
 
-  # 3. (Optional) ML worker – disabled to save memory
+  # 3. WhatsApp Sender Worker - Reliably delivers outbound messages
+  whatsapp_worker:
+    image: ${DOCKERHUB_USERNAME}/feelori-backend:${IMAGE_TAG:-latest}
+    container_name: feelori_whatsapp_worker
+    restart: unless-stopped
+    command: python -m app.workers.whatsapp_sender
+    depends_on:
+      - backend
+      - redis
+    networks:
+      - feelori-net
+    environment:
+      - admin_password=${ADMIN_PASSWORD}
+      - allowed_hosts=${ALLOWED_HOSTS}
+      - api_key=${API_KEY}
+      #- cors_allowed_origins=${CORS_ALLOWED_ORIGINS}
+      - environment=${ENVIRONMENT}
+      - gemini_api_key=${GEMINI_API_KEY}
+      - jwt_secret_key=${JWT_SECRET_KEY}
+      - mongo_atlas_uri=${MONGO_ATLAS_URI}
+      - next_public_api_url=${NEXT_PUBLIC_API_URL}
+      - openai_api_key=${OPENAI_API_KEY}
+      - packing_dept_whatsapp_number=${PACKING_DEPT_WHATSAPP_NUMBER}
+      - redis_url=${REDIS_URL}
+      - session_secret_key=${SESSION_SECRET_KEY}
+      - shopify_access_token=${SHOPIFY_ACCESS_TOKEN}
+      - shopify_storefront_access_token=${SHOPIFY_STOREFRONT_ACCESS_TOKEN}
+      - shopify_store_url=${SHOPIFY_STORE_URL}
+      - shopify_webhook_secret=${SHOPIFY_WEBHOOK_SECRET}
+      - whatsapp_access_token=${WHATSAPP_ACCESS_TOKEN}
+      - whatsapp_app_secret=${WHATSAPP_APP_SECRET}
+      - whatsapp_business_account_id=${WHATSAPP_BUSINESS_ACCOUNT_ID}
+      - whatsapp_catalog_id=${WHATSAPP_CATALOG_ID}
+      - whatsapp_phone_id=${WHATSAPP_PHONE_ID}
+      - whatsapp_verify_token=${WHATSAPP_VERIFY_TOKEN}
+      - whatsapp_webhook_secret=${WHATSAPP_WEBHOOK_SECRET}
+      - GOLDEN_WHATSAPP_ACCESS_TOKEN=${GOLDEN_WHATSAPP_ACCESS_TOKEN}
+      - GOLDEN_WHATSAPP_APP_SECRET=${GOLDEN_WHATSAPP_APP_SECRET}
+      - GOLDEN_WHATSAPP_BUSINESS_ACCOUNT_ID=${GOLDEN_WHATSAPP_BUSINESS_ACCOUNT_ID}
+      - GOLDEN_WHATSAPP_CATALOG_ID=${GOLDEN_WHATSAPP_CATALOG_ID}
+      - GOLDEN_WHATSAPP_PHONE_ID=${GOLDEN_WHATSAPP_PHONE_ID}
+      - GOLDEN_SHOPIFY_STORE_URL=${GOLDEN_SHOPIFY_STORE_URL}
+      - GOLDEN_SHOPIFY_ACCESS_TOKEN=${GOLDEN_SHOPIFY_ACCESS_TOKEN}
+      - GOLDEN_SHOPIFY_STOREFRONT_ACCESS_TOKEN=${GOLDEN_SHOPIFY_STOREFRONT_ACCESS_TOKEN}
+
+  # 4. AI Responder Worker - Safely generates and enqueues AI responses
+  ai_worker:
+    image: ${DOCKERHUB_USERNAME}/feelori-backend:${IMAGE_TAG:-latest}
+    container_name: feelori_ai_worker
+    restart: unless-stopped
+    command: python -m app.workers.ai_responder
+    depends_on:
+      - backend
+    networks:
+      - feelori-net
+    environment:
+      - admin_password=${ADMIN_PASSWORD}
+      - allowed_hosts=${ALLOWED_HOSTS}
+      - api_key=${API_KEY}
+      #- cors_allowed_origins=${CORS_ALLOWED_ORIGINS}
+      - environment=${ENVIRONMENT}
+      - gemini_api_key=${GEMINI_API_KEY}
+      - jwt_secret_key=${JWT_SECRET_KEY}
+      - mongo_atlas_uri=${MONGO_ATLAS_URI}
+      - next_public_api_url=${NEXT_PUBLIC_API_URL}
+      - openai_api_key=${OPENAI_API_KEY}
+      - packing_dept_whatsapp_number=${PACKING_DEPT_WHATSAPP_NUMBER}
+      - redis_url=${REDIS_URL}
+      - session_secret_key=${SESSION_SECRET_KEY}
+      - shopify_access_token=${SHOPIFY_ACCESS_TOKEN}
+      - shopify_storefront_access_token=${SHOPIFY_STOREFRONT_ACCESS_TOKEN}
+      - shopify_store_url=${SHOPIFY_STORE_URL}
+      - shopify_webhook_secret=${SHOPIFY_WEBHOOK_SECRET}
+      - whatsapp_access_token=${WHATSAPP_ACCESS_TOKEN}
+      - whatsapp_app_secret=${WHATSAPP_APP_SECRET}
+      - whatsapp_business_account_id=${WHATSAPP_BUSINESS_ACCOUNT_ID}
+      - whatsapp_catalog_id=${WHATSAPP_CATALOG_ID}
+      - whatsapp_phone_id=${WHATSAPP_PHONE_ID}
+      - whatsapp_verify_token=${WHATSAPP_VERIFY_TOKEN}
+      - whatsapp_webhook_secret=${WHATSAPP_WEBHOOK_SECRET}
+      - GOLDEN_WHATSAPP_ACCESS_TOKEN=${GOLDEN_WHATSAPP_ACCESS_TOKEN}
+      - GOLDEN_WHATSAPP_APP_SECRET=${GOLDEN_WHATSAPP_APP_SECRET}
+      - GOLDEN_WHATSAPP_BUSINESS_ACCOUNT_ID=${GOLDEN_WHATSAPP_BUSINESS_ACCOUNT_ID}
+      - GOLDEN_WHATSAPP_CATALOG_ID=${GOLDEN_WHATSAPP_CATALOG_ID}
+      - GOLDEN_WHATSAPP_PHONE_ID=${GOLDEN_WHATSAPP_PHONE_ID}
+      - GOLDEN_SHOPIFY_STORE_URL=${GOLDEN_SHOPIFY_STORE_URL}
+      - GOLDEN_SHOPIFY_ACCESS_TOKEN=${GOLDEN_SHOPIFY_ACCESS_TOKEN}
+      - GOLDEN_SHOPIFY_STOREFRONT_ACCESS_TOKEN=${GOLDEN_SHOPIFY_STOREFRONT_ACCESS_TOKEN}
+
+  # 5. (Optional) ML worker – disabled to save memory
   # To re-enable, uncomment the lines below
   # ml_worker:
   #   image: ${DOCKERHUB_USERNAME}/feelori-backend:${IMAGE_TAG:-latest}
@@ -111,7 +200,7 @@ services:
   #       limits:
   #         memory: 4G
 
-  # 4. Redis service for caching and queuing
+  # 6. Redis service for caching and queuing
   redis:
     image: "redis:7-alpine"
     container_name: feelori_redis

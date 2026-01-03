@@ -248,27 +248,43 @@ async def get_conversation_thread(
         
         messages = await messages_cursor.to_list(length=None)
         
-        # Normalize and serialize messages
+        # --- NORMALIZE IN-PLACE ---
         for msg in messages:
-            # 1. Convert ObjectIds to strings (CRITICAL for JSON response)
+            # 1. Convert ObjectIds to strings (Prevent 500 Error)
             if "_id" in msg:
                 msg["_id"] = str(msg["_id"])
             if "conversation_id" in msg:
                 msg["conversation_id"] = str(msg["conversation_id"])
             
-            # 2. Ensure 'text' field exists for Frontend
-            if "text" not in msg and "content" in msg:
+            # 2. Guarantee 'text' exists (Frontend Source of Truth)
+            if not msg.get("text") and msg.get("content"):
                 msg["text"] = msg["content"]
             
-            # 3. Serialize Datetimes safely
+            # 3. Guarantee 'timestamp' exists
+            if not msg.get("timestamp") and msg.get("created_at"):
+                msg["timestamp"] = msg.get("created_at")
+
+            # 4. Serialize Datetimes safely
             if "timestamp" in msg and isinstance(msg["timestamp"], datetime):
                 msg["timestamp"] = msg["timestamp"].isoformat()
             if "created_at" in msg and isinstance(msg["created_at"], datetime):
                 msg["created_at"] = msg["created_at"].isoformat()
 
-            # 4. Guarantee timestamp field presence
-            if "timestamp" not in msg and "created_at" in msg:
-                msg["timestamp"] = msg["created_at"]
+            # 5. NORMALIZE SENDER (CRITICAL FIX)
+            # Map direction/source to 'user', 'bot', or 'agent'
+            direction = msg.get("direction")
+            source = msg.get("source")
+            
+            if direction == "inbound":
+                msg["sender"] = "user"
+            else:
+                # Outbound Logic
+                if source in ["ai", "bot"]:
+                    msg["sender"] = "bot"
+                elif source == "agent":
+                    msg["sender"] = "agent"
+                else:
+                    msg["sender"] = "bot" # Default fallback
         
         return APIResponse(
             success=True,

@@ -235,19 +235,31 @@ async def get_conversation_thread(
         # Convert ObjectId to string for JSON serialization
         conversation["_id"] = str(conversation["_id"])
         
-        # Find all messages for this conversation, sorted by created_at ascending
+        # Find all messages for this conversation, sorted by _id ascending (chronological)
         # Use ObjectId for referential integrity (matches conversations._id)
+        # Support both tenant_id (new) and business_id (legacy) for backward compatibility
         messages_cursor = db_service.db.message_logs.find({
-            "conversation_id": conv_object_id,  # Use ObjectId, not string
-            "tenant_id": tenant_id
-        }).sort("created_at", 1)
+            "conversation_id": conv_object_id,
+            "$or": [
+                {"tenant_id": tenant_id},
+                {"business_id": tenant_id}
+            ]
+        }).sort("_id", 1)
         
         messages = await messages_cursor.to_list(length=None)
         
-        # Convert ObjectIds to strings in messages
+        # Convert ObjectIds to strings and normalize data for Frontend
         for msg in messages:
             if "_id" in msg:
                 msg["_id"] = str(msg["_id"])
+            
+            # 1. Guarantee 'text' exists (Frontend source of truth)
+            if not msg.get("text") and msg.get("content"):
+                msg["text"] = msg["content"]
+            
+            # 2. Guarantee 'timestamp' exists
+            if not msg.get("timestamp") and msg.get("created_at"):
+                msg["timestamp"] = msg.get("created_at")
         
         return APIResponse(
             success=True,
@@ -482,13 +494,17 @@ async def send_agent_message(
         
         # 1. Insert message into message_logs
         # Use ObjectId for referential integrity (matches conversations._id)
+        # Write BOTH tenant_id/business_id and text/content pairs to prevent future drift
         message_doc = {
             "tenant_id": tenant_id,
+            "business_id": tenant_id,  # Dual field for backward compatibility
             "conversation_id": conv_object_id,  # Use ObjectId, not string
             "source": "agent",
             "type": "text",
-            "text": message_data.message,
-            "created_at": now
+            "text": message_data.message,      # Frontend source of truth
+            "content": message_data.message,   # Legacy/backend compatibility
+            "created_at": now,
+            "timestamp": now                   # Dual field for backward compatibility
         }
         
         message_result = await db_service.db.message_logs.insert_one(message_doc)

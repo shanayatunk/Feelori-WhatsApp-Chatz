@@ -29,6 +29,8 @@ class Conversation(BaseModel):
     wa_conversation_id: Optional[str] = Field(default=None, description="WhatsApp conversation ID")
     status: str = Field(default="open", description="Conversation status")
     ai_enabled: bool = Field(default=True, description="Whether AI is enabled for this conversation")
+    assigned_to: Optional[str] = Field(default=None, description="Agent ID assigned to this conversation")
+    ai_paused_by: Optional[str] = Field(default=None, description="Who paused AI (e.g., 'agent', 'system')")
     tags: List[str] = Field(default_factory=list, description="Conversation tags")
     context: ConversationContext = Field(
         default_factory=ConversationContext,

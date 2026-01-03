@@ -8,6 +8,7 @@ import tenacity
 from datetime import datetime
 from dataclasses import dataclass, field
 from typing import Set, Dict, List, Tuple, Optional, Any
+from pymongo import ReturnDocument
 
 
 from rapidfuzz import process, fuzz
@@ -207,6 +208,8 @@ async def _handle_triage_flow(clean_phone: str, message_text: str, message_type:
         else:
             issue_text = message_text.replace("triage_issue_", "").replace("_", " ")
             logger.info(f"Triage: Escalating for {clean_phone}, Order: {order_number}, Issue: {issue_text}")
+            
+            # 1. Create the Ticket
             triage_ticket = {
                 "customer_phone": clean_phone, "order_number": order_number,
                 "issue_type": issue_text, "image_media_id": None, "status": "human_needed",
@@ -215,6 +218,19 @@ async def _handle_triage_flow(clean_phone: str, message_text: str, message_type:
                 "created_at": datetime.utcnow()
             }
             await db_service.db.triage_tickets.insert_one(triage_ticket)
+
+            # 2. CRITICAL FIX: Update Conversation Status so UI shows the banner
+            await db_service.db.conversations.update_one(
+                {"external_user_id": clean_phone, "tenant_id": business_id},
+                {
+                    "$set": {
+                        "status": "human_needed", 
+                        "ai_enabled": False, 
+                        "ai_paused_by": "system"
+                    }
+                }
+            )
+
             return string_service.get_formatted_string("HUMAN_ESCALATION", business_id=business_id)
 
     elif current_state == TriageStates.AWAITING_PHOTO and (message_type == "image" or message_text.startswith("visual_search_")):
@@ -243,6 +259,20 @@ async def _handle_triage_flow(clean_phone: str, message_text: str, message_type:
 
     return None # Fall through if no triage state was handled
 
+
+def _can_update_status_to_open(conversation: dict) -> bool:
+    """
+    Returns False if the conversation is locked in 'human_needed' state by a ticket.
+    """
+    if not conversation:
+        return True # New conversation, always allow
+    if conversation.get("status") == "human_needed":
+        # If AI is disabled, it means a human ticket is active. Do not flip to open.
+        if not conversation.get("ai_enabled"):
+            return False
+    return True
+
+
 async def process_message(phone_number: str, message_text: str, message_type: str, quoted_wamid: str | None, business_id: str = "feelori") -> str | None:
     """
     Processes an incoming message, handling triage states before
@@ -250,6 +280,72 @@ async def process_message(phone_number: str, message_text: str, message_type: st
     """
     try:
         clean_phone = EnhancedSecurityService.sanitize_phone_number(phone_number)
+        
+        # Step A: Upsert conversation early and capture conversation_id for real-time syncing
+        # 1. Fetch existing conversation first (read-only)
+        conversation = await db_service.db.conversations.find_one(
+            {"external_user_id": clean_phone, "tenant_id": business_id}
+        )
+        
+        # 2. Decide if we allowed to force status to "open"
+        new_status = "open" # Default for new or normal chats
+        if not _can_update_status_to_open(conversation):
+            new_status = conversation.get("status") # Keep existing status (human_needed)
+
+        # 3. Perform the Upsert with the calculated status
+        now = datetime.utcnow()
+        conversation = await db_service.db.conversations.find_one_and_update(
+            {"external_user_id": clean_phone, "tenant_id": business_id},
+            {
+                "$set": {
+                    "external_user_id": clean_phone,
+                    "tenant_id": business_id,
+                    "last_message": {"type": "text", "text": message_text[:200]},
+                    "last_message_at": now,
+                    "updated_at": now,
+                    "status": new_status, # <--- Uses the safe status
+                },
+                "$setOnInsert": {
+                    "created_at": now,
+                    "ai_enabled": True,
+                    "ai_paused_by": None,
+                    "assigned_to": None
+                }
+            },
+            upsert=True,
+            return_document=ReturnDocument.AFTER
+        )
+        conversation_id = conversation["_id"]
+        
+        # --- CRITICAL FIX: Link & Normalize inbound message log ---
+        # We find the most recent unlinked inbound message and attach it.
+        # We also copy 'message_text' to 'text' so the Frontend schema is consistent.
+        # IMPORTANT: This must happen BEFORE bot suppression so messages are always linked.
+        await db_service.db.message_logs.find_one_and_update(
+            {
+                "business_id": business_id,
+                "phone": clean_phone,
+                "direction": "inbound",
+                "conversation_id": {"$exists": False}
+            },
+            {
+                "$set": {
+                    "conversation_id": conversation_id,
+                    "type": "text",         # Standardize type
+                    "text": message_text    # Normalize content -> text for Frontend
+                }
+            },
+            sort=[("timestamp", -1)] 
+        )
+        # -------------------------------------------------------------
+        
+        # Bot Suppression: STRICTLY respect the ai_enabled flag.
+        # If AI is disabled (whether by Manual Toggle OR Human Ticket), do not reply.
+        # We default to True to ensure old conversations don't break.
+        # NOTE: This check happens AFTER message linking to ensure messages are visible in UI.
+        if conversation.get("ai_enabled", True) is False:
+            logger.info(f"Bot suppressed for {clean_phone}: AI is explicitly disabled.")
+            return None
         
         if clean_phone == settings.packing_dept_whatsapp_number:
             return string_service.get_formatted_string("PACKING_DEPT_REDIRECT", business_id=business_id)
@@ -264,6 +360,21 @@ async def process_message(phone_number: str, message_text: str, message_type: st
 
         if active_ticket:
             logger.info(f"Bot suppressed for {clean_phone}: Human agent active on ticket {active_ticket.get('_id')}")
+            
+            # --- FIX: Sync status for UI consistency ---
+            # Revert status to 'human_needed' because the initial upsert above
+            # incorrectly flipped it to 'open'.
+            await db_service.db.conversations.update_one(
+                {"_id": conversation_id},
+                {
+                    "$set": {
+                        "status": "human_needed",
+                        "ai_enabled": False,
+                        "ai_paused_by": "system"
+                    }
+                }
+            )
+            
             return None  # Stop processing (Bot stays silent)
         # -----------------------------
 
@@ -460,6 +571,40 @@ async def process_message(phone_number: str, message_text: str, message_type: st
             intent = await analyze_intent(message_text, message_type, customer, quoted_wamid)
             response = await route_message(intent, clean_phone, message_text, customer, quoted_wamid, business_id=business_id)
         
+        # Step C: Log AI reply and update conversation when response is generated
+        if response:
+            reply_now = datetime.utcnow()
+            response_text = response[:4096]  # Use the same truncation as return statement
+            
+            # Log AI reply (No wamid yet - rely on sparse index)
+            await db_service.db.message_logs.insert_one({
+                "tenant_id": business_id,
+                "business_id": business_id,
+                "conversation_id": conversation_id,
+                "phone": clean_phone,
+                "direction": "outbound",
+                "source": "ai",
+                "message_type": "text",
+                "text": response_text,
+                "content": response_text,
+                "status": "sending",
+                "timestamp": reply_now,
+                "created_at": reply_now
+            })
+            
+            # Update Conversation Preview
+            await db_service.db.conversations.update_one(
+                {"_id": conversation_id, "tenant_id": business_id},
+                {
+                    "$set": {
+                        "last_message": {"type": "text", "text": response_text[:200]},
+                        "last_message_at": reply_now,
+                        "updated_at": reply_now
+                    }
+                }
+            )
+            # -----------------------------------------------------------
+
         return response[:4096] if response else None
         
     except Exception as e:
@@ -953,16 +1098,19 @@ async def handle_price_inquiry(message: str, customer: Dict, **kwargs) -> Option
 async def handle_product_detail(message: str, customer: Dict, **kwargs) -> Optional[str]:
     """Shows a detailed card for a specific product."""
     business_id = kwargs.get("business_id", "feelori")
-    numeric_product_id = message.replace("product_", "")
+    
+    # Remove the 'product_' prefix from the button ID
+    clean_id = message.replace("product_", "")
 
-    # --- THIS IS THE FIX ---
-    # Construct the full GraphQL GID that the Shopify API expects.
-    graphql_gid = f"gid://shopify/Product/{numeric_product_id}"
-    # --- END OF FIX ---
+    # FIX: Check if it's already a full GID or just a numeric ID
+    if clean_id.startswith("gid://"):
+        graphql_gid = clean_id
+    else:
+        graphql_gid = f"gid://shopify/Product/{clean_id}"
 
     # Pass the correctly formatted GID to the service.
     product = await shopify_service.get_product_by_id(graphql_gid, business_id=business_id)
-
+    
     if product:
         await cache_service.set(
             CacheKeys.LAST_SINGLE_PRODUCT.format(phone=customer['phone_number']),
@@ -1473,7 +1621,8 @@ async def process_webhook_message(message: Dict[str, Any], webhook_data: Dict[st
             "phone": clean_phone,
             "direction": "inbound",
             "message_type": message_type,
-            "content": message_text,
+            "text": message_text,       # Frontend Source of Truth
+            "content": message_text,    # Keep for legacy/backend compatibility
             "status": "received", # The initial status is 'received'
             "source": "customer",
             "timestamp": datetime.utcnow(),

@@ -317,16 +317,10 @@ async def process_message(phone_number: str, message_text: str, message_type: st
         )
         conversation_id = conversation["_id"]
         
-        # Bot Suppression: STRICTLY respect the ai_enabled flag.
-        # If AI is disabled (whether by Manual Toggle OR Human Ticket), do not reply.
-        # We default to True to ensure old conversations don't break.
-        if conversation.get("ai_enabled", True) is False:
-            logger.info(f"Bot suppressed for {clean_phone}: AI is explicitly disabled.")
-            return None
-        
         # --- CRITICAL FIX: Link & Normalize inbound message log ---
         # We find the most recent unlinked inbound message and attach it.
         # We also copy 'message_text' to 'text' so the Frontend schema is consistent.
+        # IMPORTANT: This must happen BEFORE bot suppression so messages are always linked.
         await db_service.db.message_logs.find_one_and_update(
             {
                 "business_id": business_id,
@@ -344,6 +338,14 @@ async def process_message(phone_number: str, message_text: str, message_type: st
             sort=[("timestamp", -1)] 
         )
         # -------------------------------------------------------------
+        
+        # Bot Suppression: STRICTLY respect the ai_enabled flag.
+        # If AI is disabled (whether by Manual Toggle OR Human Ticket), do not reply.
+        # We default to True to ensure old conversations don't break.
+        # NOTE: This check happens AFTER message linking to ensure messages are visible in UI.
+        if conversation.get("ai_enabled", True) is False:
+            logger.info(f"Bot suppressed for {clean_phone}: AI is explicitly disabled.")
+            return None
         
         if clean_phone == settings.packing_dept_whatsapp_number:
             return string_service.get_formatted_string("PACKING_DEPT_REDIRECT", business_id=business_id)

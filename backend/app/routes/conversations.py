@@ -105,7 +105,10 @@ async def list_conversations(
                 "phone": phone,
                 "preview": preview,
                 "status": conv_status,
-                "last_at": last_at
+                "last_at": last_at,
+                "ai_enabled": conv.get("ai_enabled", True),
+                "ai_paused_by": conv.get("ai_paused_by"),
+                "assigned_to": conv.get("assigned_to")
             })
         
         # Set next cursor if there are more results

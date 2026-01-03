@@ -259,6 +259,20 @@ async def _handle_triage_flow(clean_phone: str, message_text: str, message_type:
 
     return None # Fall through if no triage state was handled
 
+
+def _can_update_status_to_open(conversation: dict) -> bool:
+    """
+    Returns False if the conversation is locked in 'human_needed' state by a ticket.
+    """
+    if not conversation:
+        return True # New conversation, always allow
+    if conversation.get("status") == "human_needed":
+        # If AI is disabled, it means a human ticket is active. Do not flip to open.
+        if not conversation.get("ai_enabled"):
+            return False
+    return True
+
+
 async def process_message(phone_number: str, message_text: str, message_type: str, quoted_wamid: str | None, business_id: str = "feelori") -> str | None:
     """
     Processes an incoming message, handling triage states before
@@ -268,6 +282,17 @@ async def process_message(phone_number: str, message_text: str, message_type: st
         clean_phone = EnhancedSecurityService.sanitize_phone_number(phone_number)
         
         # Step A: Upsert conversation early and capture conversation_id for real-time syncing
+        # 1. Fetch existing conversation first (read-only)
+        conversation = await db_service.db.conversations.find_one(
+            {"external_user_id": clean_phone, "tenant_id": business_id}
+        )
+        
+        # 2. Decide if we allowed to force status to "open"
+        new_status = "open" # Default for new or normal chats
+        if not _can_update_status_to_open(conversation):
+            new_status = conversation.get("status") # Keep existing status (human_needed)
+
+        # 3. Perform the Upsert with the calculated status
         now = datetime.utcnow()
         conversation = await db_service.db.conversations.find_one_and_update(
             {"external_user_id": clean_phone, "tenant_id": business_id},
@@ -275,10 +300,10 @@ async def process_message(phone_number: str, message_text: str, message_type: st
                 "$set": {
                     "external_user_id": clean_phone,
                     "tenant_id": business_id,
-                    "last_message": {"type": "text", "text": message_text[:200]},  # Store preview
+                    "last_message": {"type": "text", "text": message_text[:200]},
                     "last_message_at": now,
                     "updated_at": now,
-                    "status": "open",  # Re-open conversation on new message
+                    "status": new_status, # <--- Uses the safe status
                 },
                 "$setOnInsert": {
                     "created_at": now,
@@ -291,6 +316,12 @@ async def process_message(phone_number: str, message_text: str, message_type: st
             return_document=ReturnDocument.AFTER
         )
         conversation_id = conversation["_id"]
+        
+        # Bot Suppression: Skip AI processing if conversation is locked in human_needed state
+        if conversation.get("status") == "human_needed" and not conversation.get("ai_enabled"):
+            # Log that we are skipping AI processing for human ticket
+            logger.info(f"Bot suppressed for {clean_phone}: Conversation is in human_needed state")
+            return None
         
         # --- CRITICAL FIX: Link & Normalize inbound message log ---
         # We find the most recent unlinked inbound message and attach it.

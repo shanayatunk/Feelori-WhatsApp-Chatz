@@ -592,3 +592,39 @@ async def send_agent_message(
             status_code=500,
             detail=f"Failed to send message: {str(e)}"
         )
+
+
+@router.post("/{conversation_id}/release", response_model=APIResponse)
+async def release_conversation(
+    conversation_id: str,
+    tenant_id: str = Depends(get_tenant_id)
+):
+    """
+    Release a conversation back to the AI bot.
+    """
+    try:
+        conv_object_id = ObjectId(conversation_id)
+        now = datetime.now(timezone.utc)
+        
+        result = await db_service.db.conversations.update_one(
+            {"_id": conv_object_id, "tenant_id": tenant_id},
+            {
+                "$set": {
+                    "ai_enabled": True,       # Turn AI back on
+                    "ai_paused_by": None,     # Clear the pause flag
+                    "status": "open",         # Ensure status is open (not human_needed)
+                    "updated_at": now
+                }
+            }
+        )
+        
+        if result.matched_count == 0:
+            raise HTTPException(status_code=404, detail="Conversation not found")
+        
+        return APIResponse(
+            success=True, 
+            message="Conversation released to bot", 
+            version=settings.api_version
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to release conversation: {str(e)}")

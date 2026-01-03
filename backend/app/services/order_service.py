@@ -277,6 +277,24 @@ async def process_message(phone_number: str, message_text: str, message_type: st
         )
         conversation_id = conversation["_id"]
         
+        # --- CRITICAL FIX: Link inbound message log to conversation ---
+        # We find the most recent unlinked inbound message for this tenant/phone and attach it.
+        await db_service.db.message_logs.find_one_and_update(
+            {
+                "business_id": business_id,
+                "phone": clean_phone,
+                "direction": "inbound",
+                "conversation_id": {"$exists": False}
+            },
+            {
+                "$set": {
+                    "conversation_id": conversation_id
+                }
+            },
+            sort=[("timestamp", -1)] 
+        )
+        # -------------------------------------------------------------
+        
         if clean_phone == settings.packing_dept_whatsapp_number:
             return string_service.get_formatted_string("PACKING_DEPT_REDIRECT", business_id=business_id)
 

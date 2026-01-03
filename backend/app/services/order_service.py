@@ -1034,16 +1034,19 @@ async def handle_price_inquiry(message: str, customer: Dict, **kwargs) -> Option
 async def handle_product_detail(message: str, customer: Dict, **kwargs) -> Optional[str]:
     """Shows a detailed card for a specific product."""
     business_id = kwargs.get("business_id", "feelori")
-    numeric_product_id = message.replace("product_", "")
+    
+    # Remove the 'product_' prefix from the button ID
+    clean_id = message.replace("product_", "")
 
-    # --- THIS IS THE FIX ---
-    # Construct the full GraphQL GID that the Shopify API expects.
-    graphql_gid = f"gid://shopify/Product/{numeric_product_id}"
-    # --- END OF FIX ---
+    # FIX: Check if it's already a full GID or just a numeric ID
+    if clean_id.startswith("gid://"):
+        graphql_gid = clean_id
+    else:
+        graphql_gid = f"gid://shopify/Product/{clean_id}"
 
     # Pass the correctly formatted GID to the service.
     product = await shopify_service.get_product_by_id(graphql_gid, business_id=business_id)
-
+    
     if product:
         await cache_service.set(
             CacheKeys.LAST_SINGLE_PRODUCT.format(phone=customer['phone_number']),

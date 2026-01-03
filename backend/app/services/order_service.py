@@ -515,16 +515,17 @@ async def process_message(phone_number: str, message_text: str, message_type: st
             # --- CRITICAL FIX: Log the AI/Bot Reply to the Database ---
             await db_service.db.message_logs.insert_one({
                 "tenant_id": business_id,
-                "business_id": business_id,        # Dual-write for safety
+                "business_id": business_id,
                 "conversation_id": conversation_id,
-                "direction": "outbound",           # Critical for Right-Side alignment
+                "phone": clean_phone,
+                "direction": "outbound",
                 "source": "ai",
-                "type": "text",
-                "text": response_text,             # Frontend Source of Truth
-                "content": response_text,          # Legacy
+                "message_type": "text",
+                "text": response_text,
+                "content": response_text,
                 "status": "sent",
-                "created_at": reply_now,
-                "timestamp": reply_now
+                "timestamp": reply_now,
+                "created_at": reply_now
             })
             
             # Update Conversation Preview

@@ -3,7 +3,7 @@
 from fastapi import APIRouter, Depends
 from app.config.settings import settings
 from app.services.db_service import db_service
-from app.utils.dependencies import verify_jwt_token
+from app.dependencies.tenant import get_tenant_id
 from app.models.api import APIResponse
 import structlog
 
@@ -12,51 +12,58 @@ log = structlog.get_logger(__name__)
 # This file defines API routes specifically for the main React Admin Dashboard's summary stats.
 router = APIRouter(
     prefix="/dashboard",
-    tags=["Admin Dashboard"],
-    dependencies=[Depends(verify_jwt_token)]
+    tags=["Admin Dashboard"]
 )
 
 @router.get("/stats", response_model=APIResponse)
-async def get_dashboard_stats(current_user: dict = Depends(verify_jwt_token)):
+async def get_dashboard_stats(
+    tenant_id: str = Depends(get_tenant_id)
+):
     """Provides key metrics for the main admin dashboard."""
-    # Extract tenant_id from JWT payload (conversations use tenant_id, not business_id)
-    business_id = current_user.get("tenant_id", current_user.get("business_id", "feelori"))
+    # 1. Normalize IDs: Check for "FeelOri", "feelori", etc.
+    tenant_candidates = list(set([tenant_id, tenant_id.lower(), tenant_id.strip()]))
     
-    # 1. Active Conversations (using tenant_id field in conversations collection)
+    # 2. Robust Query: Check BOTH 'tenant_id' AND 'business_id' fields
+    match_tenant = {
+        "$or": [
+            {"tenant_id": {"$in": tenant_candidates}},
+            {"business_id": {"$in": tenant_candidates}}
+        ]
+    }
+
+    # 3. Execute Counts
     active_count = await db_service.db.conversations.count_documents({
-        "tenant_id": business_id,  # FIXED: Use tenant_id instead of business_id
+        **match_tenant,
         "status": {"$in": ["open", "pending", "human_needed"]}
     })
 
-    # 2. AI Handled (using tenant_id field in conversations collection)
     ai_handled_count = await db_service.db.conversations.count_documents({
-        "tenant_id": business_id,  # FIXED: Use tenant_id instead of business_id
+        **match_tenant,
         "ai_enabled": True
     })
 
-    # 3. Human Intervention (using tenant_id field in conversations collection)
     human_needed_count = await db_service.db.conversations.count_documents({
-        "tenant_id": business_id,  # FIXED: Use tenant_id instead of business_id
+        **match_tenant,
         "status": "human_needed"
     })
-
-    # 4. Triage Tickets (using business_id field - this collection uses business_id, not tenant_id)
-    triage_count = await db_service.db.triage_tickets.count_documents({
-        "business_id": business_id,  # Keep business_id - triage_tickets collection uses this field
-        "status": "human_needed"
-    })
-
-    frontend_stats = {
-        "active_conversations": active_count,
-        "ai_handled": ai_handled_count,
-        "human_needed": human_needed_count,
-        "triage_tickets": triage_count
-    }
     
+    # Check triage tickets (robust check)
+    attention_needed_count = await db_service.db.triage_tickets.count_documents({
+        "$or": [
+            {"business_id": {"$in": tenant_candidates}},
+            {"tenant_id": {"$in": tenant_candidates}}
+        ],
+        "status": "human_needed"
+    })
+
     return APIResponse(
-        success=True, 
-        message="Stats retrieved successfully.", 
-        data={"stats": frontend_stats}, 
+        success=True,
+        data={
+            "active_conversations": active_count,
+            "ai_handled": ai_handled_count,
+            "human_intervention": human_needed_count,
+            "attention_needed": attention_needed_count
+        },
         version=settings.api_version
     )
 

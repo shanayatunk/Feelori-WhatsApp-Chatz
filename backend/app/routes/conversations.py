@@ -334,6 +334,9 @@ async def assign_conversation(
             {
                 "$set": {
                     "assigned_to": assign_data.user_id,
+                    "status": "human_needed",        # Force status change
+                    "ai_enabled": False,             # Force AI Off
+                    "ai_paused_by": "agent",         # Reason
                     "updated_at": now
                 }
             }

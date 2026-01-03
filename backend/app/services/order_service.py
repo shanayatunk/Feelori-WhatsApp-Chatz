@@ -1534,7 +1534,8 @@ async def process_webhook_message(message: Dict[str, Any], webhook_data: Dict[st
             "phone": clean_phone,
             "direction": "inbound",
             "message_type": message_type,
-            "content": message_text,
+            "text": message_text,       # Frontend Source of Truth
+            "content": message_text,    # Keep for legacy/backend compatibility
             "status": "received", # The initial status is 'received'
             "source": "customer",
             "timestamp": datetime.utcnow(),

@@ -460,6 +460,29 @@ async def process_message(phone_number: str, message_text: str, message_type: st
             intent = await analyze_intent(message_text, message_type, customer, quoted_wamid)
             response = await route_message(intent, clean_phone, message_text, customer, quoted_wamid, business_id=business_id)
         
+        # NEW: Sync to conversations collection for the Frontend Inbox
+        now = datetime.utcnow()
+        await db_service.db.conversations.update_one(
+            {"external_user_id": clean_phone, "tenant_id": business_id},
+            {
+                "$set": {
+                    "external_user_id": clean_phone,
+                    "tenant_id": business_id,
+                    "last_message": {"type": "text", "text": message_text[:200]}, # Store preview
+                    "last_message_at": now,
+                    "updated_at": now,
+                    "status": "open", # Re-open conversation on new message
+                    "ai_enabled": True # Default to AI on unless explicitly paused
+                },
+                "$setOnInsert": {
+                    "created_at": now,
+                    "ai_paused_by": None,
+                    "assigned_to": None
+                }
+            },
+            upsert=True
+        )
+
         return response[:4096] if response else None
         
     except Exception as e:

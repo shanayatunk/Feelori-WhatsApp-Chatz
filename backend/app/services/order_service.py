@@ -512,7 +512,7 @@ async def process_message(phone_number: str, message_text: str, message_type: st
             reply_now = datetime.utcnow()
             response_text = response[:4096]  # Use the same truncation as return statement
             
-            # --- CRITICAL FIX: Log the AI/Bot Reply to the Database ---
+            # Log AI reply (No wamid yet - rely on sparse index)
             await db_service.db.message_logs.insert_one({
                 "tenant_id": business_id,
                 "business_id": business_id,
@@ -523,7 +523,7 @@ async def process_message(phone_number: str, message_text: str, message_type: st
                 "message_type": "text",
                 "text": response_text,
                 "content": response_text,
-                "status": "sent",
+                "status": "sending",
                 "timestamp": reply_now,
                 "created_at": reply_now
             })

@@ -253,6 +253,16 @@ async def get_conversation_thread(
             if "_id" in msg:
                 msg["_id"] = str(msg["_id"])
             
+            # FIX: Convert conversation_id to string to prevent 500 Error
+            if "conversation_id" in msg:
+                msg["conversation_id"] = str(msg["conversation_id"])
+            
+            # FIX: Ensure datetimes are ISO strings (safer for JSON)
+            if "created_at" in msg and hasattr(msg["created_at"], 'isoformat'):
+                msg["created_at"] = msg["created_at"].isoformat()
+            if "timestamp" in msg and hasattr(msg["timestamp"], 'isoformat'):
+                msg["timestamp"] = msg["timestamp"].isoformat()
+            
             # 1. Guarantee 'text' exists (Frontend source of truth)
             if not msg.get("text") and msg.get("content"):
                 msg["text"] = msg["content"]

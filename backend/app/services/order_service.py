@@ -8,6 +8,7 @@ import tenacity
 from datetime import datetime
 from dataclasses import dataclass, field
 from typing import Set, Dict, List, Tuple, Optional, Any
+from pymongo import ReturnDocument
 
 
 from rapidfuzz import process, fuzz
@@ -253,7 +254,7 @@ async def process_message(phone_number: str, message_text: str, message_type: st
         
         # Step A: Upsert conversation early and capture conversation_id for real-time syncing
         now = datetime.utcnow()
-        conversation_doc = await db_service.db.conversations.find_one_and_update(
+        conversation = await db_service.db.conversations.find_one_and_update(
             {"external_user_id": clean_phone, "tenant_id": business_id},
             {
                 "$set": {
@@ -272,9 +273,9 @@ async def process_message(phone_number: str, message_text: str, message_type: st
                 }
             },
             upsert=True,
-            return_document=True
+            return_document=ReturnDocument.AFTER
         )
-        conversation_id = conversation_doc.get("_id")
+        conversation_id = conversation["_id"]
         
         if clean_phone == settings.packing_dept_whatsapp_number:
             return string_service.get_formatted_string("PACKING_DEPT_REDIRECT", business_id=business_id)

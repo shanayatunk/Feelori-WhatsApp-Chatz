@@ -248,28 +248,27 @@ async def get_conversation_thread(
         
         messages = await messages_cursor.to_list(length=None)
         
-        # Convert ObjectIds to strings and normalize data for Frontend
+        # Normalize and serialize messages
         for msg in messages:
+            # 1. Convert ObjectIds to strings (CRITICAL for JSON response)
             if "_id" in msg:
                 msg["_id"] = str(msg["_id"])
-            
-            # FIX: Convert conversation_id to string to prevent 500 Error
             if "conversation_id" in msg:
                 msg["conversation_id"] = str(msg["conversation_id"])
             
-            # FIX: Ensure datetimes are ISO strings (safer for JSON)
-            if "created_at" in msg and hasattr(msg["created_at"], 'isoformat'):
-                msg["created_at"] = msg["created_at"].isoformat()
-            if "timestamp" in msg and hasattr(msg["timestamp"], 'isoformat'):
-                msg["timestamp"] = msg["timestamp"].isoformat()
-            
-            # 1. Guarantee 'text' exists (Frontend source of truth)
-            if not msg.get("text") and msg.get("content"):
+            # 2. Ensure 'text' field exists for Frontend
+            if "text" not in msg and "content" in msg:
                 msg["text"] = msg["content"]
             
-            # 2. Guarantee 'timestamp' exists
-            if not msg.get("timestamp") and msg.get("created_at"):
-                msg["timestamp"] = msg.get("created_at")
+            # 3. Serialize Datetimes safely
+            if "timestamp" in msg and isinstance(msg["timestamp"], datetime):
+                msg["timestamp"] = msg["timestamp"].isoformat()
+            if "created_at" in msg and isinstance(msg["created_at"], datetime):
+                msg["created_at"] = msg["created_at"].isoformat()
+
+            # 4. Guarantee timestamp field presence
+            if "timestamp" not in msg and "created_at" in msg:
+                msg["timestamp"] = msg["created_at"]
         
         return APIResponse(
             success=True,

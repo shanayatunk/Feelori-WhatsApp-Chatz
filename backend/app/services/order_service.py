@@ -326,6 +326,21 @@ async def process_message(phone_number: str, message_text: str, message_type: st
 
         if active_ticket:
             logger.info(f"Bot suppressed for {clean_phone}: Human agent active on ticket {active_ticket.get('_id')}")
+            
+            # --- FIX: Sync status for UI consistency ---
+            # Revert status to 'human_needed' because the initial upsert above
+            # incorrectly flipped it to 'open'.
+            await db_service.db.conversations.update_one(
+                {"_id": conversation_id},
+                {
+                    "$set": {
+                        "status": "human_needed",
+                        "ai_enabled": False,
+                        "ai_paused_by": "system"
+                    }
+                }
+            )
+            
             return None  # Stop processing (Bot stays silent)
         # -----------------------------
 

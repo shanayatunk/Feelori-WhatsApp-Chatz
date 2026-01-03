@@ -251,6 +251,31 @@ async def process_message(phone_number: str, message_text: str, message_type: st
     try:
         clean_phone = EnhancedSecurityService.sanitize_phone_number(phone_number)
         
+        # Step A: Upsert conversation early and capture conversation_id for real-time syncing
+        now = datetime.utcnow()
+        conversation_doc = await db_service.db.conversations.find_one_and_update(
+            {"external_user_id": clean_phone, "tenant_id": business_id},
+            {
+                "$set": {
+                    "external_user_id": clean_phone,
+                    "tenant_id": business_id,
+                    "last_message": {"type": "text", "text": message_text[:200]},  # Store preview
+                    "last_message_at": now,
+                    "updated_at": now,
+                    "status": "open",  # Re-open conversation on new message
+                },
+                "$setOnInsert": {
+                    "created_at": now,
+                    "ai_enabled": True,
+                    "ai_paused_by": None,
+                    "assigned_to": None
+                }
+            },
+            upsert=True,
+            return_document=True
+        )
+        conversation_id = conversation_doc.get("_id")
+        
         if clean_phone == settings.packing_dept_whatsapp_number:
             return string_service.get_formatted_string("PACKING_DEPT_REDIRECT", business_id=business_id)
 
@@ -460,28 +485,19 @@ async def process_message(phone_number: str, message_text: str, message_type: st
             intent = await analyze_intent(message_text, message_type, customer, quoted_wamid)
             response = await route_message(intent, clean_phone, message_text, customer, quoted_wamid, business_id=business_id)
         
-        # NEW: Sync to conversations collection for the Frontend Inbox
-        now = datetime.utcnow()
-        await db_service.db.conversations.update_one(
-            {"external_user_id": clean_phone, "tenant_id": business_id},
-            {
-                "$set": {
-                    "external_user_id": clean_phone,
-                    "tenant_id": business_id,
-                    "last_message": {"type": "text", "text": message_text[:200]}, # Store preview
-                    "last_message_at": now,
-                    "updated_at": now,
-                    "status": "open", # Re-open conversation on new message
-                    "ai_enabled": True # Default to AI on unless explicitly paused
-                },
-                "$setOnInsert": {
-                    "created_at": now,
-                    "ai_paused_by": None,
-                    "assigned_to": None
+        # Step C: Update conversation with AI reply when response is generated
+        if response:
+            reply_now = datetime.utcnow()
+            await db_service.db.conversations.update_one(
+                {"_id": conversation_id, "tenant_id": business_id},
+                {
+                    "$set": {
+                        "last_message": {"type": "text", "text": response[:200]},  # Store AI reply preview
+                        "last_message_at": reply_now,
+                        "updated_at": reply_now
+                    }
                 }
-            },
-            upsert=True
-        )
+            )
 
         return response[:4096] if response else None
         

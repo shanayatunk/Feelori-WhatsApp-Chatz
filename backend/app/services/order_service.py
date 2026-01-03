@@ -507,19 +507,38 @@ async def process_message(phone_number: str, message_text: str, message_type: st
             intent = await analyze_intent(message_text, message_type, customer, quoted_wamid)
             response = await route_message(intent, clean_phone, message_text, customer, quoted_wamid, business_id=business_id)
         
-        # Step C: Update conversation with AI reply when response is generated
+        # Step C: Log AI reply and update conversation when response is generated
         if response:
             reply_now = datetime.utcnow()
+            response_text = response[:4096]  # Use the same truncation as return statement
+            
+            # --- CRITICAL FIX: Log the AI/Bot Reply to the Database ---
+            await db_service.db.message_logs.insert_one({
+                "tenant_id": business_id,
+                "business_id": business_id,        # Dual-write for safety
+                "conversation_id": conversation_id,
+                "direction": "outbound",           # Critical for Right-Side alignment
+                "source": "ai",
+                "type": "text",
+                "text": response_text,             # Frontend Source of Truth
+                "content": response_text,          # Legacy
+                "status": "sent",
+                "created_at": reply_now,
+                "timestamp": reply_now
+            })
+            
+            # Update Conversation Preview
             await db_service.db.conversations.update_one(
                 {"_id": conversation_id, "tenant_id": business_id},
                 {
                     "$set": {
-                        "last_message": {"type": "text", "text": response[:200]},  # Store AI reply preview
+                        "last_message": {"type": "text", "text": response_text[:200]},
                         "last_message_at": reply_now,
                         "updated_at": reply_now
                     }
                 }
             )
+            # -----------------------------------------------------------
 
         return response[:4096] if response else None
         

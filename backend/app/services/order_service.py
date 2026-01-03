@@ -277,8 +277,9 @@ async def process_message(phone_number: str, message_text: str, message_type: st
         )
         conversation_id = conversation["_id"]
         
-        # --- CRITICAL FIX: Link inbound message log to conversation ---
-        # We find the most recent unlinked inbound message for this tenant/phone and attach it.
+        # --- CRITICAL FIX: Link & Normalize inbound message log ---
+        # We find the most recent unlinked inbound message and attach it.
+        # We also copy 'message_text' to 'text' so the Frontend schema is consistent.
         await db_service.db.message_logs.find_one_and_update(
             {
                 "business_id": business_id,
@@ -288,7 +289,9 @@ async def process_message(phone_number: str, message_text: str, message_type: st
             },
             {
                 "$set": {
-                    "conversation_id": conversation_id
+                    "conversation_id": conversation_id,
+                    "type": "text",         # Standardize type
+                    "text": message_text    # Normalize content -> text for Frontend
                 }
             },
             sort=[("timestamp", -1)] 

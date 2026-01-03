@@ -317,10 +317,11 @@ async def process_message(phone_number: str, message_text: str, message_type: st
         )
         conversation_id = conversation["_id"]
         
-        # Bot Suppression: Skip AI processing if conversation is locked in human_needed state
-        if conversation.get("status") == "human_needed" and not conversation.get("ai_enabled"):
-            # Log that we are skipping AI processing for human ticket
-            logger.info(f"Bot suppressed for {clean_phone}: Conversation is in human_needed state")
+        # Bot Suppression: STRICTLY respect the ai_enabled flag.
+        # If AI is disabled (whether by Manual Toggle OR Human Ticket), do not reply.
+        # We default to True to ensure old conversations don't break.
+        if conversation.get("ai_enabled", True) is False:
+            logger.info(f"Bot suppressed for {clean_phone}: AI is explicitly disabled.")
             return None
         
         # --- CRITICAL FIX: Link & Normalize inbound message log ---

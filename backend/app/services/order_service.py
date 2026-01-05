@@ -14,7 +14,7 @@ from pymongo import ReturnDocument
 from rapidfuzz import process, fuzz
 
 from app.config.settings import settings
-from app.config import rules as default_rules
+from app.config import rules as default_rules  # Keep as fallback for constants not yet in BusinessConfig
 from app.models.domain import Product
 from app.services.security_service import EnhancedSecurityService
 from app.services.ai_service import ai_service
@@ -542,7 +542,8 @@ async def process_message(phone_number: str, message_text: str, message_type: st
                 answer = await asyncio.wait_for(
                     ai_service.get_product_qa(
                         query=" ".join(ai_keywords),
-                        product=None
+                        product=None,
+                        business_id=business_id
                     ),
                     timeout=15.0
                 )

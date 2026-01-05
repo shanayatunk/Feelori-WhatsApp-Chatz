@@ -1,10 +1,26 @@
 import logging
-from typing import Dict, List
+from typing import Dict, List, Optional
 from app.services.db_service import db_service
-from app.config import persona
 from app.config.settings import get_business_config
 
 logger = logging.getLogger(__name__)
+
+
+async def _get_persona_prompt(business_id: str) -> str:
+    """
+    Helper to get persona prompt from MongoDB BusinessConfig.
+    Falls back to fetching from database if not in request.state.
+    """
+    try:
+        config = await db_service.db.business_configs.find_one({"business_id": business_id})
+        if config and "persona" in config:
+            return config["persona"].get("prompt", "")
+    except Exception as e:
+        logger.warning(f"Failed to fetch persona from BusinessConfig for {business_id}: {e}")
+    
+    # Fallback: Return empty string (caller should handle)
+    return ""
+
 
 class StringService:
     def __init__(self):
@@ -15,11 +31,25 @@ class StringService:
         """Loads all strings from the database into the in-memory cache using defaults + overrides strategy."""
         logger.info("Loading strings from database into cache...")
         
-        # First, initialize with defaults
-        self._strings_cache = {
-            "FEELORI_SYSTEM_PROMPT": persona.FEELORI_SYSTEM_PROMPT,
-            "GOLDEN_SYSTEM_PROMPT": persona.GOLDEN_SYSTEM_PROMPT
-        }
+        # First, initialize with defaults from BusinessConfig
+        self._strings_cache = {}
+        try:
+            # Fetch persona prompts from BusinessConfig for feelori and goldencollections
+            feelori_config = await db_service.db.business_configs.find_one({"business_id": "feelori"})
+            if feelori_config and "persona" in feelori_config:
+                self._strings_cache["FEELORI_SYSTEM_PROMPT"] = feelori_config["persona"].get("prompt", "")
+            
+            golden_config = await db_service.db.business_configs.find_one({"business_id": "goldencollections"})
+            if golden_config and "persona" in golden_config:
+                self._strings_cache["GOLDEN_SYSTEM_PROMPT"] = golden_config["persona"].get("prompt", "")
+        except Exception as e:
+            logger.warning(f"Failed to load persona from BusinessConfig: {e}")
+        
+        # Ensure we have at least empty strings if configs don't exist
+        if "FEELORI_SYSTEM_PROMPT" not in self._strings_cache:
+            self._strings_cache["FEELORI_SYSTEM_PROMPT"] = ""
+        if "GOLDEN_SYSTEM_PROMPT" not in self._strings_cache:
+            self._strings_cache["GOLDEN_SYSTEM_PROMPT"] = ""
         
         # Second, fetch all strings from DB and update the cache (DB values overwrite defaults)
         try:

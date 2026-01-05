@@ -11,8 +11,7 @@ from openai import AsyncOpenAI
 from tenacity import retry, wait_exponential, stop_after_attempt, retry_if_exception_type
 from app.models.domain import Product
 from app.config.settings import settings, get_business_config
-from app.config import persona
-from app.config.persona import VISUAL_SEARCH_PROMPT, QA_PROMPT_TEMPLATE
+from app.services.db_service import db_service
 from app.utils.circuit_breaker import CircuitBreaker
 from app.utils.metrics import ai_requests_counter
 from app.services.shopify_service import shopify_service
@@ -215,15 +214,19 @@ class AIService:
 
     async def _generate_openai_response(self, message: str, context: dict, business_id: str = "feelori") -> str:
         """Generate OpenAI response with conversation context."""
-        # Select the appropriate system prompt based on business_id
-        if business_id == "goldencollections":
-            prompt_key = "GOLDEN_SYSTEM_PROMPT"
-            fallback_text = persona.GOLDEN_SYSTEM_PROMPT
-        else:
-            prompt_key = "FEELORI_SYSTEM_PROMPT"
-            fallback_text = persona.FEELORI_SYSTEM_PROMPT
-            
-        system_prompt = string_service.get_string(prompt_key, default=fallback_text)
+        # Get system prompt from BusinessConfig
+        try:
+            config = await db_service.db.business_configs.find_one({"business_id": business_id})
+            if config and "persona" in config:
+                system_prompt = config["persona"].get("prompt", "")
+            else:
+                # Fallback to string_service cache
+                prompt_key = "GOLDEN_SYSTEM_PROMPT" if business_id == "goldencollections" else "FEELORI_SYSTEM_PROMPT"
+                system_prompt = string_service.get_string(prompt_key, default="")
+        except Exception as e:
+            logger.warning(f"Failed to fetch persona from BusinessConfig for {business_id}: {e}")
+            prompt_key = "GOLDEN_SYSTEM_PROMPT" if business_id == "goldencollections" else "FEELORI_SYSTEM_PROMPT"
+            system_prompt = string_service.get_string(prompt_key, default="")
         
         # Fetch business configuration and create facts dictionary
         config = get_business_config(business_id)
@@ -271,15 +274,19 @@ class AIService:
         if not self.model_name:
             raise Exception("No Gemini model available")
 
-        # Select the appropriate system prompt based on business_id
-        if business_id == "goldencollections":
-            prompt_key = "GOLDEN_SYSTEM_PROMPT"
-            fallback_text = persona.GOLDEN_SYSTEM_PROMPT
-        else:
-            prompt_key = "FEELORI_SYSTEM_PROMPT"
-            fallback_text = persona.FEELORI_SYSTEM_PROMPT
-            
-        system_prompt = string_service.get_string(prompt_key, default=fallback_text)
+        # Get system prompt from BusinessConfig
+        try:
+            config = await db_service.db.business_configs.find_one({"business_id": business_id})
+            if config and "persona" in config:
+                system_prompt = config["persona"].get("prompt", "")
+            else:
+                # Fallback to string_service cache
+                prompt_key = "GOLDEN_SYSTEM_PROMPT" if business_id == "goldencollections" else "FEELORI_SYSTEM_PROMPT"
+                system_prompt = string_service.get_string(prompt_key, default="")
+        except Exception as e:
+            logger.warning(f"Failed to fetch persona from BusinessConfig for {business_id}: {e}")
+            prompt_key = "GOLDEN_SYSTEM_PROMPT" if business_id == "goldencollections" else "FEELORI_SYSTEM_PROMPT"
+            system_prompt = string_service.get_string(prompt_key, default="")
         
         # Fetch business configuration and create facts dictionary
         config = get_business_config(business_id)
@@ -382,7 +389,7 @@ Example format: {{"key": "value", "items": []}}"""
         raise Exception("Both Gemini and OpenAI failed to generate a valid JSON response.")
 
 
-    async def get_product_qa(self, query: str, product: Optional[Product] = None) -> str:
+    async def get_product_qa(self, query: str, product: Optional[Product] = None, business_id: str = "feelori") -> str:
         """
         Answers a question. If a product is provided, answers about the product.
         If no product is provided, tries to answer generally.
@@ -392,7 +399,7 @@ Example format: {{"key": "value", "items": []}}"""
 
         if product:
             # If a product *is* provided, create a specific Q&A prompt
-            prompt = self.create_qa_prompt(product, query)
+            prompt = self.create_qa_prompt(product, query, business_id=business_id)
         else:
             # No product provided, so just pass the query to the general model
             context = {"conversation_history": []} # Give it empty context
@@ -400,9 +407,28 @@ Example format: {{"key": "value", "items": []}}"""
         # Call the *existing* generate_response function
         return await self.generate_response(prompt, context)  
   
-    def create_qa_prompt(self, product, user_question: str) -> str:
+    def create_qa_prompt(self, product, user_question: str, business_id: str = "feelori") -> str:
         """Creates a formatted prompt for answering a question about a specific product."""
-        return QA_PROMPT_TEMPLATE.format(
+        # Note: QA_PROMPT_TEMPLATE is not yet in BusinessConfig, so we use a default template
+        # This can be moved to BusinessConfig.persona in the future
+        qa_template = """You are FeelOri's jewelry expert assistant. Answer the customer's question using ONLY the product information provided below. Be helpful, accurate, and concise.
+
+PRODUCT INFORMATION:
+Title: {product_title}
+Description: {product_description}
+Tags: {product_tags}
+Price: {product_price}
+
+CUSTOMER QUESTION: "{user_question}"
+
+INSTRUCTIONS:
+- Answer based ONLY on the provided product information
+- If the information isn't available, say "I don't have that specific information, but I can help you contact our team"
+- Be friendly and professional
+- Keep the answer concise (2-3 sentences max)
+
+ANSWER:"""
+        return qa_template.format(
             product_title=product.title,
             product_description=product.description or 'No description available',
             product_tags=', '.join(product.tags) if product.tags else 'No tags available',
@@ -427,9 +453,16 @@ Example format: {{"key": "value", "items": []}}"""
                 'data': image_bytes
             }
             
+            # Get visual search prompt (not yet in BusinessConfig, using default)
+            # This can be moved to BusinessConfig.persona in the future
+            visual_search_prompt = """Analyze this jewelry photo. Return ONLY a comma-separated list of 3-4 of the most relevant lowercase keywords for a product search.
+1. Start with the single most accurate primary category from this list: `[necklace, earrings, bangle, ring, set, choker, haram, jhumka, stud]`.
+2. Add 2-3 other dominant keywords (e.g., primary stone, color, style).
+Example: `set, ruby, gold plated, traditional`"""
+            
             # Use multimodal content with the new client
             contents = [
-                VISUAL_SEARCH_PROMPT,
+                visual_search_prompt,
                 image_data
             ]
             

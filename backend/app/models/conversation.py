@@ -43,6 +43,7 @@ class Conversation(Document):
     created_at: Optional[datetime] = Field(default=None, description="Conversation creation timestamp")
     updated_at: Optional[datetime] = Field(default=None, description="Last update timestamp")
     flow_context: Optional[FlowContext] = Field(default=None, description="Workflow-oriented flow context for conversation state")
+    campaign_context: Optional[Dict[str, Any]] = Field(default=None, description="Campaign context information (campaign_id, campaign_type, entry_timestamp)")
     
     def get_or_init_flow_context(self) -> FlowContext:
         """

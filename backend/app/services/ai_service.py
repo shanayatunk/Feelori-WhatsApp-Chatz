@@ -222,14 +222,8 @@ class AIService:
         
         return text_response, proposed_workflow
 
-    async def generate_response(self, message: str, context: dict | None = None, business_id: str = "feelori", flow_context: dict | None = None) -> tuple[str, Optional[Dict[str, Any]]]:
-        """Generate AI response for general text-based inquiries with failover.
-        
-        Returns:
-            tuple: (text_response, proposed_workflow)
-            - text_response: The text response to send to the user
-            - proposed_workflow: Optional dict with proposed workflow changes, or None
-        """
+    async def generate_response(self, message: str, context: dict | None = None, business_id: str = "feelori", flow_context: dict | None = None) -> str:
+        """Generate AI response for general text-based inquiries with failover."""
         serializable_context = json.loads(json.dumps(context, default=str)) if context else {}
 
         if self.gemini_client:
@@ -237,7 +231,7 @@ class AIService:
                 text_response, proposed_workflow = await self._generate_gemini_response(message, serializable_context, business_id, flow_context)
                 if text_response:
                     ai_requests_counter.labels(model="gemini", status="success").inc()
-                    return text_response, proposed_workflow
+                    return text_response
             except Exception as e:
                 logger.error(f"Gemini API call failed: {e}")
                 ai_requests_counter.labels(model="gemini", status="error").inc()
@@ -247,12 +241,12 @@ class AIService:
                 text_response, proposed_workflow = await self.openai_breaker.call(self._generate_openai_response, message, serializable_context, business_id, flow_context)
                 if text_response:
                     ai_requests_counter.labels(model="openai", status="success").inc()
-                    return text_response, proposed_workflow
+                    return text_response
             except Exception as e:
                 logger.error(f"OpenAI fallback failed: {e}")
                 ai_requests_counter.labels(model="openai", status="error").inc()
         
-        return "I'm sorry, I'm having trouble connecting. Could you rephrase your question?", None
+        return "I'm sorry, I'm having trouble connecting. Could you rephrase your question?"
 
     async def _generate_openai_json_response(self, prompt: str) -> Optional[Dict]:
         """Generates a JSON response from OpenAI using its JSON mode."""
@@ -560,8 +554,7 @@ Example format: {{"key": "value", "items": []}}"""
             context = {"conversation_history": []} # Give it empty context
         
         # Call the *existing* generate_response function
-        text_response, _ = await self.generate_response(prompt, context)
-        return text_response  
+        return await self.generate_response(prompt, context)  
   
     def create_qa_prompt(self, product, user_question: str, business_id: str = "feelori") -> str:
         """Creates a formatted prompt for answering a question about a specific product."""

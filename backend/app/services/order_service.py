@@ -1163,11 +1163,10 @@ async def handle_contextual_product_question(message: str, customer: Dict, **kwa
         except Exception as e:
             logger.debug(f"Could not fetch flow_context for {phone_number}: {e}")
         
-        text_response, proposed_workflow = await asyncio.wait_for(ai_service.generate_response(prompt, business_id=business_id, flow_context=flow_context_dict), timeout=15.0)
+        text_response = await asyncio.wait_for(ai_service.generate_response(prompt, business_id=business_id, flow_context=flow_context_dict), timeout=15.0)
         
         await whatsapp_service.send_product_detail_with_buttons(phone_number, last_product, business_id=business_id)
-        # Return tuple for centralized workflow application
-        return text_response, proposed_workflow
+        return text_response
     except asyncio.TimeoutError:
         logger.warning(f"Contextual Q&A timed out for product {last_product.id}")
         return await _handle_error(customer)
@@ -1514,13 +1513,12 @@ async def handle_general_inquiry(message: str, customer: Dict, **kwargs) -> str:
             except Exception as e:
                 logger.debug(f"Could not fetch flow_context for {phone_number}: {e}")
         
-        text_response, proposed_workflow = await asyncio.wait_for(
+        text_response = await asyncio.wait_for(
             ai_service.generate_response(message, context, business_id=business_id, flow_context=flow_context_dict),
             timeout=15.0
         )
         
-        # Return tuple for centralized workflow application
-        return text_response, proposed_workflow
+        return text_response
     except asyncio.TimeoutError:
         logger.warning("General inquiry AI timed out.")
         return string_service.get_formatted_string("ERROR_AI_GENERAL", business_id=business_id)

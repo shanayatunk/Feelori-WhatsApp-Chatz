@@ -1,12 +1,11 @@
 # /app/dependencies/tenant.py
 
-from typing import Dict, Any
 from jose import JWTError, jwt
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 
 from app.config.settings import settings
-from app.services.db_service import db_service
+from app.models.config import BusinessConfig
 
 # Setup HTTPBearer for token extraction
 security = HTTPBearer()
@@ -61,18 +60,18 @@ def get_tenant_id(credentials: HTTPAuthorizationCredentials = Depends(security))
 
 async def get_business_config(
     request: Request,
-    business_id: str = Depends(get_tenant_id)
-) -> Dict[str, Any]:
+    business_id: str
+) -> BusinessConfig:
     """
     Fetch BusinessConfig from MongoDB and attach to request.state.
     Implements per-request caching (not global, not singleton).
     
     Args:
         request: FastAPI Request object for per-request state
-        business_id: Business identifier (from tenant_id dependency)
+        business_id: Business identifier
         
     Returns:
-        BusinessConfig document as a dictionary
+        BusinessConfig instance
         
     Raises:
         HTTPException 404: If BusinessConfig not found in database
@@ -83,25 +82,21 @@ async def get_business_config(
         return request.state.business_config
     
     try:
-        # Fetch BusinessConfig from MongoDB
-        config = await db_service.db.business_configs.find_one(
-            {"business_id": business_id}
+        # Fetch BusinessConfig using Beanie ORM
+        business_config = await BusinessConfig.find_one(
+            BusinessConfig.business_id == business_id
         )
         
-        if not config:
+        if not business_config:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"BusinessConfig not found for business_id: {business_id}"
             )
         
-        # Remove MongoDB _id for cleaner response (optional, but good practice)
-        if "_id" in config:
-            config["_id"] = str(config["_id"])
-        
         # Cache in request.state for this request only
-        request.state.business_config = config
+        request.state.business_config = business_config
         
-        return config
+        return business_config
         
     except HTTPException:
         raise

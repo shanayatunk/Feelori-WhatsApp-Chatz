@@ -6,6 +6,7 @@ uvicorn
 
 # Database & Caching
 motor
+beanie
 redis
 
 # Configuration & Validation

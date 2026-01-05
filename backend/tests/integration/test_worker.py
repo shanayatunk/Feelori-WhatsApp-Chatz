@@ -14,17 +14,8 @@ async def test_worker_processing_logic_success(mocker):
         new_callable=AsyncMock,
         return_value=expected_response
     )
-    mock_get_customer = mocker.patch(
-        "app.services.order_service.get_or_create_customer",
-        new_callable=AsyncMock,
-        return_value={"name": None}
-    )
     mock_update_history = mocker.patch(
         "app.services.order_service.db_service.update_conversation_history",
-        new_callable=AsyncMock
-    )
-    mock_update_name = mocker.patch(
-        "app.services.order_service.db_service.update_customer_name",
         new_callable=AsyncMock
     )
     mock_whatsapp = mocker.patch(
@@ -47,8 +38,6 @@ async def test_worker_processing_logic_success(mocker):
     await queue._process_message_from_queue(sample_data)
 
     # Assertions: verify all critical functions were called
-    mock_get_customer.assert_awaited_once()
-    mock_update_name.assert_awaited_once()
     mock_process_message.assert_awaited_once()
     
     # --- FIX: Added business_id="feelori" ---

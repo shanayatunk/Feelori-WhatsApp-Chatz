@@ -105,10 +105,14 @@ async def test_shopify_get_products_success(mocker):
 @pytest.mark.asyncio
 async def test_ai_service_generates_response(mocker):
     """Test that the AI service generates a response using Gemini."""
-    mock_gen = mocker.patch('app.services.ai_service.AIService._generate_gemini_response', new_callable=AsyncMock)
-    mock_gen.return_value = "This is an AI response."
-
     from app.services.ai_service import ai_service
+    
+    # Force gemini_client to be present so the check passes
+    mocker.patch.object(ai_service, 'gemini_client', mocker.Mock())
+    
+    mock_gen = mocker.patch('app.services.ai_service.AIService._generate_gemini_response', new_callable=AsyncMock)
+    mock_gen.return_value = ("This is an AI response.", None)
+
     response = await ai_service.generate_response("Tell me a joke", {})
 
     assert response == "This is an AI response."

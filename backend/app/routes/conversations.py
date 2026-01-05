@@ -112,13 +112,13 @@ async def list_conversations(
             last_updated = conversations[-1].get("updated_at")
             if last_updated:
                 next_cursor = last_updated.isoformat() if isinstance(last_updated, datetime) else str(last_updated)
-    
-    return APIResponse(
-        success=True,
+        
+        return APIResponse(
+            success=True,
             message="Conversations retrieved successfully",
             data={"data": data, "next_cursor": next_cursor},
-        version=settings.api_version
-    )
+            version=settings.api_version
+        )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to list: {str(e)}")
 
@@ -142,13 +142,13 @@ async def get_conversation_stats(tenant_id: str = Depends(get_tenant_id)):
                 stats[status] = result.get("count", 0)
         
         stats["total"] = sum(r.get("count", 0) for r in results)
-    
-    return APIResponse(
-        success=True,
+        
+        return APIResponse(
+            success=True,
             message="Conversation statistics retrieved successfully",
             data={"stats": stats},
-        version=settings.api_version
-    )
+            version=settings.api_version
+        )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -297,12 +297,12 @@ async def send_agent_message(
             }}
         )
         
-    return APIResponse(
-        success=True,
+        return APIResponse(
+            success=True,
             message="Message sent successfully",
             data={"message_id": str(res.inserted_id)},
-        version=settings.api_version
-    )
+            version=settings.api_version
+        )
     except HTTPException:
         raise
     except Exception as e:
@@ -338,12 +338,12 @@ async def assign_conversation(
         
         if result.matched_count == 0:
             raise HTTPException(status_code=404, detail="Not found")
-    
-    return APIResponse(
-        success=True,
+        
+        return APIResponse(
+            success=True,
             message="Conversation assigned successfully",
-        version=settings.api_version
-    )
+            version=settings.api_version
+        )
     except HTTPException:
         raise
     except Exception as e:
@@ -375,12 +375,12 @@ async def resolve_conversation(
         
         if result.matched_count == 0:
             raise HTTPException(status_code=404, detail="Not found")
-    
-    return APIResponse(
-        success=True,
+        
+        return APIResponse(
+            success=True,
             message="Conversation resolved successfully",
-        version=settings.api_version
-    )
+            version=settings.api_version
+        )
     except HTTPException:
         raise
     except Exception as e:
@@ -422,12 +422,12 @@ async def control_ai(
         
         if result.matched_count == 0:
             raise HTTPException(status_code=404, detail="Not found")
-    
-    return APIResponse(
-        success=True,
+        
+        return APIResponse(
+            success=True,
             message=f"AI {'enabled' if ai_data.enabled else 'paused'} successfully",
-        version=settings.api_version
-    )
+            version=settings.api_version
+        )
     except HTTPException:
         raise
     except Exception as e:
@@ -461,12 +461,12 @@ async def release_conversation(
         
         if result.matched_count == 0:
             raise HTTPException(status_code=404, detail="Not found")
-    
-    return APIResponse(
-        success=True,
+        
+        return APIResponse(
+            success=True,
             message="Conversation released to bot",
-        version=settings.api_version
-    )
+            version=settings.api_version
+        )
     except HTTPException:
         raise
     except Exception as e:

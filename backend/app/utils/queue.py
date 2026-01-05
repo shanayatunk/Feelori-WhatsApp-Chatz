@@ -77,7 +77,7 @@ class RedisMessageQueue:
         Wrapped with exception handling to ensure robustness.
         """
         # These imports stay inside the function to prevent circular dependencies
-        from app.services.order_service import process_message, get_or_create_customer
+        from app.services.order_service import process_message
         from app.services.db_service import db_service
         from app.services.whatsapp_service import whatsapp_service
         from app.utils.metrics import message_counter

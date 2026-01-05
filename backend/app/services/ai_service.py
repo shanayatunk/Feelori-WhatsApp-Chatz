@@ -163,13 +163,13 @@ class AIService:
             return self.gemini_client.models.generate_content(model=m, contents=c, config=cfg)
         return _inner(model, contents, config)
 
-    async def generate_response(self, message: str, context: dict | None = None, business_id: str = "feelori") -> str:
+    async def generate_response(self, message: str, context: dict | None = None, business_id: str = "feelori", flow_context: dict | None = None) -> str:
         """Generate AI response for general text-based inquiries with failover."""
         serializable_context = json.loads(json.dumps(context, default=str)) if context else {}
 
         if self.gemini_client:
             try:
-                response = await self._generate_gemini_response(message, serializable_context, business_id)
+                response = await self._generate_gemini_response(message, serializable_context, business_id, flow_context)
                 if response:
                     ai_requests_counter.labels(model="gemini", status="success").inc()
                     return response
@@ -179,7 +179,7 @@ class AIService:
 
         if self.openai_client:
             try:
-                response = await self.openai_breaker.call(self._generate_openai_response, message, serializable_context, business_id)
+                response = await self.openai_breaker.call(self._generate_openai_response, message, serializable_context, business_id, flow_context)
                 if response:
                     ai_requests_counter.labels(model="openai", status="success").inc()
                     return response
@@ -212,7 +212,7 @@ class AIService:
             ai_requests_counter.labels(model="openai-json", status="error").inc()
             return None # Return None on failure
 
-    async def _generate_openai_response(self, message: str, context: dict, business_id: str = "feelori") -> str:
+    async def _generate_openai_response(self, message: str, context: dict, business_id: str = "feelori", flow_context: dict | None = None) -> str:
         """Generate OpenAI response with conversation context."""
         # Get system prompt from BusinessConfig
         try:
@@ -239,12 +239,26 @@ class AIService:
             "shipping_policy": config.shipping_policy_url
         }
         
+        # Build workflow state section if flow_context is provided
+        workflow_section = ""
+        if flow_context:
+            workflow_section = f"""
+
+[SYSTEM-CONTROLLED WORKFLOW STATE (READ-ONLY)]
+{json.dumps(flow_context, indent=2, default=str)}
+
+**IMPORTANT INSTRUCTIONS:**
+- You may reference this workflow state to generate better, context-aware responses
+- You must NOT attempt to change or update this state
+- You must NOT assume transitions have occurred unless explicitly stated
+- This state is managed by the system and is provided for informational purposes only
+"""
+        
         # Build enhanced system prompt with business facts
         enhanced_system_prompt = f"""{system_prompt}
 
 [OFFICIAL BUSINESS FACTS - USE THESE FOR ANSWERS]
-{json.dumps(business_facts, indent=2)}
-"""
+{json.dumps(business_facts, indent=2)}{workflow_section}"""
         
         messages = [{"role": "system", "content": enhanced_system_prompt}]
         if context.get("conversation_history"):
@@ -265,7 +279,7 @@ class AIService:
         )
         return response.choices[0].message.content.strip()
 
-    async def _generate_gemini_response(self, message: str, context: dict, business_id: str = "feelori") -> str:
+    async def _generate_gemini_response(self, message: str, context: dict, business_id: str = "feelori", flow_context: dict | None = None) -> str:
         """Generate response using the new google-genai client."""
         if not self.gemini_client:
             raise Exception("Gemini client not available")
@@ -299,11 +313,26 @@ class AIService:
             "shipping_policy": config.shipping_policy_url
         }
         
+        # Build workflow state section if flow_context is provided
+        workflow_section = ""
+        if flow_context:
+            workflow_section = f"""
+
+[SYSTEM-CONTROLLED WORKFLOW STATE (READ-ONLY)]
+{json.dumps(flow_context, indent=2, default=str)}
+
+**IMPORTANT INSTRUCTIONS:**
+- You may reference this workflow state to generate better, context-aware responses
+- You must NOT attempt to change or update this state
+- You must NOT assume transitions have occurred unless explicitly stated
+- This state is managed by the system and is provided for informational purposes only
+"""
+        
         # Build enhanced prompt with business facts
         full_prompt = f"""{system_prompt}
 
 [OFFICIAL BUSINESS FACTS - USE THESE FOR ANSWERS]
-{json.dumps(business_facts, indent=2)}
+{json.dumps(business_facts, indent=2)}{workflow_section}
 
 [CONVERSATION CONTEXT]
 {json.dumps(context)}

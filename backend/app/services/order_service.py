@@ -1014,9 +1014,22 @@ async def handle_contextual_product_question(message: str, customer: Dict, **kwa
         availability_text = last_product.availability.replace('_', ' ').title()
         return f"Yes, the *{last_product.title}* is currently {availability_text}!"
 
-    prompt = ai_service.create_qa_prompt(last_product, message)
+    prompt = ai_service.create_qa_prompt(last_product, message, business_id=business_id)
     try:
-        ai_answer = await asyncio.wait_for(ai_service.generate_response(prompt, business_id=business_id), timeout=15.0)
+        # Fetch flow_context from conversation if available
+        flow_context_dict = None
+        try:
+            clean_phone = EnhancedSecurityService.sanitize_phone_number(phone_number)
+            conversation = await db_service.db.conversations.find_one(
+                {"external_user_id": clean_phone, "tenant_id": business_id}
+            )
+            if conversation and conversation.get("flow_context"):
+                # MongoDB returns flow_context as a dict
+                flow_context_dict = conversation["flow_context"]
+        except Exception as e:
+            logger.debug(f"Could not fetch flow_context for {phone_number}: {e}")
+        
+        ai_answer = await asyncio.wait_for(ai_service.generate_response(prompt, business_id=business_id, flow_context=flow_context_dict), timeout=15.0)
         await whatsapp_service.send_product_detail_with_buttons(phone_number, last_product, business_id=business_id)
         return ai_answer
     except asyncio.TimeoutError:
@@ -1347,9 +1360,25 @@ async def handle_general_inquiry(message: str, customer: Dict, **kwargs) -> str:
     """Handles general questions using the AI model."""
     try:
         business_id = kwargs.get("business_id", "feelori")
+        phone_number = customer.get("phone_number") or kwargs.get("phone_number")
         context = {"conversation_history": customer.get("conversation_history", [])[-5:]}
+        
+        # Fetch flow_context from conversation if available
+        flow_context_dict = None
+        if phone_number:
+            try:
+                clean_phone = EnhancedSecurityService.sanitize_phone_number(phone_number)
+                conversation = await db_service.db.conversations.find_one(
+                    {"external_user_id": clean_phone, "tenant_id": business_id}
+                )
+                if conversation and conversation.get("flow_context"):
+                    # MongoDB returns flow_context as a dict
+                    flow_context_dict = conversation["flow_context"]
+            except Exception as e:
+                logger.debug(f"Could not fetch flow_context for {phone_number}: {e}")
+        
         return await asyncio.wait_for(
-            ai_service.generate_response(message, context, business_id=business_id),
+            ai_service.generate_response(message, context, business_id=business_id, flow_context=flow_context_dict),
             timeout=15.0
         )
     except asyncio.TimeoutError:

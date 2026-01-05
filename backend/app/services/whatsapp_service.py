@@ -168,7 +168,8 @@ class WhatsAppService:
         header_video_url: Optional[str] = None,
         button_url_param: Optional[str] = None,
         source: str = "bot",
-        business_id: str = "feelori"
+        business_id: str = "feelori",
+        campaign_context: Optional[Dict[str, Any]] = None
     ) -> Optional[str]:
         """Sends a pre-approved WhatsApp message template with optional header and button parameters."""
         clean_phone = re.sub(r"[^\d+]", "", to)
@@ -231,7 +232,13 @@ class WhatsAppService:
                 "components": components
             }
         }
-        return await self.send_whatsapp_request(payload, source=source, business_id=business_id)
+        
+        # Build metadata with campaign_context for broadcasts
+        metadata = {}
+        if campaign_context:
+            metadata["campaign_context"] = campaign_context
+        
+        return await self.send_whatsapp_request(payload, metadata=metadata, source=source, business_id=business_id)
 
     async def get_catalog_id(self, business_id: str = "feelori") -> Optional[str]:
         """Fetches and caches the WhatsApp Business catalog ID, prioritizing env settings."""

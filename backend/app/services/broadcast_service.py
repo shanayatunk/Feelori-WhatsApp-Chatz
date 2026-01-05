@@ -159,6 +159,16 @@ class BroadcastService:
                     success_count += 1
                     continue
 
+                # Build campaign_context for broadcast messages
+                campaign_context = None
+                if job_id:
+                    from datetime import datetime
+                    campaign_context = {
+                        "campaign_id": job_id,
+                        "campaign_type": "broadcast",
+                        "entry_timestamp": datetime.utcnow()
+                    }
+                
                 # Send to WhatsApp
                 wamid = await whatsapp_service.send_template_message(
                     to=formatted_phone,
@@ -167,7 +177,8 @@ class BroadcastService:
                     header_image_url=header_image_url,
                     header_video_url=header_video_url,
                     button_url_param=button_url_suffix,
-                    source="broadcast"
+                    source="broadcast",
+                    campaign_context=campaign_context
                 )
 
                 if wamid:

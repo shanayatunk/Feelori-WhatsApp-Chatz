@@ -25,12 +25,9 @@ class BusinessConfig(Document):
     This is a STATIC configuration model (read-only at runtime).
     No runtime or conversation state is stored here.
     """
-    business_id: Indexed(str, unique=True) = Field(..., description="Unique business identifier")
-    persona: Dict[str, Any] = Field(
-        ...,
-        description="AI persona configuration dict with keys: name, tone, language, prompt"
-    )
-    rules: List[RuleConfig] = Field(default_factory=list, description="List of static rules")
+    business_id: Indexed(str, unique=True)
+    persona: Dict[str, Any]
+    rules: List[RuleConfig] = Field(default_factory=list)
     
     class Settings:
         name = "business_configs"  # MongoDB collection name

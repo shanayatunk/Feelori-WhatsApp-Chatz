@@ -1897,7 +1897,7 @@ async def process_webhook_message(message: Dict[str, Any], webhook_data: Dict[st
         message_type = message.get("type", "unknown")
         # Use profile_name from parameter, fallback to webhook_data if not provided
         if not profile_name:
-        profile_name = webhook_data.get("contacts", [{}])[0].get("profile", {}).get("name")
+            profile_name = webhook_data.get("contacts", [{}])[0].get("profile", {}).get("name")
         quoted_wamid = message.get("context", {}).get("id")
 
         if message_type == "image":

@@ -3,6 +3,7 @@
 from datetime import datetime
 from typing import Optional, List, Dict, Any
 from pydantic import BaseModel, Field, ConfigDict
+from beanie import Document
 
 from app.models.flow import FlowContext
 
@@ -22,9 +23,8 @@ class ConversationContext(BaseModel):
     abandoned_checkout_id: Optional[str] = Field(default=None, description="Abandoned checkout ID if applicable")
 
 
-class Conversation(BaseModel):
+class Conversation(Document):
     """Canonical conversation schema for multi-tenant chat management."""
-    id: Optional[str] = Field(default=None, alias="_id", description="MongoDB document ID")
     tenant_id: str = Field(..., description="Tenant identifier (required)")
     channel: str = Field(default="whatsapp", description="Communication channel")
     external_user_id: str = Field(..., description="External user identifier (phone number)")

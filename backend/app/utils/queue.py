@@ -85,19 +85,15 @@ class RedisMessageQueue:
         from_number = data["from_number"]
 
         try:
-            # Update customer name if it's missing
-            if data.get("profile_name"):
-                customer = await get_or_create_customer(from_number)
-                if customer and not customer.get("name"):
-                    await db_service.update_customer_name(from_number, data["profile_name"])
-
             # Get the bot's response
+            # Note: profile_name is passed to process_message, which will handle name updates via get_or_create_customer
             response_text = await process_message(
                 phone_number=from_number,
                 message_text=data["message_text"],
                 message_type=data["message_type"],
                 quoted_wamid=data.get("quoted_wamid"),
-                business_id=data.get("business_id", "feelori")
+                business_id=data.get("business_id", "feelori"),
+                profile_name=data.get("profile_name")
             )
 
             # If there's a response to send or log, handle it

@@ -273,7 +273,7 @@ def _can_update_status_to_open(conversation: dict) -> bool:
     return True
 
 
-async def process_message(phone_number: str, message_text: str, message_type: str, quoted_wamid: str | None, business_id: str = "feelori") -> str | None:
+async def process_message(phone_number: str, message_text: str, message_type: str, quoted_wamid: str | None, business_id: str = "feelori", profile_name: str = None) -> str | None:
     """
     Processes an incoming message, handling triage states before
     routing to the AI-first intent model.
@@ -393,7 +393,7 @@ async def process_message(phone_number: str, message_text: str, message_type: st
             return "You have been resubscribed! 🎉"
         # ----------------------------------------
 
-        customer = await get_or_create_customer(clean_phone)
+        customer = await get_or_create_customer(clean_phone, profile_name=profile_name)
 
         # --- BROADCAST REPLY CHECK ---
         # Check if this is a reply to a broadcast message
@@ -614,7 +614,7 @@ async def process_message(phone_number: str, message_text: str, message_type: st
 
 # --- Helper function to get or create a customer ---
 async def get_or_create_customer(phone_number: str, profile_name: str = None) -> Dict[str, Any]:
-    """Retrieves an existing customer or creates a new one."""
+    """Retrieves an existing customer or creates a new one. Updates name if missing."""
     cached_customer = await cache_service.get(CacheKeys.CUSTOMER_DATA_V2.format(phone=phone_number))
     if cached_customer:
         try:
@@ -632,6 +632,12 @@ async def get_or_create_customer(phone_number: str, profile_name: str = None) ->
         }
         await db_service.create_customer(customer_data)
         customer = await db_service.get_customer(phone_number)
+    elif profile_name and not customer.get("name"):
+        # Update customer name if missing and profile_name is provided
+        await db_service.update_customer_name(phone_number, profile_name)
+        customer["name"] = profile_name
+        # Invalidate cache to force refresh
+        await cache_service.delete(CacheKeys.CUSTOMER_DATA_V2.format(phone=phone_number))
     
     await cache_service.set(CacheKeys.CUSTOMER_DATA_V2.format(phone=phone_number), json.dumps(customer, default=str), ttl=1800)
     return customer
@@ -1563,7 +1569,7 @@ def _format_orders_response(orders: List[Dict]) -> str:
 
 # --- Webhook Processing Logic ---
 
-async def process_webhook_message(message: Dict[str, Any], webhook_data: Dict[str, Any], business_id: str = "feelori"):
+async def process_webhook_message(message: Dict[str, Any], webhook_data: Dict[str, Any], business_id: str = "feelori", profile_name: str = None):
     """
     Main function to process an incoming webhook message from a user.
     """
@@ -1601,7 +1607,9 @@ async def process_webhook_message(message: Dict[str, Any], webhook_data: Dict[st
 
         message_text = get_message_text(message)
         message_type = message.get("type", "unknown")
-        profile_name = webhook_data.get("contacts", [{}])[0].get("profile", {}).get("name")
+        # Use profile_name from parameter, fallback to webhook_data if not provided
+        if not profile_name:
+            profile_name = webhook_data.get("contacts", [{}])[0].get("profile", {}).get("name")
         quoted_wamid = message.get("context", {}).get("id")
 
         if message_type == "image":

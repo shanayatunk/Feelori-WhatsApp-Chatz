@@ -98,11 +98,21 @@ async def handle_whatsapp_webhook(
                             await db_service.update_message_status(wamid, status_type)
                             log.info(f"Updated status for {wamid} to {status_type}")
                 elif "messages" in value:
+                    # Extract contacts and create lookup map for profile names
+                    contacts = value.get("contacts", [])
+                    contact_map = {
+                        c.get("wa_id"): c.get("profile", {}).get("name") 
+                        for c in contacts 
+                        if c.get("wa_id")
+                    }
+                    
                     for message in value.get("messages", []):
-                        log.info("Processing incoming message", message=message, business_id=business_id)
-                        # PASS BUSINESS_ID DOWNSTREAM
+                        # Get profile name from contact map
+                        profile_name = contact_map.get(message.get("from"))
+                        log.info("Processing incoming message", message=message, business_id=business_id, profile_name=profile_name)
+                        # PASS BUSINESS_ID AND PROFILE_NAME DOWNSTREAM
                         asyncio.create_task(
-                            order_service.process_webhook_message(message, value, business_id=business_id)
+                            order_service.process_webhook_message(message, value, business_id=business_id, profile_name=profile_name)
                         )
         
         log.info("Webhook processing complete.")

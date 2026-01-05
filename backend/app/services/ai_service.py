@@ -222,31 +222,37 @@ class AIService:
         
         return text_response, proposed_workflow
 
-    async def generate_response(self, message: str, context: dict | None = None, business_id: str = "feelori", flow_context: dict | None = None) -> str:
-        """Generate AI response for general text-based inquiries with failover."""
+    async def generate_response(self, message: str, context: dict | None = None, business_id: str = "feelori", flow_context: dict | None = None) -> tuple[str, Optional[Dict[str, Any]]]:
+        """Generate AI response for general text-based inquiries with failover.
+        
+        Returns:
+            tuple: (text_response, proposed_workflow)
+            - text_response: The text response to send to the user
+            - proposed_workflow: Optional dict with proposed workflow changes, or None
+        """
         serializable_context = json.loads(json.dumps(context, default=str)) if context else {}
 
         if self.gemini_client:
             try:
-                response = await self._generate_gemini_response(message, serializable_context, business_id, flow_context)
-                if response:
+                text_response, proposed_workflow = await self._generate_gemini_response(message, serializable_context, business_id, flow_context)
+                if text_response:
                     ai_requests_counter.labels(model="gemini", status="success").inc()
-                    return response
+                    return text_response, proposed_workflow
             except Exception as e:
                 logger.error(f"Gemini API call failed: {e}")
                 ai_requests_counter.labels(model="gemini", status="error").inc()
 
         if self.openai_client:
             try:
-                response = await self.openai_breaker.call(self._generate_openai_response, message, serializable_context, business_id, flow_context)
-                if response:
+                text_response, proposed_workflow = await self.openai_breaker.call(self._generate_openai_response, message, serializable_context, business_id, flow_context)
+                if text_response:
                     ai_requests_counter.labels(model="openai", status="success").inc()
-                    return response
+                    return text_response, proposed_workflow
             except Exception as e:
                 logger.error(f"OpenAI fallback failed: {e}")
                 ai_requests_counter.labels(model="openai", status="error").inc()
         
-        return "I'm sorry, I'm having trouble connecting. Could you rephrase your question?"
+        return "I'm sorry, I'm having trouble connecting. Could you rephrase your question?", None
 
     async def _generate_openai_json_response(self, prompt: str) -> Optional[Dict]:
         """Generates a JSON response from OpenAI using its JSON mode."""
@@ -271,7 +277,7 @@ class AIService:
             ai_requests_counter.labels(model="openai-json", status="error").inc()
             return None # Return None on failure
 
-    async def _generate_openai_response(self, message: str, context: dict, business_id: str = "feelori", flow_context: dict | None = None) -> str:
+    async def _generate_openai_response(self, message: str, context: dict, business_id: str = "feelori", flow_context: dict | None = None) -> tuple[str, Optional[Dict[str, Any]]]:
         """Generate OpenAI response with conversation context."""
         # Get system prompt from BusinessConfig
         try:
@@ -367,9 +373,9 @@ All fields in proposed_workflow are optional.
         if proposed_workflow:
             logger.debug(f"AI proposed workflow changes: {json.dumps(proposed_workflow, indent=2)}")
         
-        return text_response
+        return text_response, proposed_workflow
 
-    async def _generate_gemini_response(self, message: str, context: dict, business_id: str = "feelori", flow_context: dict | None = None) -> str:
+    async def _generate_gemini_response(self, message: str, context: dict, business_id: str = "feelori", flow_context: dict | None = None) -> tuple[str, Optional[Dict[str, Any]]]:
         """Generate response using the new google-genai client."""
         if not self.gemini_client:
             raise Exception("Gemini client not available")
@@ -465,7 +471,7 @@ All fields in proposed_workflow are optional.
             if proposed_workflow:
                 logger.debug(f"AI proposed workflow changes: {json.dumps(proposed_workflow, indent=2)}")
             
-            return text_response
+            return text_response, proposed_workflow
         except Exception as ex:
             logger.exception("Gemini generate_content failed: %s", ex)
             raise
@@ -554,7 +560,8 @@ Example format: {{"key": "value", "items": []}}"""
             context = {"conversation_history": []} # Give it empty context
         
         # Call the *existing* generate_response function
-        return await self.generate_response(prompt, context)  
+        text_response, _ = await self.generate_response(prompt, context)
+        return text_response  
   
     def create_qa_prompt(self, product, user_question: str, business_id: str = "feelori") -> str:
         """Creates a formatted prompt for answering a question about a specific product."""

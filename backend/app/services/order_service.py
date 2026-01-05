@@ -448,7 +448,44 @@ async def process_message(phone_number: str, message_text: str, message_type: st
 
         if message_type == "interactive" or message_text.startswith("visual_search_"):
             intent = await analyze_intent(message_text, message_type, customer, quoted_wamid)
-            response = await route_message(intent, clean_phone, message_text, customer, quoted_wamid, business_id=business_id)
+            route_result = await route_message(intent, clean_phone, message_text, customer, quoted_wamid, business_id=business_id)
+            # Handle tuple return (text_response, proposed_workflow)
+            if isinstance(route_result, tuple):
+                response, proposed_workflow = route_result
+            else:
+                response = route_result
+                proposed_workflow = None
+            
+            # CENTRALIZED WORKFLOW APPLICATION (before message sending)
+            if proposed_workflow and conversation:
+                from app.models.conversation import Conversation
+                from app.workflows.engine import apply_workflow_proposal
+                
+                conversation_obj = Conversation(**conversation)
+                engine_result = apply_workflow_proposal(conversation_obj, proposed_workflow)
+                
+                if engine_result["applied"] and engine_result["updated_flow_context"]:
+                    updated_fc = engine_result["updated_flow_context"]
+                    current_version = conversation_obj.flow_context.version if conversation_obj.flow_context else None
+                    
+                    query = {"_id": conversation_id}
+                    if current_version is not None:
+                        query["flow_context.version"] = current_version
+                    else:
+                        query["$or"] = [
+                            {"flow_context": {"$exists": False}},
+                            {"flow_context": None}
+                        ]
+                    
+                    await db_service.db.conversations.update_one(
+                        query,
+                        {
+                            "$set": {
+                                "flow_context": updated_fc.model_dump(mode="json")
+                            }
+                        }
+                    )
+            
             return response[:4096] if response else None
 
         # --- THIS IS THE FIX ---
@@ -457,6 +494,7 @@ async def process_message(phone_number: str, message_text: str, message_type: st
             logger.info("Order number format detected. Routing directly to order_detail_inquiry.")
             # 2. If it matches, bypass the AI and route directly.
             response = await route_message("order_detail_inquiry", clean_phone, message_text, customer, quoted_wamid, business_id=business_id)
+            # No workflow application for order_detail_inquiry (no AI generate_response call)
             return response[:4096] if response else None
         # --- END OF FIX ---
 
@@ -465,7 +503,44 @@ async def process_message(phone_number: str, message_text: str, message_type: st
             if last_product_raw:
                 logger.info(f"Detected contextual reply (quoted_wamid: {quoted_wamid}) about a product.")
                 intent = "contextual_product_question"
-                response = await route_message(intent, clean_phone, message_text, customer, quoted_wamid, business_id=business_id)
+                handler_result = await route_message(intent, clean_phone, message_text, customer, quoted_wamid, business_id=business_id)
+                # Handle tuple return (text_response, proposed_workflow)
+                if isinstance(handler_result, tuple):
+                    response, proposed_workflow = handler_result
+                else:
+                    response = handler_result
+                    proposed_workflow = None
+                
+                # CENTRALIZED WORKFLOW APPLICATION
+                if proposed_workflow and conversation:
+                    from app.models.conversation import Conversation
+                    from app.workflows.engine import apply_workflow_proposal
+                    
+                    conversation_obj = Conversation(**conversation)
+                    engine_result = apply_workflow_proposal(conversation_obj, proposed_workflow)
+                    
+                    if engine_result["applied"] and engine_result["updated_flow_context"]:
+                        updated_fc = engine_result["updated_flow_context"]
+                        current_version = conversation_obj.flow_context.version if conversation_obj.flow_context else None
+                        
+                        query = {"_id": conversation_id}
+                        if current_version is not None:
+                            query["flow_context.version"] = current_version
+                        else:
+                            query["$or"] = [
+                                {"flow_context": {"$exists": False}},
+                                {"flow_context": None}
+                            ]
+                        
+                        await db_service.db.conversations.update_one(
+                            query,
+                            {
+                                "$set": {
+                                    "flow_context": updated_fc.model_dump(mode="json")
+                                }
+                            }
+                        )
+                
                 return response[:4096] if response else None
         
         logger.debug(f"Classifying intent with AI for: '{message_text}'")
@@ -543,6 +618,8 @@ async def process_message(phone_number: str, message_text: str, message_type: st
             qb = QueryBuilder(SearchConfig())
             ai_keywords = qb._extract_keywords(message_text) or [message_text]
 
+        proposed_workflow = None  # Initialize for centralized workflow application
+        
         if ai_intent == "product_search":
             response = await handle_product_search(message=ai_keywords, customer=customer, phone_number=clean_phone, quoted_wamid=quoted_wamid, business_id=business_id)
         
@@ -571,18 +648,69 @@ async def process_message(phone_number: str, message_text: str, message_type: st
             response = await handle_greeting(phone_number=clean_phone, customer=customer, message=ai_keywords, quoted_wamid=quoted_wamid, business_id=business_id)
 
         elif ai_intent == "smalltalk":
-            response = await handle_general_inquiry(
+            handler_result = await handle_general_inquiry(
                 message=ai_keywords,
                 customer=customer,
                 phone_number=clean_phone,
                 quoted_wamid=quoted_wamid,
                 business_id=business_id  # <--- CRITICAL FIX
             )
+            # Handle tuple return (text_response, proposed_workflow)
+            if isinstance(handler_result, tuple):
+                response, proposed_workflow = handler_result
+            else:
+                response = handler_result
+                proposed_workflow = None
 
         else: 
             logger.debug("AI intent not definitive, running rule-based analyzer.")
             intent = await analyze_intent(message_text, message_type, customer, quoted_wamid)
-            response = await route_message(intent, clean_phone, message_text, customer, quoted_wamid, business_id=business_id)
+            route_result = await route_message(intent, clean_phone, message_text, customer, quoted_wamid, business_id=business_id)
+            # Handle tuple return (text_response, proposed_workflow)
+            if isinstance(route_result, tuple):
+                response, proposed_workflow = route_result
+            else:
+                response = route_result
+                proposed_workflow = None
+        
+        # CENTRALIZED WORKFLOW APPLICATION
+        # Apply workflow proposal if present, before message sending
+        if proposed_workflow and conversation:
+            from app.models.conversation import Conversation
+            from app.workflows.engine import apply_workflow_proposal
+            
+            # Convert dict to Conversation model for engine
+            conversation_obj = Conversation(**conversation)
+            engine_result = apply_workflow_proposal(conversation_obj, proposed_workflow)
+            
+            # Persist if applied
+            if engine_result["applied"] and engine_result["updated_flow_context"]:
+                updated_fc = engine_result["updated_flow_context"]
+                # Get current version for optimistic locking
+                current_version = conversation_obj.flow_context.version if conversation_obj.flow_context else None
+                
+                # Build query with version check for optimistic locking
+                query = {"_id": conversation_id}
+                if current_version is not None:
+                    query["flow_context.version"] = current_version
+                else:
+                    # If no flow_context exists, match on absence
+                    query["$or"] = [
+                        {"flow_context": {"$exists": False}},
+                        {"flow_context": None}
+                    ]
+                
+                # Atomic update with optimistic locking
+                # Match on conversation._id AND flow_context.version
+                result = await db_service.db.conversations.update_one(
+                    query,
+                    {
+                        "$set": {
+                            "flow_context": updated_fc.model_dump(mode="json")
+                        }
+                    }
+                )
+                # If version mismatch (result.matched_count == 0), reject safely (do nothing)
         
         # Step C: Log AI reply and update conversation when response is generated
         if response:
@@ -754,8 +882,13 @@ async def analyze_intent(message: str, message_type: str, customer: Dict, quoted
     
     return analyze_text_intent(message_lower)
 
-async def route_message(intent: str, phone_number: str, message: str, customer: Dict, quoted_wamid: Optional[str] = None, business_id: str = "feelori") -> Optional[str]:
-    """Routes the message to the appropriate handler based on intent."""
+async def route_message(intent: str, phone_number: str, message: str, customer: Dict, quoted_wamid: Optional[str] = None, business_id: str = "feelori") -> Optional[str] | tuple[Optional[str], Optional[Dict[str, Any]]]:
+    """Routes the message to the appropriate handler based on intent.
+    
+    Returns:
+        str: Response text for most handlers
+        tuple[str, Optional[Dict]]: (response_text, proposed_workflow) for handlers that call generate_response
+    """
     handler_map = {
         "product_search": handle_product_search,
         "contextual_product_question": handle_contextual_product_question,
@@ -782,7 +915,9 @@ async def route_message(intent: str, phone_number: str, message: str, customer: 
         "general": handle_general_inquiry
     }
     handler = handler_map.get(intent, handle_general_inquiry)
-    return await handler(phone_number=phone_number, message=message, customer=customer, quoted_wamid=quoted_wamid, business_id=business_id)
+    result = await handler(phone_number=phone_number, message=message, customer=customer, quoted_wamid=quoted_wamid, business_id=business_id)
+    # Return as-is (may be string or tuple)
+    return result
 
 
 # --- Handler Functions ---
@@ -1028,9 +1163,11 @@ async def handle_contextual_product_question(message: str, customer: Dict, **kwa
         except Exception as e:
             logger.debug(f"Could not fetch flow_context for {phone_number}: {e}")
         
-        ai_answer = await asyncio.wait_for(ai_service.generate_response(prompt, business_id=business_id, flow_context=flow_context_dict), timeout=15.0)
+        text_response, proposed_workflow = await asyncio.wait_for(ai_service.generate_response(prompt, business_id=business_id, flow_context=flow_context_dict), timeout=15.0)
+        
         await whatsapp_service.send_product_detail_with_buttons(phone_number, last_product, business_id=business_id)
-        return ai_answer
+        # Return tuple for centralized workflow application
+        return text_response, proposed_workflow
     except asyncio.TimeoutError:
         logger.warning(f"Contextual Q&A timed out for product {last_product.id}")
         return await _handle_error(customer)
@@ -1362,24 +1499,28 @@ async def handle_general_inquiry(message: str, customer: Dict, **kwargs) -> str:
         phone_number = customer.get("phone_number") or kwargs.get("phone_number")
         context = {"conversation_history": customer.get("conversation_history", [])[-5:]}
         
-        # Fetch flow_context from conversation if available
+        # Fetch conversation and flow_context if available
         flow_context_dict = None
+        conversation_dict = None
         if phone_number:
             try:
                 clean_phone = EnhancedSecurityService.sanitize_phone_number(phone_number)
-                conversation = await db_service.db.conversations.find_one(
+                conversation_dict = await db_service.db.conversations.find_one(
                     {"external_user_id": clean_phone, "tenant_id": business_id}
                 )
-                if conversation and conversation.get("flow_context"):
+                if conversation_dict and conversation_dict.get("flow_context"):
                     # MongoDB returns flow_context as a dict
-                    flow_context_dict = conversation["flow_context"]
+                    flow_context_dict = conversation_dict["flow_context"]
             except Exception as e:
                 logger.debug(f"Could not fetch flow_context for {phone_number}: {e}")
         
-        return await asyncio.wait_for(
+        text_response, proposed_workflow = await asyncio.wait_for(
             ai_service.generate_response(message, context, business_id=business_id, flow_context=flow_context_dict),
             timeout=15.0
         )
+        
+        # Return tuple for centralized workflow application
+        return text_response, proposed_workflow
     except asyncio.TimeoutError:
         logger.warning("General inquiry AI timed out.")
         return string_service.get_formatted_string("ERROR_AI_GENERAL", business_id=business_id)

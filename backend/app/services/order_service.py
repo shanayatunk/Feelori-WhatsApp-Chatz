@@ -407,6 +407,113 @@ async def process_message(phone_number: str, message_text: str, message_type: st
 
         customer = await get_or_create_customer(clean_phone, profile_name=profile_name)
 
+        # --- PHASE 4.1: Initialize workflow on first broadcast reply ---
+        # Check if this is a broadcast reply that needs workflow initialization
+        if (conversation and 
+            conversation.get("campaign_context") and 
+            conversation.get("campaign_context", {}).get("campaign_type") == "broadcast"):
+            
+            # Get flow_context from conversation
+            flow_context_dict = conversation.get("flow_context")
+            flow_context_intent = None
+            if flow_context_dict:
+                flow_context_intent = flow_context_dict.get("intent")
+            
+            # Only initialize if flow_context.intent is None (no workflow started yet)
+            if flow_context_intent is None:
+                # Check if this is the FIRST inbound message after the broadcast
+                # by checking if there are previous inbound messages after the broadcast timestamp
+                campaign_context = conversation.get("campaign_context", {})
+                entry_timestamp = campaign_context.get("entry_timestamp")
+                
+                is_first_reply = True
+                if entry_timestamp:
+                    # Check if there are any inbound messages after the broadcast timestamp
+                    # The current message may or may not be logged yet, so we check:
+                    # - If count is 0: definitely first reply
+                    # - If count is 1: check if it's very recent (likely the current message being processed)
+                    # - If count > 1: definitely not first reply
+                    previous_inbound_count = await db_service.db.message_logs.count_documents(
+                        {
+                            "phone": clean_phone,
+                            "direction": "inbound",
+                            "timestamp": {"$gt": entry_timestamp}
+                        }
+                    )
+                    
+                    if previous_inbound_count > 1:
+                        # More than one message after broadcast, not the first reply
+                        is_first_reply = False
+                    elif previous_inbound_count == 1:
+                        # One message found - check if it's very recent (likely current message)
+                        recent_message = await db_service.db.message_logs.find_one(
+                            {
+                                "phone": clean_phone,
+                                "direction": "inbound",
+                                "timestamp": {"$gt": entry_timestamp}
+                            },
+                            sort=[("timestamp", -1)]
+                        )
+                        if recent_message:
+                            # If the message is within the last 5 seconds, it's likely the current message
+                            message_time = recent_message.get("timestamp")
+                            if message_time:
+                                time_diff = (now - message_time).total_seconds()
+                                if time_diff > 5:
+                                    # Message is older than 5 seconds, not the current one
+                                    is_first_reply = False
+                                # If time_diff <= 5, assume it's the current message (first reply)
+                
+                if is_first_reply:
+                    # Map campaign_type "broadcast" → initial workflow intent "marketing_interest"
+                    from app.models.conversation import Conversation
+                    from app.workflows.engine import apply_workflow_proposal
+                    
+                    # Convert dict to Conversation model for engine
+                    conversation_obj = Conversation(**conversation)
+                    
+                    # Propose workflow initialization
+                    proposed_workflow = {
+                        "intent": "marketing_interest"
+                    }
+                    
+                    engine_result = apply_workflow_proposal(conversation_obj, proposed_workflow)
+                    
+                    # Persist flow_context ONLY if engine.applied == True
+                    if engine_result["applied"] and engine_result["updated_flow_context"]:
+                        updated_fc = engine_result["updated_flow_context"]
+                        # Get current version for optimistic locking
+                        current_version = conversation_obj.flow_context.version if conversation_obj.flow_context else None
+                        
+                        # Build query with version check for optimistic locking
+                        query = {"_id": conversation_id}
+                        if current_version is not None:
+                            query["flow_context.version"] = current_version
+                        else:
+                            # If no flow_context exists, match on absence
+                            query["$or"] = [
+                                {"flow_context": {"$exists": False}},
+                                {"flow_context": None}
+                            ]
+                        
+                        # Atomic update with optimistic locking
+                        matched_count = await db_service.db.conversations.update_one(
+                            query,
+                            {
+                                "$set": {
+                                    "flow_context": updated_fc.model_dump(mode="json")
+                                }
+                            }
+                        )
+                        
+                        if matched_count.matched_count == 0:
+                            logger.warning(f"Optimistic lock failed for conversation {conversation_id}. Workflow initialization not applied.")
+                        else:
+                            logger.debug(f"Workflow initialized for broadcast reply: conversation {conversation_id}, intent: marketing_interest")
+                            # Update conversation dict for subsequent use
+                            conversation["flow_context"] = updated_fc.model_dump(mode="json")
+        # --- END OF PHASE 4.1 ---
+
         # --- BROADCAST REPLY CHECK ---
         # Check if this is a reply to a broadcast message
         last_outbound = await db_service.get_last_outbound_message(clean_phone)
@@ -619,7 +726,7 @@ async def process_message(phone_number: str, message_text: str, message_type: st
             ai_keywords = qb._extract_keywords(message_text) or [message_text]
 
         proposed_workflow = None  # Initialize for centralized workflow application
-        
+
         if ai_intent == "product_search":
             response = await handle_product_search(message=ai_keywords, customer=customer, phone_number=clean_phone, quoted_wamid=quoted_wamid, business_id=business_id)
         
@@ -745,7 +852,7 @@ async def process_message(phone_number: str, message_text: str, message_type: st
                 }
             )
             # -----------------------------------------------------------
-
+        
         return response[:4096] if response else None
         
     except Exception as e:
@@ -1278,7 +1385,7 @@ async def handle_product_detail(message: str, customer: Dict, **kwargs) -> Optio
 
     # Pass the correctly formatted GID to the service.
     product = await shopify_service.get_product_by_id(graphql_gid, business_id=business_id)
-    
+
     if product:
         await cache_service.set(
             CacheKeys.LAST_SINGLE_PRODUCT.format(phone=customer['phone_number']),
@@ -1790,7 +1897,7 @@ async def process_webhook_message(message: Dict[str, Any], webhook_data: Dict[st
         message_type = message.get("type", "unknown")
         # Use profile_name from parameter, fallback to webhook_data if not provided
         if not profile_name:
-            profile_name = webhook_data.get("contacts", [{}])[0].get("profile", {}).get("name")
+        profile_name = webhook_data.get("contacts", [{}])[0].get("profile", {}).get("name")
         quoted_wamid = message.get("context", {}).get("id")
 
         if message_type == "image":

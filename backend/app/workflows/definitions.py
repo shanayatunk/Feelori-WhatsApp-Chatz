@@ -74,6 +74,17 @@ WORKFLOWS: Dict[str, WorkflowDefinition] = {
                 "next_step": None  # Terminal step
             }
         }
+    },
+    
+    "marketing_interest": {
+        "initial_step": "capture_interest",
+        "steps": {
+            "capture_interest": {
+                "required_slots": [],
+                "allowed_next_actions": ["express_interest", "decline", "ask_question"],
+                "next_step": None  # Terminal step (initial state, no required slots)
+            }
+        }
     }
 }
 

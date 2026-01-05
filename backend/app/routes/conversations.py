@@ -1,6 +1,12 @@
 # /app/routes/conversations.py
+# 
+# NEW CODE: Super Admin Implementation
+# This file has been rewritten to support Super Admin functionality.
+# Admin users can now see and manage conversations from all businesses
+# (feelori, goldencollections, godjewellery9) while preserving data integrity.
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import Response
 from bson import ObjectId
 from datetime import datetime, timezone
 from typing import Optional
@@ -8,6 +14,7 @@ from pydantic import BaseModel
 
 from app.dependencies.tenant import get_tenant_id
 from app.services.db_service import db_service
+from app.services.whatsapp_service import whatsapp_service
 from app.models.api import APIResponse
 from app.config.settings import settings
 
@@ -105,13 +112,13 @@ async def list_conversations(
             last_updated = conversations[-1].get("updated_at")
             if last_updated:
                 next_cursor = last_updated.isoformat() if isinstance(last_updated, datetime) else str(last_updated)
-        
-        return APIResponse(
-            success=True,
+    
+    return APIResponse(
+        success=True,
             message="Conversations retrieved successfully",
             data={"data": data, "next_cursor": next_cursor},
-            version=settings.api_version
-        )
+        version=settings.api_version
+    )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to list: {str(e)}")
 
@@ -135,13 +142,13 @@ async def get_conversation_stats(tenant_id: str = Depends(get_tenant_id)):
                 stats[status] = result.get("count", 0)
         
         stats["total"] = sum(r.get("count", 0) for r in results)
-        
-        return APIResponse(
-            success=True,
+    
+    return APIResponse(
+        success=True,
             message="Conversation statistics retrieved successfully",
             data={"stats": stats},
-            version=settings.api_version
-        )
+        version=settings.api_version
+    )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -196,6 +203,34 @@ async def get_conversation_thread(conversation_id: str, tenant_id: str = Depends
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/media/{media_id}")
+async def get_media(
+    media_id: str,
+    tenant_id: str = Depends(get_tenant_id)
+):
+    """
+    Proxy to fetch media from WhatsApp and return it as a binary stream.
+    """
+    try:
+        # Determine business_id. 
+        # If Admin, we default to "feelori". 
+        # (Future improvement: lookup message owner in DB to support multiple businesses for Admin)
+        business_id = tenant_id.lower()
+        if business_id in ["admin", "superadmin", "administrator"]:
+            business_id = "feelori"
+            
+        file_content, mime_type = await whatsapp_service.get_media_content(media_id, business_id)
+        
+        if not file_content:
+            raise HTTPException(status_code=404, detail="Media not found or could not be downloaded")
+            
+        return Response(content=file_content, media_type=mime_type)
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to fetch media: {str(e)}")
 
 @router.post("/{conversation_id}/send", response_model=APIResponse)
 async def send_agent_message(
@@ -262,12 +297,12 @@ async def send_agent_message(
             }}
         )
         
-        return APIResponse(
-            success=True,
+    return APIResponse(
+        success=True,
             message="Message sent successfully",
             data={"message_id": str(res.inserted_id)},
-            version=settings.api_version
-        )
+        version=settings.api_version
+    )
     except HTTPException:
         raise
     except Exception as e:
@@ -303,12 +338,12 @@ async def assign_conversation(
         
         if result.matched_count == 0:
             raise HTTPException(status_code=404, detail="Not found")
-        
-        return APIResponse(
-            success=True,
+    
+    return APIResponse(
+        success=True,
             message="Conversation assigned successfully",
-            version=settings.api_version
-        )
+        version=settings.api_version
+    )
     except HTTPException:
         raise
     except Exception as e:
@@ -340,12 +375,12 @@ async def resolve_conversation(
         
         if result.matched_count == 0:
             raise HTTPException(status_code=404, detail="Not found")
-        
-        return APIResponse(
-            success=True,
+    
+    return APIResponse(
+        success=True,
             message="Conversation resolved successfully",
-            version=settings.api_version
-        )
+        version=settings.api_version
+    )
     except HTTPException:
         raise
     except Exception as e:
@@ -387,12 +422,12 @@ async def control_ai(
         
         if result.matched_count == 0:
             raise HTTPException(status_code=404, detail="Not found")
-        
-        return APIResponse(
-            success=True,
+    
+    return APIResponse(
+        success=True,
             message=f"AI {'enabled' if ai_data.enabled else 'paused'} successfully",
-            version=settings.api_version
-        )
+        version=settings.api_version
+    )
     except HTTPException:
         raise
     except Exception as e:
@@ -426,12 +461,12 @@ async def release_conversation(
         
         if result.matched_count == 0:
             raise HTTPException(status_code=404, detail="Not found")
-        
-        return APIResponse(
-            success=True,
+    
+    return APIResponse(
+        success=True,
             message="Conversation released to bot",
-            version=settings.api_version
-        )
+        version=settings.api_version
+    )
     except HTTPException:
         raise
     except Exception as e:

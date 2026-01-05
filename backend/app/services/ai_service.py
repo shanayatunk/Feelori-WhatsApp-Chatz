@@ -162,6 +162,65 @@ class AIService:
         def _inner(m, c, cfg):
             return self.gemini_client.models.generate_content(model=m, contents=c, config=cfg)
         return _inner(model, contents, config)
+    
+    def _parse_proposed_workflow(self, response_text: str) -> tuple[str, Optional[Dict[str, Any]]]:
+        """
+        Parse AI response to extract proposed_workflow if present.
+        
+        Returns:
+            tuple: (text_response, proposed_workflow_dict)
+            - text_response: The text to return to the user (extracted from JSON if needed)
+            - proposed_workflow_dict: The proposed workflow changes, or None if not present/invalid
+        """
+        proposed_workflow = None
+        
+        try:
+            # Try to parse as JSON
+            parsed = json.loads(response_text)
+            
+            # Check if it's a dict with proposed_workflow
+            if isinstance(parsed, dict):
+                # Extract proposed_workflow if present
+                if "proposed_workflow" in parsed:
+                    proposed_workflow = parsed["proposed_workflow"]
+                    # Validate schema
+                    if isinstance(proposed_workflow, dict):
+                        # Ensure it matches expected schema
+                        validated = {
+                            "intent": proposed_workflow.get("intent"),
+                            "step": proposed_workflow.get("step"),
+                            "allowed_next_actions": proposed_workflow.get("allowed_next_actions", []),
+                            "slot_updates": proposed_workflow.get("slot_updates", {})
+                        }
+                        # Only accept if it's a valid dict structure
+                        if isinstance(validated["allowed_next_actions"], list) and isinstance(validated["slot_updates"], dict):
+                            proposed_workflow = validated
+                        else:
+                            proposed_workflow = None
+                
+                # Extract text response
+                if "response" in parsed:
+                    text_response = str(parsed["response"])
+                elif "text" in parsed:
+                    text_response = str(parsed["text"])
+                elif "message" in parsed:
+                    text_response = str(parsed["message"])
+                else:
+                    # If no text field, use the whole JSON as string (fallback)
+                    text_response = response_text
+            else:
+                # Not a dict, treat as plain text
+                text_response = response_text
+                
+        except (json.JSONDecodeError, ValueError, TypeError):
+            # Not valid JSON, treat as plain text
+            text_response = response_text
+        
+        # Ensure text_response is always a string
+        if not isinstance(text_response, str):
+            text_response = str(text_response) if text_response is not None else ""
+        
+        return text_response, proposed_workflow
 
     async def generate_response(self, message: str, context: dict | None = None, business_id: str = "feelori", flow_context: dict | None = None) -> str:
         """Generate AI response for general text-based inquiries with failover."""
@@ -254,11 +313,33 @@ class AIService:
 - This state is managed by the system and is provided for informational purposes only
 """
         
+        # Add proposed workflow instructions
+        proposed_workflow_instructions = """
+
+[OPTIONAL: PROPOSED WORKFLOW CHANGES]
+You may optionally include a "proposed_workflow" object in your response to suggest workflow state changes.
+This is a PROPOSAL ONLY and will NOT be applied automatically.
+
+If you choose to include it, format your response as JSON:
+{{
+  "response": "Your text response to the user",
+  "proposed_workflow": {{
+    "intent": "optional intent identifier",
+    "step": "optional step identifier",
+    "allowed_next_actions": ["action1", "action2"],
+    "slot_updates": {{"key": "value"}}
+  }}
+}}
+
+If you do not include proposed_workflow, simply respond with plain text as usual.
+All fields in proposed_workflow are optional.
+"""
+        
         # Build enhanced system prompt with business facts
         enhanced_system_prompt = f"""{system_prompt}
 
 [OFFICIAL BUSINESS FACTS - USE THESE FOR ANSWERS]
-{json.dumps(business_facts, indent=2)}{workflow_section}"""
+{json.dumps(business_facts, indent=2)}{workflow_section}{proposed_workflow_instructions}"""
         
         messages = [{"role": "system", "content": enhanced_system_prompt}]
         if context.get("conversation_history"):
@@ -277,7 +358,16 @@ class AIService:
         response = await self.openai_client.chat.completions.create(
             model="gpt-3.5-turbo", messages=messages, max_tokens=150, temperature=0.7
         )
-        return response.choices[0].message.content.strip()
+        response_text = response.choices[0].message.content.strip()
+        
+        # Parse and extract proposed_workflow if present
+        text_response, proposed_workflow = self._parse_proposed_workflow(response_text)
+        
+        # Log proposed_workflow at DEBUG level if present
+        if proposed_workflow:
+            logger.debug(f"AI proposed workflow changes: {json.dumps(proposed_workflow, indent=2)}")
+        
+        return text_response
 
     async def _generate_gemini_response(self, message: str, context: dict, business_id: str = "feelori", flow_context: dict | None = None) -> str:
         """Generate response using the new google-genai client."""
@@ -328,11 +418,33 @@ class AIService:
 - This state is managed by the system and is provided for informational purposes only
 """
         
+        # Add proposed workflow instructions
+        proposed_workflow_instructions = """
+
+[OPTIONAL: PROPOSED WORKFLOW CHANGES]
+You may optionally include a "proposed_workflow" object in your response to suggest workflow state changes.
+This is a PROPOSAL ONLY and will NOT be applied automatically.
+
+If you choose to include it, format your response as JSON:
+{{
+  "response": "Your text response to the user",
+  "proposed_workflow": {{
+    "intent": "optional intent identifier",
+    "step": "optional step identifier",
+    "allowed_next_actions": ["action1", "action2"],
+    "slot_updates": {{"key": "value"}}
+  }}
+}}
+
+If you do not include proposed_workflow, simply respond with plain text as usual.
+All fields in proposed_workflow are optional.
+"""
+        
         # Build enhanced prompt with business facts
         full_prompt = f"""{system_prompt}
 
 [OFFICIAL BUSINESS FACTS - USE THESE FOR ANSWERS]
-{json.dumps(business_facts, indent=2)}{workflow_section}
+{json.dumps(business_facts, indent=2)}{workflow_section}{proposed_workflow_instructions}
 
 [CONVERSATION CONTEXT]
 {json.dumps(context)}
@@ -344,8 +456,16 @@ class AIService:
         # Call the sync client inside a thread, with simple retry wrapper
         try:
             response = await asyncio.to_thread(self._sync_generate_with_retry, self.model_name, full_prompt, None)
-            text = self._extract_text_from_genai_response(response)
-            return text
+            response_text = self._extract_text_from_genai_response(response)
+            
+            # Parse and extract proposed_workflow if present
+            text_response, proposed_workflow = self._parse_proposed_workflow(response_text)
+            
+            # Log proposed_workflow at DEBUG level if present
+            if proposed_workflow:
+                logger.debug(f"AI proposed workflow changes: {json.dumps(proposed_workflow, indent=2)}")
+            
+            return text_response
         except Exception as ex:
             logger.exception("Gemini generate_content failed: %s", ex)
             raise

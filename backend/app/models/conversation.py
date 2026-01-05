@@ -44,6 +44,23 @@ class Conversation(Document):
     updated_at: Optional[datetime] = Field(default=None, description="Last update timestamp")
     flow_context: Optional[FlowContext] = Field(default=None, description="Workflow-oriented flow context for conversation state")
     
+    def get_or_init_flow_context(self) -> FlowContext:
+        """
+        Get flow_context, initializing it lazily if None.
+        Initializes in memory only - does NOT save to database.
+        Call save() explicitly if you want to persist the initialization.
+        """
+        if self.flow_context is None:
+            self.flow_context = FlowContext(
+                intent=None,
+                step=None,
+                allowed_next_actions=[],
+                slots={},
+                version=1,
+                last_updated=datetime.utcnow()
+            )
+        return self.flow_context
+    
     model_config = ConfigDict(
         populate_by_name=True,
         arbitrary_types_allowed=True

@@ -294,6 +294,18 @@ async def process_message(phone_number: str, message_text: str, message_type: st
 
         # 3. Perform the Upsert with the calculated status
         now = datetime.utcnow()
+        
+        # Initialize flow_context for new conversations
+        from app.models.flow import FlowContext
+        new_flow_context = {
+            "intent": None,
+            "step": None,
+            "allowed_next_actions": [],
+            "slots": {},
+            "version": 1,
+            "last_updated": now
+        }
+        
         conversation = await db_service.db.conversations.find_one_and_update(
             {"external_user_id": clean_phone, "tenant_id": business_id},
             {
@@ -309,7 +321,8 @@ async def process_message(phone_number: str, message_text: str, message_type: st
                     "created_at": now,
                     "ai_enabled": True,
                     "ai_paused_by": None,
-                    "assigned_to": None
+                    "assigned_to": None,
+                    "flow_context": new_flow_context
                 }
             },
             upsert=True,

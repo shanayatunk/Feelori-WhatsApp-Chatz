@@ -106,6 +106,21 @@ def apply_workflow_proposal(
         if new_step:
             step_def = workflow["steps"][new_step]
             new_allowed_actions = step_def.get("allowed_next_actions", []).copy()
+            
+            # Immediately validate required slots for initial_step
+            # Merge any proposed slot_updates first for validation
+            temp_slots = new_slots.copy()
+            if proposed_slot_updates:
+                temp_slots.update(proposed_slot_updates)
+            
+            slots_validation = validate_required_slots(new_intent, new_step, temp_slots)
+            if not slots_validation["is_valid"]:
+                # Cannot set intent with initial_step if required slots are missing
+                return {
+                    "applied": False,
+                    "reason": slots_validation["message"],
+                    "updated_flow_context": None
+                }
     
     # If step is proposed, validate it
     if proposed_step is not None:
@@ -194,28 +209,38 @@ def apply_workflow_proposal(
                 step_def = workflow["steps"][new_step]
                 new_allowed_actions = step_def.get("allowed_next_actions", []).copy()
     
-    # Create updated flow_context
-    updated_flow_context = FlowContext(
+    # Check if anything actually changed before creating updated context
+    # Create temporary context for comparison (without incrementing version)
+    temp_flow_context = FlowContext(
         intent=new_intent,
         step=new_step,
         allowed_next_actions=new_allowed_actions,
         slots=new_slots,
-        version=new_version + 1,  # Increment version
-        last_updated=datetime.utcnow()  # Update timestamp
+        version=new_version,  # Don't increment yet
+        last_updated=new_last_updated  # Don't update yet
     )
     
     # Check if anything actually changed
-    if (current_flow_context.intent == updated_flow_context.intent and
-        current_flow_context.step == updated_flow_context.step and
-        current_flow_context.allowed_next_actions == updated_flow_context.allowed_next_actions and
-        current_flow_context.slots == updated_flow_context.slots):
-        # No actual changes, but version was incremented
-        # Return applied=False since no meaningful change occurred
+    if (current_flow_context.intent == temp_flow_context.intent and
+        current_flow_context.step == temp_flow_context.step and
+        current_flow_context.allowed_next_actions == temp_flow_context.allowed_next_actions and
+        current_flow_context.slots == temp_flow_context.slots):
+        # No actual changes, return applied=False without incrementing version
         return {
             "applied": False,
             "reason": "No changes to apply",
             "updated_flow_context": None
         }
+    
+    # Changes were applied - now create updated flow_context with incremented version
+    updated_flow_context = FlowContext(
+        intent=new_intent,
+        step=new_step,
+        allowed_next_actions=new_allowed_actions,
+        slots=new_slots,
+        version=new_version + 1,  # Increment version ONLY when changes are applied
+        last_updated=datetime.utcnow()  # Update timestamp ONLY when changes are applied
+    )
     
     return {
         "applied": True,

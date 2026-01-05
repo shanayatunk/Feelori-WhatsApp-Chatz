@@ -14,7 +14,7 @@ Each step defines:
 - next_step: The next step name (or None if this is a terminal step)
 """
 
-from typing import Dict, List, Optional, Any
+from typing import Dict, Any
 
 # Type definition for a step
 StepDefinition = Dict[str, Any]

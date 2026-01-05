@@ -296,7 +296,6 @@ async def process_message(phone_number: str, message_text: str, message_type: st
         now = datetime.utcnow()
         
         # Initialize flow_context for new conversations
-        from app.models.flow import FlowContext
         new_flow_context = {
             "intent": None,
             "step": None,

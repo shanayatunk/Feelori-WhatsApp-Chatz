@@ -37,6 +37,11 @@ async def list_conversations(
     cursor: Optional[str] = Query(None, description="Cursor for pagination (ISO datetime string)"),
     tenant_id: str = Depends(get_tenant_id)
 ):
+
+    # --- ADD THIS DEBUG BLOCK ---
+    print(f"\n🕵️ DEBUG: API Request from User: '{tenant_id}'")
+    print(f"🕵️ DEBUG: Database Query will be: {{'tenant_id': '{tenant_id}'}}")
+    # ----------------------------
     """
     List conversations with cursor-based pagination.
     

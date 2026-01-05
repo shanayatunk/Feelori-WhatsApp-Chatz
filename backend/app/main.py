@@ -41,7 +41,7 @@ app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 # --- CORS Configuration ---
-allowed_origin_regex = r"https?://.*\.vercel\.app"
+allowed_origin_regex = r"https?://.*\.vercel\.app|https?://.*\.lovable\.app"
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_allowed_origins,

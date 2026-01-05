@@ -117,6 +117,7 @@ class Settings(BaseSettings):
             "https://feelori.com",
             "https://admin.feelori.com",
             "https://messenger.feelori.com",
+            "https://preview--message-whisperer-dash.lovable.app",
         ],
         env="CORS_ALLOWED_ORIGINS",
     )

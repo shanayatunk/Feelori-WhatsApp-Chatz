@@ -702,7 +702,7 @@ async def process_message(phone_number: str, message_text: str, message_type: st
                 
                 # Atomic update with optimistic locking
                 # Match on conversation._id AND flow_context.version
-                result = await db_service.db.conversations.update_one(
+                await db_service.db.conversations.update_one(
                     query,
                     {
                         "$set": {
@@ -710,7 +710,7 @@ async def process_message(phone_number: str, message_text: str, message_type: st
                         }
                     }
                 )
-                # If version mismatch (result.matched_count == 0), reject safely (do nothing)
+                # If version mismatch (matched_count == 0), reject safely (do nothing)
         
         # Step C: Log AI reply and update conversation when response is generated
         if response:

@@ -1,4 +1,9 @@
 # /app/routes/conversations.py
+# 
+# NEW CODE: Super Admin Implementation
+# This file has been rewritten to support Super Admin functionality.
+# Admin users can now see and manage conversations from all businesses
+# (feelori, goldencollections, godjewellery9) while preserving data integrity.
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from bson import ObjectId

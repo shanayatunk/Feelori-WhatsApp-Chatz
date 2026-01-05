@@ -169,12 +169,44 @@ class WhatsAppService:
         button_url_param: Optional[str] = None,
         source: str = "bot",
         business_id: str = "feelori",
-        campaign_context: Optional[Dict[str, Any]] = None
+        campaign_context: Optional[Dict[str, Any]] = None,
+        expected_body_vars: Optional[int] = None,
+        expected_button_vars: Optional[int] = None
     ) -> Optional[str]:
-        """Sends a pre-approved WhatsApp message template with optional header and button parameters."""
+        """Sends a pre-approved WhatsApp message template with optional header and button parameters.
+        
+        Args:
+            expected_body_vars: Expected number of body variables in the template (for validation)
+            expected_button_vars: Expected number of button variables in the template (for validation)
+        """
         clean_phone = re.sub(r"[^\d+]", "", to)
         if not clean_phone.startswith("+"):
             clean_phone = "+" + clean_phone.lstrip("+")
+
+        # Safety check: Validate parameter counts before sending
+        actual_body_count = len(body_params) if body_params else 0
+        actual_button_count = 1 if button_url_param else 0
+        
+        if expected_body_vars is not None and actual_body_count != expected_body_vars:
+            logger.error(
+                f"Template parameter mismatch for '{template_name}': "
+                f"Expected {expected_body_vars} body variables, got {actual_body_count}"
+            )
+            return None
+        
+        if expected_button_vars is not None:
+            if expected_button_vars > 0 and actual_button_count != expected_button_vars:
+                logger.error(
+                    f"Template parameter mismatch for '{template_name}': "
+                    f"Expected {expected_button_vars} button variables, got {actual_button_count}"
+                )
+                return None
+            elif expected_button_vars == 0 and actual_button_count > 0:
+                logger.error(
+                    f"Template parameter mismatch for '{template_name}': "
+                    f"Template has no button variables, but button_url_param was provided"
+                )
+                return None
 
         components = []
 
@@ -206,20 +238,23 @@ class WhatsAppService:
             })
         # --- END OF HEADER LOGIC ---
 
-        # Add body component
-        if body_params:
+        # Add body component ONLY if body_params is provided and not empty
+        # This ensures we send body parameters ONLY when the template defines them
+        if body_params and len(body_params) > 0:
             components.append({
                 "type": "body",
                 "parameters": [{"type": "text", "text": str(p)} for p in body_params]
             })
 
-        # Add button component
+        # Add button component ONLY if button_url_param is provided
+        # UTM parameters should already be appended to button_url_param by the caller
+        # This ensures we send button parameters ONLY when the template defines a button
         if button_url_param:
             components.append({
                 "type": "button",
                 "sub_type": "url",
                 "index": "0",
-                "parameters": [{"type": "text", "text": button_url_param}]
+                "parameters": [{"type": "text", "text": str(button_url_param)}]
             })
 
         payload = {

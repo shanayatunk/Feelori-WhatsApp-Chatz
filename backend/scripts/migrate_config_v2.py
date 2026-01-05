@@ -123,19 +123,26 @@ async def migrate_config():
             "rules": rules
         }
         
-        # Check if document already exists (idempotency)
+        # NOTE: Using raw Motor access instead of Beanie for this migration script.
+        # This is intentional because:
+        # 1. Migration scripts run outside the normal application context
+        # 2. Avoids requiring Beanie initialization and runtime dependencies
+        # 3. Allows direct MongoDB operations without ORM overhead
+        # 4. Keeps the script simple and focused on data migration
         collection = db.business_configs
-        existing = await collection.find_one({"business_id": business_id})
         
-        if existing:
-            logger.info(f"BusinessConfig for '{business_id}' already exists. Skipping insertion.")
-            logger.info("To update, delete the existing document first.")
-            return
+        # UPSERT: Update if exists, insert if not (idempotent)
+        logger.info(f"Upserting BusinessConfig for business_id: {business_id}")
+        result = await collection.update_one(
+            {"business_id": business_id},
+            {"$set": config_doc},
+            upsert=True
+        )
         
-        # Insert document
-        logger.info(f"Inserting BusinessConfig for business_id: {business_id}")
-        result = await collection.insert_one(config_doc)
-        logger.info(f"✓ Successfully inserted BusinessConfig with _id: {result.inserted_id}")
+        if result.upserted_id:
+            logger.info(f"✓ Successfully inserted BusinessConfig with _id: {result.upserted_id}")
+        else:
+            logger.info(f"✓ Successfully updated existing BusinessConfig (matched: {result.matched_count}, modified: {result.modified_count})")
         
         # Verify insertion
         verify = await collection.find_one({"business_id": business_id})

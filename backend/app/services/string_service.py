@@ -1,5 +1,5 @@
 import logging
-from typing import Dict, List, Optional
+from typing import Dict, List
 from app.services.db_service import db_service
 from app.config.settings import get_business_config
 

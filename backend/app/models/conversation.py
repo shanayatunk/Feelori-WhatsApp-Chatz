@@ -4,6 +4,8 @@ from datetime import datetime
 from typing import Optional, List, Dict, Any
 from pydantic import BaseModel, Field, ConfigDict
 
+from app.models.flow import FlowContext
+
 
 class MessagePayload(BaseModel):
     """Represents a message in a conversation."""
@@ -40,6 +42,7 @@ class Conversation(BaseModel):
     last_message_at: Optional[datetime] = Field(default=None, description="Timestamp of last message")
     created_at: Optional[datetime] = Field(default=None, description="Conversation creation timestamp")
     updated_at: Optional[datetime] = Field(default=None, description="Last update timestamp")
+    flow_context: Optional[FlowContext] = Field(default=None, description="Workflow-oriented flow context for conversation state")
     
     model_config = ConfigDict(
         populate_by_name=True,

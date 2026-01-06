@@ -9,7 +9,8 @@ from app.config.settings import settings
 from app.services.db_service import db_service
 from app.services.broadcast_service import broadcast_service, ALLOWED_TEMPLATES
 from app.utils.dependencies import verify_jwt_token
-from app.models.api import APIResponse
+from app.dependencies.tenant import get_tenant_id
+from app.models.api import APIResponse, BroadcastGroupCreate
 
 logger = logging.getLogger(__name__)
 
@@ -252,4 +253,36 @@ async def get_broadcast_history(
     except Exception as e:
         logger.error(f"Failed to get broadcast history: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to retrieve broadcast history")
+
+
+@router.get("/groups", response_model=APIResponse)
+async def get_broadcast_groups(
+    tenant_id: str = Depends(get_tenant_id)
+):
+    """Fetch all custom audience groups."""
+    groups = await db_service.get_broadcast_groups()
+    return APIResponse(
+        success=True,
+        message="Groups retrieved",
+        data=groups,  # List of dicts
+        version=settings.api_version
+    )
+
+
+@router.post("/groups", response_model=APIResponse)
+async def create_broadcast_group(
+    payload: BroadcastGroupCreate,
+    tenant_id: str = Depends(get_tenant_id)
+):
+    """Create a new static audience group."""
+    group = await db_service.create_broadcast_group(payload)
+    if not group:
+        raise HTTPException(status_code=500, detail="Failed to create group")
+    
+    return APIResponse(
+        success=True,
+        message="Group created successfully",
+        data=group,
+        version=settings.api_version
+    )
 

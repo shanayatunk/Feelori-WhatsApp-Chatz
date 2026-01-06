@@ -575,6 +575,63 @@ async def process_message(phone_number: str, message_text: str, message_type: st
                         conversation["flow_context"] = updated_fc.model_dump(mode="json")
         # --- END PROMPT 5 ---
 
+        # --- PHASE 4.1 PROMPT 6A: Advance Marketing Workflow - Price Capture ---
+        if conversation and conversation.get("flow_context", {}).get("intent") == "marketing_interest":
+            flow_context = conversation["flow_context"]
+            current_step = flow_context.get("step")
+
+            # Step: identify_category → qualified
+            if current_step == "identify_category":
+                normalized = message_text.lower().strip()
+
+                # Detect price range intent
+                price_range = None
+                
+                # under / below / less / cheaper → under_2000
+                if any(keyword in normalized for keyword in ["under", "below", "less", "cheaper", "< 2k", "<2k", "under 2k", "under 2 k"]):
+                    price_range = "under_2000"
+                # above / over / more / expensive → above_5000
+                elif any(keyword in normalized for keyword in ["above", "over", "more", "expensive", "> 5k", ">5k", "above 5k", "above 5 k"]):
+                    price_range = "above_5000"
+                # 2k-5k / between / 2000-5000 → 2000_5000
+                elif any(keyword in normalized for keyword in ["2k-5k", "2k - 5k", "2k to 5k", "2000-5000", "2000 - 5000", "between", "2-5k", "2-5 k"]):
+                    price_range = "2000_5000"
+
+                if price_range:
+                    from app.models.conversation import Conversation
+                    from app.workflows.engine import apply_workflow_proposal
+
+                    conversation_obj = Conversation(**conversation)
+
+                    proposed_workflow = {
+                        "step": "qualified",
+                        "slot_updates": {
+                            "price_range": price_range
+                        }
+                    }
+
+                    engine_result = apply_workflow_proposal(conversation_obj, proposed_workflow)
+
+                    if engine_result["applied"] and engine_result["updated_flow_context"]:
+                        updated_fc = engine_result["updated_flow_context"]
+                        current_version = conversation_obj.flow_context.version
+
+                        await db_service.db.conversations.update_one(
+                            {
+                                "_id": conversation["_id"],
+                                "flow_context.version": current_version
+                            },
+                            {
+                                "$set": {
+                                    "flow_context": updated_fc.model_dump(mode="json")
+                                }
+                            }
+                        )
+
+                        # Update local copy so response logic sees new step
+                        conversation["flow_context"] = updated_fc.model_dump(mode="json")
+        # --- END PROMPT 6A ---
+
         # --- MARKETING WORKFLOW AUTOMATION ---
         flow_context = conversation.get("flow_context")
         if flow_context and flow_context.get("intent") == "marketing_interest":

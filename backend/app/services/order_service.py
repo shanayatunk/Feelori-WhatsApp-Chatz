@@ -528,13 +528,8 @@ async def process_message(phone_number: str, message_text: str, message_type: st
                 flow_context_dict.get("intent") == "marketing_interest"
             )
             
-            if marketing_workflow_active:
-                # Marketing workflow is active - handle it without creating human ticket
-                current_step = flow_context_dict.get("step")
-                if current_step == "capture_interest":
-                    return "Thanks for your interest! 😊\nAre you looking for earrings, necklaces, or bangles?"
-                # If step is not "capture_interest", fall through to normal processing
-            else:
+            # Only create human ticket if marketing workflow is NOT active
+            if not marketing_workflow_active:
                 # Marketing workflow is NOT active - create human ticket as before
                 triage_ticket = {
                     "customer_phone": clean_phone,
@@ -548,6 +543,7 @@ async def process_message(phone_number: str, message_text: str, message_type: st
                 }
                 await db_service.db.triage_tickets.insert_one(triage_ticket)
                 return "Thanks for replying to our update! A team member will be with you shortly."
+            # If marketing workflow is active, allow marketing automation to handle the reply
         # -----------------------------
 
         # --- Refactored State Handling ---

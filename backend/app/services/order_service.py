@@ -407,18 +407,6 @@ async def process_message(phone_number: str, message_text: str, message_type: st
 
         customer = await get_or_create_customer(clean_phone, profile_name=profile_name)
 
-        # --- MARKETING WORKFLOW AUTOMATION ---
-        # Short-circuit processing for active marketing workflows
-        flow_context_dict = conversation.get("flow_context") if conversation else None
-        if flow_context_dict and flow_context_dict.get("intent") == "marketing_interest":
-            current_step = flow_context_dict.get("step")
-            if current_step == "capture_interest":
-                # Send automated marketing response
-                response_text = string_service.get_formatted_string("MARKETING_CAPTURE_INTEREST", business_id=business_id)
-                # Immediately return to prevent further processing
-                return response_text
-        # --- END MARKETING WORKFLOW AUTOMATION ---
-
         # --- PHASE 4.1: Initialize workflow on first broadcast reply ---
         # Check if this is a broadcast reply that needs workflow initialization
         if (conversation and 
@@ -526,6 +514,18 @@ async def process_message(phone_number: str, message_text: str, message_type: st
                             # Update conversation dict for subsequent use
                             conversation["flow_context"] = updated_fc.model_dump(mode="json")
         # --- END OF PHASE 4.1 ---
+
+        # --- MARKETING WORKFLOW AUTOMATION ---
+        # Short-circuit processing for active marketing workflows
+        flow_context_dict = conversation.get("flow_context") if conversation else None
+        if flow_context_dict and flow_context_dict.get("intent") == "marketing_interest":
+            current_step = flow_context_dict.get("step")
+            if current_step == "capture_interest":
+                # Send automated marketing response
+                response_text = string_service.get_formatted_string("MARKETING_CAPTURE_INTEREST", business_id=business_id)
+                # Immediately return to prevent further processing
+                return response_text
+        # --- END MARKETING WORKFLOW AUTOMATION ---
 
         # --- BROADCAST REPLY CHECK ---
         # Check if this is a reply to a broadcast message

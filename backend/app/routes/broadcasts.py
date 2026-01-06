@@ -264,7 +264,8 @@ async def get_broadcast_groups(
     return APIResponse(
         success=True,
         message="Groups retrieved",
-        data=groups,  # List of dicts
+        # FIX: Wrap the list in a dictionary to satisfy Pydantic
+        data={"groups": groups}, 
         version=settings.api_version
     )
 

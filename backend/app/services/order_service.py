@@ -652,46 +652,43 @@ async def process_message(phone_number: str, message_text: str, message_type: st
                 )
 
             if step == "qualified":
-                # 1. Idempotency: ensure we only execute this once
+                # A) Idempotency Guard
                 if flow_context.get("metadata", {}).get("products_sent"):
-                    logger.info(f"Skipping product send for {clean_phone}: already sent.")
                     return None
 
-                # 2. UX: send acknowledgement immediately
+                # B) Manual Acknowledgement Message
                 await whatsapp_service.send_message(
                     clean_phone,
                     "Got it 👍 Let me find the best options for you.",
                     business_id=business_id
                 )
 
-                # 3. Fetch & select products (Phase 4.2.B)
+                # C) Product Fetch & Carousel Send
                 from app.services.product_selection_service import fetch_and_select_products
-                from datetime import datetime
-                from app.models.conversation import Conversation
-
-                category = flow_context["slots"].get("category")
-                price_range = flow_context["slots"].get("price_range")
 
                 products = await fetch_and_select_products(
-                    category=category,
-                    price_range=price_range,
+                    category=flow_context["slots"].get("category"),
+                    price_range=flow_context["slots"].get("price_range"),
                     business_id=business_id
                 )
 
-                # 4. Send WhatsApp product carousel
                 await whatsapp_service.send_behavioral_product_carousel(
                     to_phone=clean_phone,
                     product_list=products,
                     business_id=business_id
                 )
 
-                # 5. Advance workflow and persist state
+                # D) Workflow Completion & Persistence
+                from datetime import datetime
+                from app.models.conversation import Conversation
+
                 conversation_obj = Conversation(**conversation)
                 current_version = conversation_obj.flow_context.version
                 
                 # Work with dict representation to add metadata
                 updated_fc_dict = conversation_obj.flow_context.model_dump(mode="json")
                 updated_fc_dict["step"] = "completed"
+                # Manual version increment (workflow engine not used for this terminal step)
                 updated_fc_dict["version"] = current_version + 1
                 updated_fc_dict["last_updated"] = datetime.utcnow().isoformat()
                 
@@ -716,8 +713,6 @@ async def process_message(phone_number: str, message_text: str, message_type: st
                 # Update in-memory copy to prevent re-entry
                 conversation["flow_context"] = updated_fc_dict
 
-                # 6. Stop further processing — response already handled
-                return None
                 return None
         # --- END MARKETING WORKFLOW AUTOMATION ---
 

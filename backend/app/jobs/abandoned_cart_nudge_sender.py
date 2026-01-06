@@ -19,6 +19,7 @@ import logging
 from bson import ObjectId
 from app.services.db_service import db_service
 from app.services.whatsapp_service import whatsapp_service
+from app.services.string_service import string_service
 from app.jobs.abandoned_cart_job import find_abandoned_cart_candidates
 
 logger = logging.getLogger(__name__)
@@ -60,15 +61,25 @@ async def send_abandoned_cart_nudges(now: datetime):
             
             # Determine message (deterministic, no AI)
             if current_nudge_count == 0:
-                message = (
-                    "Hey 👋 Just checking in — the pieces you liked are still available.\n"
-                    "Would you like me to show them again?"
+                message = string_service.get_formatted_string(
+                    "ABANDONED_CART_NUDGE_1",
+                    business_id=business_id
                 )
+                if not message or "ABANDONED_CART_NUDGE_1" in message:
+                    message = (
+                        "Hey 👋 Just checking in — the pieces you liked are still available.\n"
+                        "Would you like me to show them again?"
+                    )
             elif current_nudge_count == 1:
-                message = (
-                    "Last reminder 😊 The items you viewed are still in stock.\n"
-                    "Reply YES to see them again."
+                message = string_service.get_formatted_string(
+                    "ABANDONED_CART_NUDGE_2",
+                    business_id=business_id
                 )
+                if not message or "ABANDONED_CART_NUDGE_2" in message:
+                    message = (
+                        "Last reminder 😊 The items you viewed are still in stock.\n"
+                        "Reply YES to see them again."
+                    )
             else:
                 # Safety guard: skip if nudge_count is unexpected
                 logger.warning(

@@ -650,6 +650,9 @@ async def process_message(phone_number: str, message_text: str, message_type: st
                     "What is your preferred price range?\n"
                     "• Under 2k\n• 2k–5k\n• Above 5k"
                 )
+
+            if step == "qualified":
+                return "Got it 👍 Let me find the best options for you."
         # --- END MARKETING WORKFLOW AUTOMATION ---
 
         # --- BROADCAST REPLY CHECK ---

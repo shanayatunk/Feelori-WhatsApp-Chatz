@@ -721,25 +721,39 @@ async def process_message(phone_number: str, message_text: str, message_type: st
                 return None
         # --- END MARKETING WORKFLOW AUTOMATION ---
 
-        # --- BROADCAST REPLY CHECK ---
+        # --- MODIFIED BROADCAST REPLY CHECK ---
         # Check if this is a reply to a broadcast message
         last_outbound = await db_service.get_last_outbound_message(clean_phone)
         if last_outbound and last_outbound.get("source") == "broadcast":
             logger.info(f"Detected reply to broadcast for {clean_phone}")
             
-            # Check if marketing workflow is active
+            # 1. CHECK FOR INTENT FIRST
+            # If the user says a keyword, we want the AI/Workflow to handle it, NOT this generic block.
+            bypass_keywords = {
+                "hello", "hi", "hey", "start", "menu", "buy", "shop", 
+                "earring", "necklace", "bangle", "ring", "show", "price", "cost"
+            }
+            message_lower = message_text.lower().strip()
+            # Simple check: is it a keyword OR does it look like a price filter ("under 2000")?
+            is_marketing_intent = (
+                any(k in message_lower for k in bypass_keywords) or 
+                "under" in message_lower or 
+                "above" in message_lower
+            )
+
+            # 2. Check if marketing workflow is ALREADY active
             flow_context_dict = conversation.get("flow_context") if conversation else None
             marketing_workflow_active = (
                 flow_context_dict and 
                 flow_context_dict.get("intent") == "marketing_interest"
             )
             
-            # Only create human ticket if marketing workflow is NOT active
-            if not marketing_workflow_active:
+            # 3. DECISION: Only trap if it's NOT marketing intent AND NOT active workflow
+            if not marketing_workflow_active and not is_marketing_intent:
                 # Marketing workflow is NOT active - create human ticket as before
                 triage_ticket = {
                     "customer_phone": clean_phone,
-                    "order_number": "N/A",  # Broadcast replies may not have an order
+                    "order_number": "N/A",
                     "issue_type": "broadcast_reply",
                     "status": "human_needed",
                     "business_id": "feelori",
@@ -749,8 +763,10 @@ async def process_message(phone_number: str, message_text: str, message_type: st
                 }
                 await db_service.db.triage_tickets.insert_one(triage_ticket)
                 return "Thanks for replying to our update! A team member will be with you shortly."
-            # If marketing workflow is active, allow marketing automation to handle the reply
-        # -----------------------------
+            
+            # If we reach here, we fall through to the rest of process_message (AI/Workflow)
+            logger.info(f"Bypassing generic broadcast reply for intent: {message_text}")
+        # --------------------------------------
 
         # --- PHASE 4.4: Abandoned Cart Recovery Handler ---
         abandoned_cart = conversation.get("flow_context", {}).get("metadata", {}).get("abandoned_cart", {})

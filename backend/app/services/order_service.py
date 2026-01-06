@@ -515,16 +515,84 @@ async def process_message(phone_number: str, message_text: str, message_type: st
                             conversation["flow_context"] = updated_fc.model_dump(mode="json")
         # --- END OF PHASE 4.1 ---
 
-        # --- MARKETING WORKFLOW AUTOMATION ---
-        # Short-circuit processing for active marketing workflows
-        flow_context_dict = conversation.get("flow_context") if conversation else None
-        if flow_context_dict and flow_context_dict.get("intent") == "marketing_interest":
-            current_step = flow_context_dict.get("step")
+        # --- PHASE 4.1 PROMPT 5: Advance Marketing Workflow ---
+        if conversation and conversation.get("flow_context", {}).get("intent") == "marketing_interest":
+            flow_context = conversation["flow_context"]
+            current_step = flow_context.get("step")
+
+            # Step: capture_interest → identify_category
             if current_step == "capture_interest":
-                # Send automated marketing response
-                response_text = string_service.get_formatted_string("MARKETING_CAPTURE_INTEREST", business_id=business_id)
-                # Immediately return to prevent further processing
-                return response_text
+                normalized = message_text.lower().strip()
+
+                category_map = {
+                    "earring": "earrings",
+                    "earrings": "earrings",
+                    "necklace": "necklaces",
+                    "necklaces": "necklaces",
+                    "bangle": "bangles",
+                    "bangles": "bangles",
+                    "bracelet": "bangles",
+                }
+
+                matched_category = None
+                for key, value in category_map.items():
+                    if key in normalized:
+                        matched_category = value
+                        break
+
+                if matched_category:
+                    from app.models.conversation import Conversation
+                    from app.workflows.engine import apply_workflow_proposal
+
+                    conversation_obj = Conversation(**conversation)
+
+                    proposed_workflow = {
+                        "step": "identify_category",
+                        "slots_to_update": {
+                            "category": matched_category
+                        }
+                    }
+
+                    engine_result = apply_workflow_proposal(conversation_obj, proposed_workflow)
+
+                    if engine_result["applied"] and engine_result["updated_flow_context"]:
+                        updated_fc = engine_result["updated_flow_context"]
+                        current_version = conversation_obj.flow_context.version
+
+                        await db_service.db.conversations.update_one(
+                            {
+                                "_id": conversation["_id"],
+                                "flow_context.version": current_version
+                            },
+                            {
+                                "$set": {
+                                    "flow_context": updated_fc.model_dump(mode="json")
+                                }
+                            }
+                        )
+
+                        # Update local copy so response logic sees new step
+                        conversation["flow_context"] = updated_fc.model_dump(mode="json")
+        # --- END PROMPT 5 ---
+
+        # --- MARKETING WORKFLOW AUTOMATION ---
+        flow_context = conversation.get("flow_context")
+        if flow_context and flow_context.get("intent") == "marketing_interest":
+            step = flow_context.get("step")
+            slots = flow_context.get("slots", {})
+
+            if step == "capture_interest":
+                return string_service.get_formatted_string(
+                    "MARKETING_CAPTURE_INTEREST", business_id=business_id
+                )
+
+            if step == "identify_category":
+                category = slots.get("category", "these")
+                return (
+                    f"Great choice! ✨ We have beautiful *{category}* available.\n\n"
+                    "What is your preferred price range?\n"
+                    "• Under 2k\n• 2k–5k\n• Above 5k"
+                )
         # --- END MARKETING WORKFLOW AUTOMATION ---
 
         # --- BROADCAST REPLY CHECK ---

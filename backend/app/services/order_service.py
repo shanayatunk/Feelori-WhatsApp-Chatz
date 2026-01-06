@@ -519,19 +519,34 @@ async def process_message(phone_number: str, message_text: str, message_type: st
         last_outbound = await db_service.get_last_outbound_message(clean_phone)
         if last_outbound and last_outbound.get("source") == "broadcast":
             logger.info(f"Detected reply to broadcast for {clean_phone}")
-            # Create a ticket for broadcast reply
-            triage_ticket = {
-                "customer_phone": clean_phone,
-                "order_number": "N/A",  # Broadcast replies may not have an order
-                "issue_type": "broadcast_reply",
-                "status": "human_needed",
-                "business_id": "feelori",
-                "assigned_to": None,
-                "image_media_id": None,
-                "created_at": datetime.utcnow()
-            }
-            await db_service.db.triage_tickets.insert_one(triage_ticket)
-            return "Thanks for replying to our update! A team member will be with you shortly."
+            
+            # Check if marketing workflow is active
+            flow_context_dict = conversation.get("flow_context") if conversation else None
+            marketing_workflow_active = (
+                flow_context_dict and 
+                flow_context_dict.get("intent") == "marketing_interest"
+            )
+            
+            if marketing_workflow_active:
+                # Marketing workflow is active - handle it without creating human ticket
+                current_step = flow_context_dict.get("step")
+                if current_step == "capture_interest":
+                    return "Thanks for your interest! 😊\nAre you looking for earrings, necklaces, or bangles?"
+                # If step is not "capture_interest", fall through to normal processing
+            else:
+                # Marketing workflow is NOT active - create human ticket as before
+                triage_ticket = {
+                    "customer_phone": clean_phone,
+                    "order_number": "N/A",  # Broadcast replies may not have an order
+                    "issue_type": "broadcast_reply",
+                    "status": "human_needed",
+                    "business_id": "feelori",
+                    "assigned_to": None,
+                    "image_media_id": None,
+                    "created_at": datetime.utcnow()
+                }
+                await db_service.db.triage_tickets.insert_one(triage_ticket)
+                return "Thanks for replying to our update! A team member will be with you shortly."
         # -----------------------------
 
         # --- Refactored State Handling ---

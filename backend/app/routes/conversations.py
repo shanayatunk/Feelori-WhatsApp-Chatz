@@ -143,6 +143,23 @@ async def get_conversation_stats(tenant_id: str = Depends(get_tenant_id)):
         
         stats["total"] = sum(r.get("count", 0) for r in results)
         
+        # --- PHASE 4.6: Abandoned Cart Metrics Adapter ---
+        # Fetch raw metrics from DB
+        ac_metrics = await db_service.get_abandoned_cart_metrics(tenant_id)
+
+        # Map to Frontend DTO (AbandonedCartsStats)
+        # active_pending -> today_count (Approximation for "Active Opportunities")
+        # recovered_count -> recovered_count
+        # revenue_recovered -> 0 (Placeholder for Phase 5)
+        abandoned_carts_dto = {
+            "today_count": ac_metrics.get("active_pending", 0),
+            "recovered_count": ac_metrics.get("recovered_count", 0),
+            "revenue_recovered": 0 
+        }
+        # -------------------------------------------------
+        
+        stats["abandoned_carts"] = abandoned_carts_dto
+        
         return APIResponse(
             success=True,
             message="Conversation statistics retrieved successfully",

@@ -13,7 +13,6 @@ This is Phase 4.2.B - selection only. No messaging or workflow state mutation.
 from typing import List, Dict
 from app.services.product_query_adapter import build_product_query
 from app.services.shopify_service import shopify_service
-from app.models.domain import Product
 
 
 def _extract_numeric_id(product_id: str) -> str:
@@ -60,22 +59,18 @@ async def fetch_and_select_products(
     # product_type becomes text query
     text_query = query_dict.get("product_type", "")
     
-    # Convert price_min/price_max to filters format
-    filters = {}
-    if "price_min" in query_dict:
-        filters["price"] = {"greaterThan": query_dict["price_min"]}
-    if "price_max" in query_dict:
-        if "price" in filters:
-            filters["price"]["lessThan"] = query_dict["price_max"]
-        else:
-            filters["price"] = {"lessThan": query_dict["price_max"]}
+    # Extract price range bounds for post-fetch filtering
+    price_min = query_dict.get("price_min")
+    price_max = query_dict.get("price_max")
     
     # Fetch products from Shopify
+    # Note: shopify_service.get_products doesn't use filters parameter,
+    # so we'll filter by price after fetching
     try:
         products, _ = await shopify_service.get_products(
             query=text_query,
-            filters=filters if filters else None,
-            limit=limit * 3,  # Fetch more to account for filtering
+            filters=None,
+            limit=limit * 5,  # Fetch more to account for filtering
             business_id=business_id
         )
     except Exception as e:
@@ -93,6 +88,12 @@ async def fetch_and_select_products(
         
         # Filter out products without images
         if not product.image_url:
+            continue
+        
+        # Filter by price range
+        if price_min is not None and product.price < price_min:
+            continue
+        if price_max is not None and product.price > price_max:
             continue
         
         filtered_products.append(product)

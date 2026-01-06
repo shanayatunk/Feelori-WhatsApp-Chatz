@@ -696,6 +696,12 @@ async def process_message(phone_number: str, message_text: str, message_type: st
                 if "metadata" not in updated_fc_dict:
                     updated_fc_dict["metadata"] = {}
                 updated_fc_dict["metadata"]["products_sent"] = True
+                updated_fc_dict["metadata"]["abandoned_cart"] = {
+                    "status": "pending",
+                    "first_shown_at": datetime.utcnow().isoformat(),
+                    "last_nudge_at": None,
+                    "nudge_count": 0
+                }
                 updated_fc_dict["metadata"]["shown_product_ids"] = [p["product_id"] for p in products]
 
                 await db_service.db.conversations.update_one(

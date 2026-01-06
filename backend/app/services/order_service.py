@@ -605,7 +605,7 @@ async def process_message(phone_number: str, message_text: str, message_type: st
 
                     proposed_workflow = {
                         "step": "qualified",
-                        "slot_updates": {
+                        "slots_to_update": {
                             "price_range": price_range
                         }
                     }

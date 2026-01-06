@@ -652,7 +652,73 @@ async def process_message(phone_number: str, message_text: str, message_type: st
                 )
 
             if step == "qualified":
-                return "Got it 👍 Let me find the best options for you."
+                # 1. Idempotency: ensure we only execute this once
+                if flow_context.get("metadata", {}).get("products_sent"):
+                    logger.info(f"Skipping product send for {clean_phone}: already sent.")
+                    return None
+
+                # 2. UX: send acknowledgement immediately
+                await whatsapp_service.send_message(
+                    clean_phone,
+                    "Got it 👍 Let me find the best options for you.",
+                    business_id=business_id
+                )
+
+                # 3. Fetch & select products (Phase 4.2.B)
+                from app.services.product_selection_service import fetch_and_select_products
+                from datetime import datetime
+                from app.models.conversation import Conversation
+
+                category = flow_context["slots"].get("category")
+                price_range = flow_context["slots"].get("price_range")
+
+                products = await fetch_and_select_products(
+                    category=category,
+                    price_range=price_range,
+                    business_id=business_id
+                )
+
+                # 4. Send WhatsApp product carousel
+                await whatsapp_service.send_behavioral_product_carousel(
+                    to_phone=clean_phone,
+                    product_list=products,
+                    business_id=business_id
+                )
+
+                # 5. Advance workflow and persist state
+                conversation_obj = Conversation(**conversation)
+                current_version = conversation_obj.flow_context.version
+                
+                # Work with dict representation to add metadata
+                updated_fc_dict = conversation_obj.flow_context.model_dump(mode="json")
+                updated_fc_dict["step"] = "completed"
+                updated_fc_dict["version"] = current_version + 1
+                updated_fc_dict["last_updated"] = datetime.utcnow().isoformat()
+                
+                # Initialize metadata if it doesn't exist
+                if "metadata" not in updated_fc_dict:
+                    updated_fc_dict["metadata"] = {}
+                updated_fc_dict["metadata"]["products_sent"] = True
+                updated_fc_dict["metadata"]["shown_product_ids"] = [p["product_id"] for p in products]
+
+                await db_service.db.conversations.update_one(
+                    {
+                        "_id": conversation["_id"],
+                        "flow_context.version": current_version
+                    },
+                    {
+                        "$set": {
+                            "flow_context": updated_fc_dict
+                        }
+                    }
+                )
+
+                # Update in-memory copy to prevent re-entry
+                conversation["flow_context"] = updated_fc_dict
+
+                # 6. Stop further processing — response already handled
+                return None
+                return None
         # --- END MARKETING WORKFLOW AUTOMATION ---
 
         # --- BROADCAST REPLY CHECK ---

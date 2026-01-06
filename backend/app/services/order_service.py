@@ -752,6 +752,78 @@ async def process_message(phone_number: str, message_text: str, message_type: st
             # If marketing workflow is active, allow marketing automation to handle the reply
         # -----------------------------
 
+        # --- PHASE 4.4: Abandoned Cart Recovery Handler ---
+        abandoned_cart = conversation.get("flow_context", {}).get("metadata", {}).get("abandoned_cart", {})
+        is_abandoned_pending = abandoned_cart.get("status") == "pending"
+        nudge_count = abandoned_cart.get("nudge_count", 0)
+
+        message_lower = message_text.lower().strip()
+        recovery_keywords = {"yes", "show", "show again", "ok", "okay", "yep", "sure", "please"}
+        is_recovery_reply = message_lower in recovery_keywords
+
+        if is_abandoned_pending and nudge_count >= 1 and is_recovery_reply:
+            if abandoned_cart.get("reshown"):
+                logger.info(f"Skipping recovery for {clean_phone}: already reshown.")
+                return None
+
+            logger.info(f"User {clean_phone} recovered abandoned cart. Resending products.")
+
+            shown_ids = conversation.get("flow_context", {}).get("metadata", {}).get("shown_product_ids", [])
+            products_to_send = []
+
+            if shown_ids:
+                from app.services.shopify_service import shopify_service
+                from app.services.product_selection_service import _extract_numeric_id
+
+                for pid in shown_ids:
+                    gid = f"gid://shopify/Product/{pid}" if not str(pid).startswith("gid://") else pid
+                    product = await shopify_service.get_product_by_id(gid, business_id=business_id)
+
+                    if product and product.availability == "in_stock":
+                        product_url = shopify_service.get_product_page_url(product.handle, business_id=business_id)
+                        product_dict = {
+                            "product_id": _extract_numeric_id(product.id),
+                            "title": product.title,
+                            "price": product.price,
+                            "currency": product.currency,
+                            "image_url": product.image_url,
+                            "product_url": product_url
+                        }
+                        products_to_send.append(product_dict)
+
+            if products_to_send:
+                await whatsapp_service.send_behavioral_product_carousel(
+                    to_phone=clean_phone,
+                    product_list=products_to_send,
+                    business_id=business_id
+                )
+
+                now_iso = datetime.utcnow().isoformat()
+
+                await db_service.db.conversations.update_one(
+                    {
+                        "_id": conversation["_id"],
+                        "flow_context.metadata.abandoned_cart.nudge_count": nudge_count
+                    },
+                    {
+                        "$set": {
+                            "flow_context.metadata.abandoned_cart.status": "completed",
+                            "flow_context.metadata.abandoned_cart.reshown": True,
+                            "flow_context.metadata.abandoned_cart.recovered_at": now_iso
+                        }
+                    }
+                )
+
+                return None
+            else:
+                await whatsapp_service.send_message(
+                    clean_phone,
+                    "I checked, but those items are currently out of stock 😔 Would you like to see our latest arrivals?",
+                    business_id=business_id
+                )
+                return None
+        # --------------------------------------------------
+
         # --- Refactored State Handling ---
         if response := await _handle_security_verification(clean_phone, message_text, customer):
             return response

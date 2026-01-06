@@ -474,7 +474,8 @@ async def process_message(phone_number: str, message_text: str, message_type: st
                     
                     # Propose workflow initialization
                     proposed_workflow = {
-                        "intent": "marketing_interest"
+                        "intent": "marketing_interest",
+                        "step": "capture_interest"
                     }
                     
                     engine_result = apply_workflow_proposal(conversation_obj, proposed_workflow)

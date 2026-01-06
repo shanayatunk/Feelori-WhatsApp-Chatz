@@ -1121,6 +1121,97 @@ class DatabaseService:
             }
         }
 
+    async def get_abandoned_cart_metrics(self, business_id: str, days: int = 30) -> dict:
+        """
+        Calculates funnel metrics for WhatsApp Abandoned Cart Recovery.
+        Metrics:
+        - total_candidates
+        - active_pending
+        - recovered_count
+        - total_nudges_sent
+        - recovery_rate (%)
+        """
+        from datetime import datetime, timedelta
+
+        # Calculate cutoff based on when products were first shown
+        cutoff_date = datetime.utcnow() - timedelta(days=days)
+        cutoff_iso = cutoff_date.isoformat()
+
+        pipeline = [
+            {
+                "$match": {
+                    "tenant_id": business_id,  # Conversations are tenant-scoped
+                    "flow_context.metadata.abandoned_cart": {"$exists": True},
+                    "flow_context.metadata.abandoned_cart.first_shown_at": {
+                        "$gte": cutoff_iso
+                    }
+                }
+            },
+            {
+                "$group": {
+                    "_id": None,
+                    "total_candidates": {"$sum": 1},
+                    "active_pending": {
+                        "$sum": {
+                            "$cond": [
+                                {"$eq": ["$flow_context.metadata.abandoned_cart.status", "pending"]},
+                                1,
+                                0
+                            ]
+                        }
+                    },
+                    "recovered_count": {
+                        "$sum": {
+                            "$cond": [
+                                {"$eq": ["$flow_context.metadata.abandoned_cart.reshown", True]},
+                                1,
+                                0
+                            ]
+                        }
+                    },
+                    "total_nudges_sent": {
+                        "$sum": "$flow_context.metadata.abandoned_cart.nudge_count"
+                    }
+                }
+            },
+            {
+                "$project": {
+                    "_id": 0,
+                    "period_days": {"$literal": days},
+                    "total_candidates": 1,
+                    "active_pending": 1,
+                    "recovered_count": 1,
+                    "total_nudges_sent": 1,
+                    "recovery_rate": {
+                        "$cond": [
+                            {"$eq": ["$total_candidates", 0]},
+                            0,
+                            {
+                                "$multiply": [
+                                    {"$divide": ["$recovered_count", "$total_candidates"]},
+                                    100
+                                ]
+                            }
+                        ]
+                    }
+                }
+            }
+        ]
+
+        result = await self.db.conversations.aggregate(pipeline).to_list(length=1)
+
+        if not result:
+            return {
+                "period_days": days,
+                "total_candidates": 0,
+                "active_pending": 0,
+                "recovered_count": 0,
+                "total_nudges_sent": 0,
+                "recovery_rate": 0.0
+            }
+
+        return result[0]
+
     async def get_paginated_customers(
         self, 
         page: int = 1, 

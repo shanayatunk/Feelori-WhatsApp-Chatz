@@ -652,7 +652,73 @@ async def process_message(phone_number: str, message_text: str, message_type: st
                 )
 
             if step == "qualified":
-                return "Got it 👍 Let me find the best options for you."
+                # A) Idempotency Guard
+                if flow_context.get("metadata", {}).get("products_sent"):
+                    return None
+
+                # B) Manual Acknowledgement Message
+                await whatsapp_service.send_message(
+                    clean_phone,
+                    "Got it 👍 Let me find the best options for you.",
+                    business_id=business_id
+                )
+
+                # C) Product Fetch & Carousel Send
+                from app.services.product_selection_service import fetch_and_select_products
+
+                products = await fetch_and_select_products(
+                    category=flow_context["slots"].get("category"),
+                    price_range=flow_context["slots"].get("price_range"),
+                    business_id=business_id
+                )
+
+                await whatsapp_service.send_behavioral_product_carousel(
+                    to_phone=clean_phone,
+                    product_list=products,
+                    business_id=business_id
+                )
+
+                # D) Workflow Completion & Persistence
+                from app.models.conversation import Conversation
+
+                conversation_obj = Conversation(**conversation)
+                current_version = conversation_obj.flow_context.version
+                
+                # Work with dict representation to add metadata
+                updated_fc_dict = conversation_obj.flow_context.model_dump(mode="json")
+                updated_fc_dict["step"] = "completed"
+                # Manual version increment (workflow engine not used for this terminal step)
+                updated_fc_dict["version"] = current_version + 1
+                updated_fc_dict["last_updated"] = datetime.utcnow().isoformat()
+                
+                # Initialize metadata if it doesn't exist
+                if "metadata" not in updated_fc_dict:
+                    updated_fc_dict["metadata"] = {}
+                updated_fc_dict["metadata"]["products_sent"] = True
+                updated_fc_dict["metadata"]["abandoned_cart"] = {
+                    "status": "pending",
+                    "first_shown_at": datetime.utcnow().isoformat(),
+                    "last_nudge_at": None,
+                    "nudge_count": 0
+                }
+                updated_fc_dict["metadata"]["shown_product_ids"] = [p["product_id"] for p in products]
+
+                await db_service.db.conversations.update_one(
+                    {
+                        "_id": conversation["_id"],
+                        "flow_context.version": current_version
+                    },
+                    {
+                        "$set": {
+                            "flow_context": updated_fc_dict
+                        }
+                    }
+                )
+
+                # Update in-memory copy to prevent re-entry
+                conversation["flow_context"] = updated_fc_dict
+
+                return None
         # --- END MARKETING WORKFLOW AUTOMATION ---
 
         # --- BROADCAST REPLY CHECK ---
@@ -685,6 +751,78 @@ async def process_message(phone_number: str, message_text: str, message_type: st
                 return "Thanks for replying to our update! A team member will be with you shortly."
             # If marketing workflow is active, allow marketing automation to handle the reply
         # -----------------------------
+
+        # --- PHASE 4.4: Abandoned Cart Recovery Handler ---
+        abandoned_cart = conversation.get("flow_context", {}).get("metadata", {}).get("abandoned_cart", {})
+        is_abandoned_pending = abandoned_cart.get("status") == "pending"
+        nudge_count = abandoned_cart.get("nudge_count", 0)
+
+        message_lower = message_text.lower().strip()
+        recovery_keywords = {"yes", "show", "show again", "ok", "okay", "yep", "sure", "please"}
+        is_recovery_reply = message_lower in recovery_keywords
+
+        if is_abandoned_pending and nudge_count >= 1 and is_recovery_reply:
+            if abandoned_cart.get("reshown"):
+                logger.info(f"Skipping recovery for {clean_phone}: already reshown.")
+                return None
+
+            logger.info(f"User {clean_phone} recovered abandoned cart. Resending products.")
+
+            shown_ids = conversation.get("flow_context", {}).get("metadata", {}).get("shown_product_ids", [])
+            products_to_send = []
+
+            if shown_ids:
+                from app.services.shopify_service import shopify_service
+                from app.services.product_selection_service import _extract_numeric_id
+
+                for pid in shown_ids:
+                    gid = f"gid://shopify/Product/{pid}" if not str(pid).startswith("gid://") else pid
+                    product = await shopify_service.get_product_by_id(gid, business_id=business_id)
+
+                    if product and product.availability == "in_stock":
+                        product_url = shopify_service.get_product_page_url(product.handle, business_id=business_id)
+                        product_dict = {
+                            "product_id": _extract_numeric_id(product.id),
+                            "title": product.title,
+                            "price": product.price,
+                            "currency": product.currency,
+                            "image_url": product.image_url,
+                            "product_url": product_url
+                        }
+                        products_to_send.append(product_dict)
+
+            if products_to_send:
+                await whatsapp_service.send_behavioral_product_carousel(
+                    to_phone=clean_phone,
+                    product_list=products_to_send,
+                    business_id=business_id
+                )
+
+                now_iso = datetime.utcnow().isoformat()
+
+                await db_service.db.conversations.update_one(
+                    {
+                        "_id": conversation["_id"],
+                        "flow_context.metadata.abandoned_cart.nudge_count": nudge_count
+                    },
+                    {
+                        "$set": {
+                            "flow_context.metadata.abandoned_cart.status": "completed",
+                            "flow_context.metadata.abandoned_cart.reshown": True,
+                            "flow_context.metadata.abandoned_cart.recovered_at": now_iso
+                        }
+                    }
+                )
+
+                return None
+            else:
+                await whatsapp_service.send_message(
+                    clean_phone,
+                    "I checked, but those items are currently out of stock 😔 Would you like to see our latest arrivals?",
+                    business_id=business_id
+                )
+                return None
+        # --------------------------------------------------
 
         # --- Refactored State Handling ---
         if response := await _handle_security_verification(clean_phone, message_text, customer):

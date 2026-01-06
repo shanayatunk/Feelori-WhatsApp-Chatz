@@ -160,11 +160,23 @@ async def send_broadcast(
             )
         
         # Normal Broadcast Mode: Full audience with job tracking
+        # --- FIX: Parse "group:ID" format from frontend ---
+        # The frontend sends "group:12345", but DB expects type="custom_group" and id="12345"
+        target_group_id = request_data.target_group_id  # Start with existing
+        audience_type = request_data.audience_type
+
+        if audience_type and audience_type.startswith("group:"):
+            parts = audience_type.split(":")
+            if len(parts) == 2:
+                audience_type = "custom_group"  # Override type
+                target_group_id = parts[1]      # Extract ID
+        # --------------------------------------------------
+        
         # Get users for broadcast
         users = await db_service.get_customers_for_broadcast(
-            target_type=request_data.audience_type,
+            target_type=audience_type,       # <--- Use parsed variable
             target_phones=request_data.target_phones,
-            target_group_id=request_data.target_group_id
+            target_group_id=target_group_id  # <--- Use parsed variable
         )
         
         # Extract phone numbers from user objects (excluding opted-out)
@@ -177,7 +189,7 @@ async def send_broadcast(
         job_id = await db_service.create_broadcast_job(
             message=f"Template: {request_data.template_name}",
             image_url=request_data.params.get("header_image_url"),
-            target_type=request_data.audience_type,
+            target_type=audience_type,       # <--- Use parsed variable
             total_recipients=len(recipients)
         )
         

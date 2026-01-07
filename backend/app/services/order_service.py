@@ -280,7 +280,54 @@ async def process_message(phone_number: str, message_text: str, message_type: st
     """
     try:
         clean_phone = EnhancedSecurityService.sanitize_phone_number(phone_number)
-        
+
+        # --- EARLY EXIT: Handle Cart/Order Messages Directly ---
+        # MOVED TO TOP: We handle this BEFORE upserting the conversation to keep 
+        # the "Last Message" in the dashboard clean (avoiding JSON blobs).
+        if message_type == "order":
+            logger.info(f"Received Order Event from {clean_phone}. Routing directly to Cart Handler.")
+            
+            # 1. Quick Customer Fetch (Read-Only)
+            customer = await db_service.get_customer(clean_phone)
+            if not customer:
+                customer = {"phone_number": clean_phone}
+
+            # 2. Generate Checkout Link
+            response = await handle_cart_submission_direct(message_text, customer, business_id=business_id)
+            
+            # 3. Log the Interaction Manually (Since we skip the main logging flow)
+            timestamp = datetime.utcnow()
+            
+            # Log Inbound (The Cart)
+            await db_service.db.message_logs.insert_one({
+                "tenant_id": business_id,
+                "business_id": business_id,
+                "phone": clean_phone,
+                "direction": "inbound",
+                "source": "customer",
+                "message_type": "order", # Distinct type for analytics
+                "text": "Cart Submission", # User-friendly text for UI
+                "content": message_text, # Raw JSON payload
+                "status": "received",
+                "timestamp": timestamp
+            })
+
+            # Log Outbound (The Checkout Link)
+            if response:
+                await db_service.db.message_logs.insert_one({
+                    "tenant_id": business_id,
+                    "business_id": business_id,
+                    "phone": clean_phone,
+                    "direction": "outbound",
+                    "source": "system",
+                    "message_type": "text", # Keep 'text' so Frontend renders the link correctly
+                    "text": response,
+                    "status": "sending",
+                    "timestamp": timestamp
+                })
+            return response
+        # -------------------------------------------------------
+
         # Step A: Upsert conversation early and capture conversation_id for real-time syncing
         # 1. Fetch existing conversation first (read-only)
         conversation = await db_service.db.conversations.find_one(
@@ -1230,6 +1277,52 @@ async def get_or_create_customer(phone_number: str, profile_name: str = None) ->
     await cache_service.set(CacheKeys.CUSTOMER_DATA_V2.format(phone=phone_number), json.dumps(customer, default=str), ttl=1800)
     return customer
 
+async def handle_cart_submission_direct(items_json: str, customer: Dict, business_id: str = "feelori") -> str:
+    """
+    Directly handles cart submission without AI/Intent analysis.
+    Creates a Shopify Cart and returns the checkout URL.
+    """
+    try:
+        items = json.loads(items_json)
+        
+        # Safety Check: Ensure items is actually a list
+        if not isinstance(items, list):
+            logger.error(f"Malformed order payload received: {items_json}")
+            return "I had trouble reading your cart. Please try again."
+
+        if not items:
+            return "Your cart seems empty! Why not add some shiny things? ✨"
+
+        # 1. Create Cart
+        cart_id = await shopify_service.create_cart(business_id=business_id)
+        if not cart_id:
+            return "I had a little trouble preparing your cart. Please try again in a moment!"
+
+        # 2. Add Items (Using strictly the IDs provided by WhatsApp)
+        # Note: These are Variant IDs (Meta Content IDs), so we prefix them correctly.
+        for item in items:
+            variant_id = item.get("product_retailer_id")
+            qty = item.get("quantity", 1)
+            
+            if variant_id:
+                variant_gid = f"gid://shopify/ProductVariant/{variant_id}"
+                await shopify_service.add_item_to_cart(cart_id, variant_gid, qty, business_id=business_id)
+
+        # 3. Get Checkout URL
+        checkout_url = await shopify_service.get_checkout_url(cart_id, business_id=business_id)
+        
+        if checkout_url:
+            return (
+                f"Great choice! 🛍️ I've prepared your secure checkout link.\n\n"
+                f"👉 *Tap here to buy:* {checkout_url}\n\n"
+                "Let me know if you need help with anything else!"
+            )
+        return "I couldn't generate a checkout link right now. Please try again."
+
+    except Exception as e:
+        logger.error(f"Error in direct cart handler: {e}", exc_info=True)
+        return "Something went wrong creating your checkout. Please try again."
+
 def _get_whatsapp_product_id(product: Product) -> Optional[str]:
     """
     Extracts the correct ID for WhatsApp Catalog (Meta).
@@ -1275,6 +1368,13 @@ def get_message_text(message: Dict[str, Any]) -> str:
             return interactive.get("list_reply", {}).get("id", "")
     elif msg_type == "image":
         return "[User sent an image]"
+    # --- NEW: Extract Order Data for Cart Checkout ---
+    elif msg_type == "order":
+        # Extract the list of items (Variant IDs and quantities)
+        # We dump this to a JSON string so it can pass through the existing text-based pipeline
+        items = message.get("order", {}).get("product_items", [])
+        return json.dumps(items)
+    # -------------------------------------------------
     return f"[Unsupported message type: '{msg_type}']"
 
 def _analyze_interactive_intent(message: str) -> str:

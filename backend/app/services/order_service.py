@@ -2182,11 +2182,39 @@ async def process_webhook_message(message: Dict[str, Any], webhook_data: Dict[st
         
         # Fetch conversation to check mode
         customer = await db_service.get_customer(clean_phone)
-        if customer:
-            conversation_mode = customer.get("conversation_mode", "bot")
-            if conversation_mode == "human":
-                logger.info(f"Skipping AI reply (Human Mode active) for {clean_phone[:4]}...")
+        # --- HUMAN MODE CHECK WITH ESCAPE HATCH ---
+        if customer and customer.get("conversation_mode") == "human":
+            # Check for EXPLICIT "Escape Hatch" keywords to let user self-unlock.
+            # NOTE: We exclude generic greetings like "hi"/"hello" so polite users 
+            # don't accidentally kick out the human agent.
+            escape_keywords = {"start", "menu", "restart", "reset", "bot", "talk to bot"}
+            clean_text = message_text.lower().strip()
+            
+            if clean_text in escape_keywords:
+                logger.info(f"User {clean_phone} triggered Escape Hatch with '{clean_text}'. Reverting to Bot Mode.")
+                
+                # 1. Force-unlock the user immediately in DB
+                await db_service.db.customers.update_one(
+                    {"phone_number": clean_phone},
+                    {
+                        "$set": {
+                            "conversation_mode": "bot",
+                            "conversation_last_mode_change_at": datetime.utcnow()
+                        },
+                        "$unset": {"conversation_locked_by": ""}
+                    }
+                )
+                
+                # 2. Update local state so THIS message gets processed by the bot immediately
+                customer["conversation_mode"] = "bot"
+                
+                # Optional: We could log a system note here if needed
+                
+            else:
+                # Still in human mode and didn't say a magic word -> Suppress Bot
+                logger.info(f"Bot suppressed for {clean_phone}: AI is explicitly disabled.")
                 return
+        # ---------------------------------------------
         # --- END OF KILL SWITCH ---
 
         # This duplicate check can be simplified now with a dedicated message log

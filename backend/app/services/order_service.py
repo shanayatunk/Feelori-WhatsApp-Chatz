@@ -2176,6 +2176,21 @@ async def process_webhook_message(message: Dict[str, Any], webhook_data: Dict[st
 
         clean_phone = security_service.EnhancedSecurityService.sanitize_phone_number(from_number)
         
+        # --- MOVED UP: Extract Message Details Early ---
+        message_text = get_message_text(message)
+        message_type = message.get("type", "unknown")
+
+        # Use profile_name from parameter, fallback to webhook_data if not provided
+        if not profile_name:
+            profile_name = webhook_data.get("contacts", [{}])[0].get("profile", {}).get("name")
+        quoted_wamid = message.get("context", {}).get("id")
+
+        if message_type == "image":
+            media_id = message.get("image", {}).get("id")
+            caption = message.get("image", {}).get("caption", "")
+            message_text = f"visual_search_{media_id}_caption_{caption}"
+        # -----------------------------------------------
+
         # --- KILL SWITCH: Bot vs Human Mode with Auto-Release ---
         # Enforce auto-release for stale locks (>30 minutes)
         await db_service.enforce_auto_release(clean_phone)
@@ -2226,18 +2241,6 @@ async def process_webhook_message(message: Dict[str, Any], webhook_data: Dict[st
         if not await security_service.rate_limiter.check_phone_rate_limit(clean_phone):
             logger.warning(f"Rate limit exceeded for {clean_phone}.")
             return
-
-        message_text = get_message_text(message)
-        message_type = message.get("type", "unknown")
-        # Use profile_name from parameter, fallback to webhook_data if not provided
-        if not profile_name:
-            profile_name = webhook_data.get("contacts", [{}])[0].get("profile", {}).get("name")
-        quoted_wamid = message.get("context", {}).get("id")
-
-        if message_type == "image":
-            media_id = message.get("image", {}).get("id")
-            caption = message.get("image", {}).get("caption", "")
-            message_text = f"visual_search_{media_id}_caption_{caption}"
 
         if not message_text:
             logger.info(f"Ignoring empty message from {clean_phone}")

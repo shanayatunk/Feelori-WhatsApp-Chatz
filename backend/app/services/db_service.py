@@ -1433,31 +1433,42 @@ class DatabaseService:
         if target_type == "custom_group":
             if target_group_id:
                 try:
-                    # FIX: Convert string ID to MongoDB ObjectId
+                    # 1. Convert string ID to ObjectId
                     group_oid = ObjectId(target_group_id)
                     group = await self.db.broadcast_groups.find_one({"_id": group_oid})
                     
                     if group and "phone_numbers" in group:
                         target_phones = group["phone_numbers"]
-                        # Now fall through to the 'custom' logic below which handles a list of phones
-                        # (Or if your logic immediately queries customers, ensure it uses target_phones)
                         if not target_phones:
                             logger.warning(f"Group {target_group_id} has no phone numbers.")
                             return []
-                            
-                        # Reuse the logic for fetching customers by phone list
-                        # For custom groups, we need to fetch customer records to get opted_out status
+                        
                         sanitized_phones = [self._sanitize_phone(p) for p in target_phones]
                         sanitized_phones = [p for p in sanitized_phones if p]
-                        customers = await self.db.customers.find(
-                            {"phone_number": {"$in": sanitized_phones}},
-                            {"phone_number": 1, "opted_out": 1}
+                        
+                        # --- FIX: Don't require existence in DB, only check for Opt-Outs ---
+                        # Fetch ONLY the phone numbers that have explicitly opted out
+                        opted_out_docs = await self.db.customers.find(
+                            {"phone_number": {"$in": sanitized_phones}, "opted_out": True},
+                            {"phone_number": 1}
                         ).to_list(length=None)
-                        # Ensure opted_out field exists (default to False if missing)
-                        for customer in customers:
-                            if "opted_out" not in customer:
-                                customer["opted_out"] = False
-                        return customers
+                        
+                        opted_out_set = {d["phone_number"] for d in opted_out_docs}
+                        
+                        # Build final list: Allow ALL numbers EXCEPT opted-out ones
+                        final_list = []
+                        for phone in sanitized_phones:
+                            if phone not in opted_out_set:
+                                # Return mock object to satisfy contract (phone + opt status)
+                                final_list.append({"phone_number": phone, "opted_out": False})
+                        
+                        logger.info(
+                            f"Broadcast Group {target_group_id}: Found {len(final_list)} valid recipients "
+                            f"(Filtered {len(opted_out_set)} opt-outs). Sample: {final_list[:3]}"
+                        )
+                        return final_list
+                        # -----------------------------------------------------------------------
+
                     else:
                         logger.warning(f"Group {target_group_id} not found or missing phone_numbers.")
                         return []

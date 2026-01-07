@@ -351,6 +351,40 @@ async def process_message(phone_number: str, message_text: str, message_type: st
         )
         # -------------------------------------------------------------
         
+        # --- ESCAPE HATCH: Force Re-enable AI on Keywords ---
+        # If AI is disabled, check if user is trying to restart via "Start" or "Menu".
+        # This fixes the "Stuck in Human Mode" loop.
+        if conversation.get("ai_enabled", True) is False:
+            escape_keywords = {"start", "menu", "restart", "reset", "bot", "talk to bot"}
+            clean_text_check = (message_text or "").lower().strip()
+
+            if clean_text_check in escape_keywords:
+                logger.info(f"🚨 Escape Hatch Triggered by {clean_phone} with '{clean_text_check}'. Re-enabling AI.")
+
+                # 1. Update DB: Set ai_enabled=True and status=open
+                await db_service.db.conversations.update_one(
+                    {"_id": conversation["_id"]},
+                    {
+                        "$set": {
+                            "ai_enabled": True,
+                            "status": "open",
+                            "ai_paused_by": None,
+                            "updated_at": datetime.utcnow()
+                        }
+                    }
+                )
+
+                # 2. Update Customer DB (Sync conversation_mode)
+                await db_service.db.customers.update_one(
+                    {"phone_number": clean_phone},
+                    {"$set": {"conversation_mode": "bot"}}
+                )
+
+                # 3. Update local 'conversation' dict so we don't hit the suppression block below
+                conversation["ai_enabled"] = True
+                conversation["status"] = "open"
+        # ----------------------------------------------------
+        
         # Bot Suppression: STRICTLY respect the ai_enabled flag.
         # If AI is disabled (whether by Manual Toggle OR Human Ticket), do not reply.
         # We default to True to ensure old conversations don't break.

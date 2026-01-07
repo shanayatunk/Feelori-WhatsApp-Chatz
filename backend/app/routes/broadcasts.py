@@ -2,6 +2,7 @@
 
 import logging
 from typing import List, Dict, Optional
+from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from pydantic import BaseModel
 
@@ -295,6 +296,41 @@ async def create_broadcast_group(
         success=True,
         message="Group created successfully",
         data=group,
+        version=settings.api_version
+    )
+
+
+@router.post("/unlock", response_model=APIResponse)
+async def force_unlock_customer(
+    phone: str,
+    tenant_id: str = Depends(get_tenant_id)
+):
+    """
+    Emergency endpoint: Force switch a user back to BOT mode.
+    Usage: POST /api/v1/broadcasts/unlock?phone=+9199...
+    """
+    # Database direct update to clear the "Human Mode" lock
+    result = await db_service.db.customers.update_one(
+        {"phone_number": phone},
+        {
+            "$set": {
+                "conversation_mode": "bot",
+                "conversation_last_mode_change_at": datetime.utcnow()
+            },
+            "$unset": {
+                "conversation_locked_by": "",
+                "assigned_to": ""  # Clear any ticket assignment too
+            }
+        }
+    )
+    
+    if result.matched_count == 0:
+        raise HTTPException(status_code=404, detail=f"Customer {phone} not found in DB")
+        
+    return APIResponse(
+        success=True,
+        message=f"Unlocked {phone}. Mode set to 'bot'.",
+        data={"modified": result.modified_count},
         version=settings.api_version
     )
 

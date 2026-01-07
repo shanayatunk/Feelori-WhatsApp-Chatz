@@ -2168,14 +2168,16 @@ async def handle_human_escalation(phone_number: str, customer: Dict, **kwargs) -
         logger.info(f"Triage: Found multiple orders for {phone_number}. Asking to select.")
         
         options = {}
-        for order in recent_orders:
+        # FIX: Slice to [:3] to prevent WhatsApp API error (Max 3 buttons)
+        for order in recent_orders[:3]: 
             order_num = order.get("order_number")
             options[f"{TriageButtons.SELECT_ORDER_PREFIX}{order_num}"] = f"Order {order_num}"
         
         await whatsapp_service.send_quick_replies(
             phone_number,
             "I'm sorry to hear you're having an issue. I found a few of your recent orders. Which one do you need help with?",
-            options
+            options,
+            business_id=business_id
         )
         return "[Bot is asking to select order for triage]"
 

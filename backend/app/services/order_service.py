@@ -940,6 +940,17 @@ async def process_message(phone_number: str, message_text: str, message_type: st
             if clean_msg in default_rules.NEGATIVE_RESPONSES:
                 return "No problem! Let me know if there's anything else I can help you find. ✨"
 
+            # --- NEW: Contextual Order Handler ---
+            if last_question == "awaiting_order_number":
+                # User is replying to "Please give me your order ID"
+                # We extract the first sequence of 4 or more digits
+                number_match = re.search(r'\d{4,}', message_text)
+                if number_match:
+                    order_number = number_match.group(0)
+                    logger.info(f"Contextual Order Lookup: '{message_text}' -> detected '{order_number}'")
+                    return await route_message("order_detail_inquiry", clean_phone, order_number, customer, quoted_wamid, business_id=business_id)
+            # -------------------------------------
+
         if message_type == "interactive" or message_text.startswith("visual_search_"):
             intent = await analyze_intent(message_text, message_type, customer, quoted_wamid)
             route_result = await route_message(intent, clean_phone, message_text, customer, quoted_wamid, business_id=business_id)
@@ -982,15 +993,19 @@ async def process_message(phone_number: str, message_text: str, message_type: st
             
             return response[:4096] if response else None
 
-        # --- THIS IS THE FIX ---
-        # 1. Check for an order number format BEFORE calling the AI.
-        if re.fullmatch(r'#?[A-Z]{0,3}\d{4,6}', message_text.strip(), re.IGNORECASE):
-            logger.info("Order number format detected. Routing directly to order_detail_inquiry.")
-            # 2. If it matches, bypass the AI and route directly.
-            response = await route_message("order_detail_inquiry", clean_phone, message_text, customer, quoted_wamid, business_id=business_id)
-            # No workflow application for order_detail_inquiry (no AI generate_response call)
+        # --- REPLACED: Flexible Order Number Detection ---
+        # Catches: "#1234", "Order 1234", "Its 1234", "No. 1234", "Is 1234"
+        order_match = re.search(r'(?:#|order\s+|no\.?\s+|its\s+|is\s+|^)([A-Z]{0,3}\d{4,6})\b', message_text.strip(), re.IGNORECASE)
+
+        if order_match:
+            # We found an order number!
+            clean_order_number = order_match.group(1)
+            logger.info(f"Order number detected via Regex: {clean_order_number}. Routing directly.")
+
+            # Route directly to the order detail handler
+            response = await route_message("order_detail_inquiry", clean_phone, clean_order_number, customer, quoted_wamid, business_id=business_id)
             return response[:4096] if response else None
-        # --- END OF FIX ---
+        # -------------------------------------------------
 
         if quoted_wamid:
             last_product_raw = await cache_service.redis.get(CacheKeys.LAST_SINGLE_PRODUCT.format(phone=clean_phone))
@@ -1971,6 +1986,11 @@ async def handle_order_inquiry(phone_number: str, customer: Dict, **kwargs) -> s
     if not recent_orders:
         # 2. NO ORDERS FOUND: Fall back to the original behavior
         logger.info(f"No orders found for {phone_number}. Asking for order number.")
+        
+        # --- ADD THIS LINE: Enable Context Memory ---
+        await cache_service.set(CacheKeys.LAST_BOT_QUESTION.format(phone=phone_number), "awaiting_order_number", ttl=300)
+        # --------------------------------------------
+        
         return string_service.get_formatted_string(
             "ORDER_INQUIRY_PROMPT",
             business_id=business_id
@@ -2148,14 +2168,16 @@ async def handle_human_escalation(phone_number: str, customer: Dict, **kwargs) -
         logger.info(f"Triage: Found multiple orders for {phone_number}. Asking to select.")
         
         options = {}
-        for order in recent_orders:
+        # FIX: Slice to [:3] to prevent WhatsApp API error (Max 3 buttons)
+        for order in recent_orders[:3]: 
             order_num = order.get("order_number")
             options[f"{TriageButtons.SELECT_ORDER_PREFIX}{order_num}"] = f"Order {order_num}"
         
         await whatsapp_service.send_quick_replies(
             phone_number,
             "I'm sorry to hear you're having an issue. I found a few of your recent orders. Which one do you need help with?",
-            options
+            options,
+            business_id=business_id
         )
         return "[Bot is asking to select order for triage]"
 

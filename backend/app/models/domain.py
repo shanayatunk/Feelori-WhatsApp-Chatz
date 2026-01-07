@@ -15,6 +15,7 @@ class Product(BaseModel):
     description: str
     price: float
     variant_id: str
+    first_variant_id: Optional[str] = None
     sku: Optional[str] = None
     currency: str = "INR"
     image_url: Optional[str] = None
@@ -48,13 +49,24 @@ class Product(BaseModel):
             tags_str = product_data.get("tags", "")
             tags_list = [tag.strip() for tag in tags_str.split(",")] if tags_str else []
 
+            # Extract variant ID and strip GID prefix for WhatsApp catalog compatibility
+            variant_id_raw = str(first_variant.get("id", ""))
+            first_variant_id = None
+            if variant_id_raw:
+                # Strip GID prefix: gid://shopify/ProductVariant/45068921667773 -> 45068921667773
+                if 'gid://' in variant_id_raw:
+                    first_variant_id = variant_id_raw.rstrip('/').split('/')[-1]
+                else:
+                    first_variant_id = variant_id_raw
+
             return cls(
                 id=str(product_data.get("id")),
                 title=product_data.get("title", "No Title"),
                 handle=product_data.get("handle", ""),
                 description=clean_description,
                 price=float(first_variant.get("price", 0.0)),
-                variant_id=str(first_variant.get("id")),
+                variant_id=variant_id_raw,
+                first_variant_id=first_variant_id,
                 sku=first_variant.get("sku"), # Added SKU
                 image_url=image_url,
                 availability=availability,

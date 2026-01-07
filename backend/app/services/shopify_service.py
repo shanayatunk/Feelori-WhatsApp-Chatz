@@ -538,10 +538,21 @@ class ShopifyService:
             description_html = node.get("descriptionHtml") or node.get("bodyHtml", "")
             clean_description = html.unescape(re.sub("<[^<]+?>", "", description_html))
 
+            # Extract variant ID and strip GID prefix for WhatsApp catalog compatibility
+            variant_id_gid = variant_edge[0]["node"].get("id", "")
+            first_variant_id = None
+            if variant_id_gid:
+                # Strip GID prefix: gid://shopify/ProductVariant/45068921667773 -> 45068921667773
+                if 'gid://' in variant_id_gid:
+                    first_variant_id = variant_id_gid.rstrip('/').split('/')[-1]
+                else:
+                    first_variant_id = variant_id_gid
+
             products.append(Product(
                 id=node.get("id"), title=node.get("title"), description=clean_description,
                 price=float(variant_edge[0]["node"].get("price", 0.0)),
                 handle=node.get("handle"), variant_id=variant_edge[0]["node"].get("id"),
+                first_variant_id=first_variant_id,
                 image_url=(image_edge[0]["node"]["originalSrc"] if image_edge else None),
                 availability="in_stock" if inventory and inventory > 0 else "out_of_stock",
                 tags=node.get("tags", []),

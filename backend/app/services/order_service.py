@@ -280,7 +280,54 @@ async def process_message(phone_number: str, message_text: str, message_type: st
     """
     try:
         clean_phone = EnhancedSecurityService.sanitize_phone_number(phone_number)
-        
+
+        # --- EARLY EXIT: Handle Cart/Order Messages Directly ---
+        # MOVED TO TOP: We handle this BEFORE upserting the conversation to keep 
+        # the "Last Message" in the dashboard clean (avoiding JSON blobs).
+        if message_type == "order":
+            logger.info(f"Received Order Event from {clean_phone}. Routing directly to Cart Handler.")
+            
+            # 1. Quick Customer Fetch (Read-Only)
+            customer = await db_service.get_customer(clean_phone)
+            if not customer:
+                customer = {"phone_number": clean_phone}
+
+            # 2. Generate Checkout Link
+            response = await handle_cart_submission_direct(message_text, customer, business_id=business_id)
+            
+            # 3. Log the Interaction Manually (Since we skip the main logging flow)
+            timestamp = datetime.utcnow()
+            
+            # Log Inbound (The Cart)
+            await db_service.db.message_logs.insert_one({
+                "tenant_id": business_id,
+                "business_id": business_id,
+                "phone": clean_phone,
+                "direction": "inbound",
+                "source": "customer",
+                "message_type": "order", # Distinct type for analytics
+                "text": "Cart Submission", # User-friendly text for UI
+                "content": message_text, # Raw JSON payload
+                "status": "received",
+                "timestamp": timestamp
+            })
+
+            # Log Outbound (The Checkout Link)
+            if response:
+                await db_service.db.message_logs.insert_one({
+                    "tenant_id": business_id,
+                    "business_id": business_id,
+                    "phone": clean_phone,
+                    "direction": "outbound",
+                    "source": "system",
+                    "message_type": "text", # Keep 'text' so Frontend renders the link correctly
+                    "text": response,
+                    "status": "sending",
+                    "timestamp": timestamp
+                })
+            return response
+        # -------------------------------------------------------
+
         # Step A: Upsert conversation early and capture conversation_id for real-time syncing
         # 1. Fetch existing conversation first (read-only)
         conversation = await db_service.db.conversations.find_one(
@@ -351,34 +398,6 @@ async def process_message(phone_number: str, message_text: str, message_type: st
         )
         # -------------------------------------------------------------
         
-        # --- EARLY EXIT: Handle Cart/Order Messages Directly ---
-        # We bypass all AI, Triage, and Intent analysis for order submissions.
-        # This turns "View sent cart" into an instant Checkout Link.
-        if message_type == "order":
-            logger.info(f"Received Order Event from {clean_phone}. Routing directly to Cart Handler.")
-            # Fetch customer for the handler
-            customer = await db_service.get_customer(clean_phone)
-            if not customer:
-                customer = {"phone_number": clean_phone}
-            response = await handle_cart_submission_direct(message_text, customer, business_id=business_id)
-            
-            # Log the outbound response manually since we are returning early
-            if response:
-                await db_service.db.message_logs.insert_one({
-                    "tenant_id": business_id,
-                    "business_id": business_id,
-                    "conversation_id": conversation_id,
-                    "phone": clean_phone,
-                    "direction": "outbound",
-                    "source": "system", # Marked as system to distinguish from AI
-                    "message_type": "text",
-                    "text": response,
-                    "status": "sending",
-                    "timestamp": datetime.utcnow()
-                })
-            return response
-        # -------------------------------------------------------
-
         # --- ESCAPE HATCH: Force Re-enable AI on Keywords ---
         # If AI is disabled, check if user is trying to restart via "Start" or "Menu".
         # This fixes the "Stuck in Human Mode" loop.

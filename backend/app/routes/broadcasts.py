@@ -136,12 +136,11 @@ async def send_broadcast(
         raise HTTPException(status_code=403, detail="Admin access required")
     
     try:
-        # Test Mode: Send to single phone without creating job
+        # Test Mode Logic (Keep as is)
         if request_data.is_test:
             if not request_data.test_phone:
                 raise HTTPException(status_code=400, detail="test_phone is required when is_test is True")
             
-            # Send test message directly (no job creation)
             result = await broadcast_service.send_broadcast(
                 target_business_id=request_data.business_id,
                 template_name=request_data.template_name,
@@ -149,9 +148,6 @@ async def send_broadcast(
                 variables=request_data.params,
                 dry_run=request_data.dry_run
             )
-            
-            logger.info(f"Test broadcast sent to {request_data.test_phone[:4]}... by admin {current_user.get('username', 'unknown')}")
-            
             return APIResponse(
                 success=True,
                 message="Test broadcast sent successfully",
@@ -159,52 +155,53 @@ async def send_broadcast(
                 version=settings.api_version
             )
         
-        # Normal Broadcast Mode: Full audience with job tracking
-        # --- FIX: Parse "group:ID" format from frontend ---
-        # The frontend sends "group:12345", but DB expects type="custom_group" and id="12345"
-        target_group_id = request_data.target_group_id  # Start with existing
+        # --- DEBUG & FIX SECTION ---
+        target_group_id = request_data.target_group_id
         audience_type = request_data.audience_type
+
+        # Log incoming request
+        logger.info(f"Broadcast Request - Raw Audience: '{audience_type}', GroupID: '{target_group_id}'")
 
         if audience_type and audience_type.startswith("group:"):
             parts = audience_type.split(":")
             if len(parts) == 2:
-                audience_type = "custom_group"  # Override type
-                target_group_id = parts[1]      # Extract ID
-        # --------------------------------------------------
+                audience_type = "custom_group"
+                target_group_id = parts[1].strip() # Strip whitespace just in case
+                logger.info(f"Parsed Custom Group - Type: {audience_type}, ID: {target_group_id}")
         
-        # Get users for broadcast
+        # Get users
         users = await db_service.get_customers_for_broadcast(
-            target_type=audience_type,       # <--- Use parsed variable
+            target_type=audience_type,
             target_phones=request_data.target_phones,
-            target_group_id=target_group_id  # <--- Use parsed variable
+            target_group_id=target_group_id
         )
         
-        # Extract phone numbers from user objects (excluding opted-out)
+        logger.info(f"DB Query returned {len(users)} users for audience '{audience_type}'")
+
+        # Extract recipients
         recipients = [user.get("phone_number") for user in users if user.get("phone_number") and not user.get("opted_out")]
         
         if not recipients:
+            logger.error(f"Recipient list is empty after filtering. Raw users found: {len(users)}")
             raise HTTPException(status_code=400, detail="No recipients found for the specified audience")
         
         # Create broadcast job
         job_id = await db_service.create_broadcast_job(
             message=f"Template: {request_data.template_name}",
             image_url=request_data.params.get("header_image_url"),
-            target_type=audience_type,       # <--- Use parsed variable
+            target_type=audience_type,
             total_recipients=len(recipients)
         )
         
-        # Add background task to send broadcast
         background_tasks.add_task(
             broadcast_service.execute_job,
-            job_id=job_id,  # Passing the Job ID is crucial!
+            job_id=job_id,
             target_business_id=request_data.business_id,
             template_name=request_data.template_name,
             recipients=recipients,
             variables=request_data.params,
             dry_run=request_data.dry_run
         )
-        
-        logger.info(f"Broadcast job {job_id} queued by admin {current_user.get('username', 'unknown')}")
         
         return APIResponse(
             success=True,
@@ -215,6 +212,8 @@ async def send_broadcast(
         
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+    except HTTPException:
+        raise 
     except Exception as e:
         logger.error(f"Failed to queue broadcast: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to queue broadcast")

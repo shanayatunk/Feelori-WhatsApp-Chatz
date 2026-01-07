@@ -1230,25 +1230,41 @@ async def get_or_create_customer(phone_number: str, profile_name: str = None) ->
     await cache_service.set(CacheKeys.CUSTOMER_DATA_V2.format(phone=phone_number), json.dumps(customer, default=str), ttl=1800)
     return customer
 
-def _get_whatsapp_product_id(product: Product) -> str:
+def _get_whatsapp_product_id(product) -> str:
     """
-    Extracts the numeric product ID from a GID for WhatsApp Catalog,
-    with added resilience and logging.
+    Returns the correct Meta Catalog product_retailer_id.
+    Meta requires the Shopify VARIANT ID (Content ID), not Product ID.
     """
-    if not product or not product.id:
-        logger.warning("Attempted to get WhatsApp product ID from an invalid product object.")
+    if not product:
+        logger.warning("Product is None while extracting WhatsApp product ID.")
         return ""
-    
-    product_id_str = str(product.id)
-    
-    if 'gid://' in product_id_str:
-        # Handle edge cases like trailing slashes before splitting
-        numeric_id = product_id_str.rstrip('/').split('/')[-1]
-        logger.debug(f"Converted GraphQL ID {product_id_str} to numeric ID {numeric_id}")
-        return numeric_id
-    
-    logger.debug(f"Using existing numeric ID: {product_id_str}")
-    return product_id_str
+
+    candidate_id = None
+
+    # Priority 1: Explicit first_variant_id (preferred)
+    candidate_id = getattr(product, "first_variant_id", None)
+
+    # Priority 2: Variants list fallback
+    if not candidate_id and hasattr(product, "variants") and product.variants:
+        v = product.variants[0]
+        candidate_id = (
+            v.get("id") if isinstance(v, dict) else getattr(v, "id", None)
+        )
+
+    # Fallback (should rarely be used)
+    if not candidate_id:
+        logger.warning(
+            f"No variant ID found for product '{getattr(product, 'title', '')}'. "
+            "Falling back to product.id (may fail in Meta catalog)."
+        )
+        candidate_id = getattr(product, "id", "")
+
+    # Normalize ID (strip Shopify GID if present)
+    id_str = str(candidate_id)
+    if "gid://" in id_str:
+        id_str = id_str.rstrip("/").split("/")[-1]
+
+    return id_str
 
 
 # --- Helper function to extract text from any message type ---

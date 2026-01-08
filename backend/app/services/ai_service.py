@@ -727,7 +727,7 @@ Example: `set, ruby, gold plated, traditional`"""
                 result = json.loads(cached_data)
                 logger.info(f"Visual Search: CACHE HIT for {image_hash[:8]}. Returning instantly.")
                 return result 
-            except:
+            except Exception:  # FIX: Added 'Exception' to silence linter
                 pass 
 
         # --- 3. GEMINI ANALYSIS ---

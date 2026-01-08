@@ -758,10 +758,13 @@ Example: `set, ruby, gold plated, traditional`"""
         
         Return a JSON object with these fields:
         1. "search_query": Optimized search string for Shopify (Material + Stone + Type + Style).
-        2. "variants": A list of 2-3 potential alternative search terms (e.g. "Silver version", "Different color").
-        3. "confidence": Float (0.0 - 1.0) indicating image clarity.
+        2. "variants": A list of 2-3 potential alternative search terms.
+        3. "confidence": Float (0.0 - 1.0).
         4. "visual_description": A 1-sentence description.
-        5. "direct_answer": If the user asked a question (Price/Material?), provide a polite answer. Else empty.
+        5. "direct_answer": 
+           - If the user asks about **Price** or **Cost**, LEAVE THIS EMPTY. (The system will provide the price from the catalog).
+           - If the user asks about **Style/Occasion**, answer briefly based on the image.
+           - If the user asks "Do you have this?", answer "Here are the closest matches I found."
         
         Example:
         {{
@@ -769,7 +772,7 @@ Example: `set, ruby, gold plated, traditional`"""
             "variants": ["Ruby necklace", "Traditional gold haram"],
             "confidence": 0.95,
             "visual_description": "Traditional necklace with red stones.",
-            "direct_answer": ""
+            "direct_answer": ""  <-- Left empty because price comes from DB
         }}
         """
         

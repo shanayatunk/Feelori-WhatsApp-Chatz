@@ -2115,10 +2115,28 @@ async def handle_visual_search(message: str, customer: Dict, **kwargs) -> Option
                 business_id=business_id
             )
             
-            # 3. Follow-up with Answer (if exists)
-            if direct_answer and caption:
+            # 3. Follow-up with Smart Answer
+            # Logic: If Gemini gave a direct answer (e.g. regarding style), use it.
+            # If NOT, and the user asked about PRICE, use the TOP PRODUCT'S price.
+            
+            final_reply = direct_answer
+            
+            # Check if caption asks for price (simple keyword check)
+            caption_lower = caption.lower()
+            asking_price = any(x in caption_lower for x in ['price', 'cost', 'how much', 'rate', 'rs', 'rupees'])
+            
+            if not final_reply and asking_price and products:
+                top_product = products[0]
+                # Enterprise Grade: Quote the price of the best match
+                final_reply = (
+                    f"The item in the first image matches our *{top_product.title}*.\n"
+                    f"💰 Price: *{top_product.currency} {top_product.price}*\n"
+                    f"You can click 'View' above to buy it! 🛍️"
+                )
+
+            if final_reply:
                 await asyncio.sleep(1)
-                await whatsapp_service.send_message(phone_number, f"💡 {direct_answer}", business_id=business_id)
+                await whatsapp_service.send_message(phone_number, final_reply, business_id=business_id)
                 
         return "[Visual search complete]"
 

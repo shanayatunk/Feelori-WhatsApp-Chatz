@@ -2093,14 +2093,29 @@ async def handle_visual_search(message: str, customer: Dict, **kwargs) -> Option
         direct_answer = result.get('direct_answer')
         
         if products:
+            # 1. Truncate Query for Header (Max 60 chars allowed by WhatsApp)
+            # Prefix "✨ Matches for '" is 15 chars. Suffix "'" is 1 char.
+            # Safe length for query is 60 - 16 = 44. We use 40 to be safe.
+            raw_query = result.get('search_query', '')
+            if len(raw_query) > 40:
+                safe_query = raw_query[:37] + "..."
+            else:
+                safe_query = raw_query
+            
+            safe_header = f"✨ Matches for '{safe_query}'"
+            # 🔒 Final defensive check: Ensure header never exceeds 60 chars (future-proofing)
+            safe_header = safe_header[:60]
+
+            # 2. Send Product Card
             await _send_product_card(
                 products=products, 
                 customer=customer, 
-                header_text=f"✨ Matches for '{result.get('search_query')}'",
+                header_text=safe_header,
                 body_text="Here are the closest styles I found:", 
                 business_id=business_id
             )
             
+            # 3. Follow-up with Answer (if exists)
             if direct_answer and caption:
                 await asyncio.sleep(1)
                 await whatsapp_service.send_message(phone_number, f"💡 {direct_answer}", business_id=business_id)

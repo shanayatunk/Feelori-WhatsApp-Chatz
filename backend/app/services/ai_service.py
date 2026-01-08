@@ -7,6 +7,7 @@ import asyncio
 import re
 from typing import Optional, Dict, Callable, Any
 from google import genai
+from google.genai import types
 from google.genai.types import GenerateContentConfig, HttpOptions
 from openai import AsyncOpenAI
 from tenacity import retry, wait_exponential, stop_after_attempt, retry_if_exception_type
@@ -755,7 +756,22 @@ Example: `set, ruby, gold plated, traditional`"""
         """
         
         try:
-            contents = [analysis_prompt, {'mime_type': mime_type, 'data': image_bytes}]
+            # FIX: Use types.Part for image data instead of raw dict
+            image_part = types.Part.from_bytes(
+                data=image_bytes,
+                mime_type=mime_type
+            )
+            
+            contents = [
+                types.Content(
+                    role="user",
+                    parts=[
+                        types.Part.from_text(text=analysis_prompt),
+                        image_part
+                    ]
+                )
+            ]
+
             response = await asyncio.to_thread(
                 self._sync_generate_with_retry,
                 self.model_name,

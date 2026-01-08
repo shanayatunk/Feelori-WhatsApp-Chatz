@@ -145,12 +145,24 @@ async def _handle_security_verification(clean_phone: str, message_text: str, cus
     if not verification_state_raw:
         return None
 
+    # 1. ESCAPE HATCH: Check if user wants to cancel or switch topics
+    # If the message is text (not digits) and looks like a command/intent
+    clean_text = message_text.lower().strip()
+    escape_words = {"cancel", "stop", "exit", "quit", "no", "nevermind", "show", "buy", "hi", "hello", "menu"}
+    
+    # If user says an escape word OR a sentence without digits (like "i dont know")
+    if clean_text in escape_words or (len(clean_text) > 5 and not re.search(r'\d', clean_text)):
+        await cache_service.delete(CacheKeys.AWAITING_ORDER_VERIFICATION.format(phone=clean_phone))
+        # Returning None lets the message fall through to the main AI/Intent handler
+        return None 
+
     try:
         verification_state = json.loads(verification_state_raw)
         expected_last_4 = verification_state["expected_last_4"]
         order_name = verification_state["order_name"]
         attempts = verification_state.get("attempts", 0)
 
+        # 2. Proceed with digit verification...
         # Normalize input (remove spaces/dashes)
         input_digits = re.sub(r'\D', '', message_text)
 

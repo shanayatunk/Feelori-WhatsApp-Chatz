@@ -21,12 +21,12 @@ google-genai
 
 
 # Visual Search & AI Models
-numpy
 #torch
 #transformers
 #scikit-learn
 #Pillow
 #huggingface_hub
+#numpy
 rapidfuzz
 
 # Auth & Security

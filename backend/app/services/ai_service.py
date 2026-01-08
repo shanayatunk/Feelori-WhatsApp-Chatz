@@ -1,6 +1,7 @@
 # /app/services/ai_service.py
 
 import json
+import hashlib
 import logging
 import asyncio
 import re
@@ -16,6 +17,7 @@ from app.utils.circuit_breaker import CircuitBreaker
 from app.utils.metrics import ai_requests_counter
 from app.services.shopify_service import shopify_service
 from app.services.string_service import string_service
+from app.services.cache_service import cache_service
 
 
 # This service encapsulates all interactions with external AI models like
@@ -79,9 +81,10 @@ class AIService:
                 available = []
 
             preferred_models = [
-                "models/gemini-2.5-flash",
+                "models/gemini-2.5-flash",       # Best Balance (Quality/Speed)
+                "models/gemini-2.0-flash",       # High Speed / Lower Cost
+                "models/gemini-2.5-flash-lite",  # Ultra Low Cost (Fallback)
                 "models/gemini-1.5-pro-latest",
-                "models/gemini-1.5-pro",
                 "models/gemini-1.5-flash-latest",
                 "models/gemini-1.5-flash",
                 "models/gemini-1.5-pro-001",
@@ -700,6 +703,127 @@ Example: `set, ruby, gold plated, traditional`"""
         except Exception as e:
             logger.error(f"Error in hybrid visual search: {e}", exc_info=True)
             return {'success': False, 'error': str(e)}
+
+    async def find_products_by_image_content(self, image_bytes: bytes, mime_type: str, caption: str = "", business_id: str = "feelori") -> dict:
+        """
+        Enterprise Visual Search (Hybrid Cache): 
+        Checks Redis for the exact image hash. 
+        If found, returns cached products instantly (skips AI & Shopify).
+        If new, uses Gemini to analyze -> Search Shopify -> Caches Result.
+        """
+        # --- 1. GUARDRAILS ---
+        if not self.gemini_client:
+            return {'success': False, 'message': 'AI service is temporarily unavailable.'}
+            
+        # --- 2. FULL RESULT CACHING (Zero Latency for Viral Images) ---
+        # Hash the image content to identify duplicates
+        image_hash = hashlib.sha256(image_bytes).hexdigest()
+        cache_key = f"visual_search:complete_result:{image_hash}"
+        
+        # Check cache
+        cached_data = await cache_service.get(cache_key)
+        if cached_data:
+            try:
+                result = json.loads(cached_data)
+                logger.info(f"Visual Search: CACHE HIT for {image_hash[:8]}. Returning instantly.")
+                return result 
+            except:
+                pass 
+
+        # --- 3. GEMINI ANALYSIS ---
+        await self._ensure_model()
+        
+        analysis_prompt = f"""
+        Analyze this jewelry image closely.
+        User Caption: "{caption}"
+        
+        Return a JSON object with these fields:
+        1. "search_query": Optimized search string for Shopify (Material + Stone + Type + Style).
+        2. "variants": A list of 2-3 potential alternative search terms (e.g. "Silver version", "Different color").
+        3. "confidence": Float (0.0 - 1.0) indicating image clarity.
+        4. "visual_description": A 1-sentence description.
+        5. "direct_answer": If the user asked a question (Price/Material?), provide a polite answer. Else empty.
+        
+        Example:
+        {{
+            "search_query": "Gold plated ruby emerald haram necklace",
+            "variants": ["Ruby necklace", "Traditional gold haram"],
+            "confidence": 0.95,
+            "visual_description": "Traditional necklace with red stones.",
+            "direct_answer": ""
+        }}
+        """
+        
+        try:
+            contents = [analysis_prompt, {'mime_type': mime_type, 'data': image_bytes}]
+            response = await asyncio.to_thread(
+                self._sync_generate_with_retry,
+                self.model_name,
+                contents,
+                self.default_json_config
+            )
+            
+            result_text = self._extract_text_from_genai_response(response)
+            analysis = json.loads(self._strip_json_fences(result_text))
+            
+        except Exception as e:
+            logger.error(f"Gemini Visual Analysis Failed: {e}", exc_info=True)
+            return {'success': False, 'message': "I had trouble analyzing that image. Please try a clearer photo."}
+
+        # --- 4. LOGIC & ROUTING ---
+        confidence = analysis.get("confidence", 0.0)
+        search_query = analysis.get("search_query", "")
+        direct_answer = analysis.get("direct_answer", "")
+
+        logger.info(f"Visual Analysis: Query='{search_query}', Conf={confidence}")
+
+        if confidence < 0.6:
+            return {
+                'success': False, 
+                'message': "I'm not 100% sure what I'm looking at. Could you send a clearer photo?"
+            }
+
+        if not search_query:
+            return {'success': False, 'message': "I couldn't identify the jewelry type. Please try again."}
+
+        # --- 5. SHOPIFY SEARCH ---
+        final_products = []
+        
+        # Tier 1: Exact Query
+        products, _ = await shopify_service.get_products(query=search_query, limit=5, business_id=business_id)
+        if products:
+            final_products = products
+        else:
+            # Tier 2: Fallback (Broad)
+            simplified_query = " ".join(search_query.split()[:2])
+            fallback_products, _ = await shopify_service.get_products(simplified_query, limit=5, business_id=business_id)
+            if fallback_products:
+                final_products = fallback_products
+
+        # --- 6. SAVE TO CACHE & RETURN ---
+        if final_products:
+            # Convert Pydantic models to dicts for caching
+            products_dict = [p.model_dump(mode="json") for p in final_products]
+            
+            result_payload = {
+                'success': True, 
+                'products': products_dict, 
+                'search_query': search_query, 
+                'direct_answer': direct_answer
+            }
+            
+            # Cache for 24 hours 
+            await cache_service.set(cache_key, json.dumps(result_payload, default=str), ttl=86400)
+            
+            # Return Pydantic models to the caller 
+            return {
+                'success': True,
+                'products': final_products, 
+                'search_query': search_query,
+                'direct_answer': direct_answer
+            }
+
+        return {'success': False, 'message': "I see it's a lovely design, but I couldn't find a match in our catalog right now."}
 
 # Globally accessible instance - safe now because __init__ is non-blocking
 # For stricter setups, consider moving this to FastAPI startup event handler

@@ -1615,7 +1615,7 @@ def _format_single_order(order: Dict, detailed: bool = False) -> str:
 async def handle_order_detail_inquiry(message: str, customer: Dict, **kwargs) -> str:
     """
     Handles a request for order details with robust lookup, JIT sync, and security.
-    Implements 'Self-Healing' logic: If DB misses, fetch from Shopify and cache it.
+    Implements 'Self-Healing' logic: If DB misses, fetch from Shopify, normalize to Integer, and upsert.
     """
     business_id = kwargs.get("business_id", "feelori")
     
@@ -1654,20 +1654,25 @@ async def handle_order_detail_inquiry(message: str, customer: Dict, **kwargs) ->
         if shopify_order:
             logger.info(f"JIT Sync: Found {prefixed_number} in Shopify. Syncing to DB.")
             
-            # B. Extract Phones for Security
+            # B. Extract Phones for Security (FIXED LINTING ERRORS HERE)
             phones = []
-            if shopify_order.get("phone"): phones.append(shopify_order["phone"])
-            if shopify_order.get("customer", {}).get("phone"): phones.append(shopify_order["customer"]["phone"])
-            if shopify_order.get("billing_address", {}).get("phone"): phones.append(shopify_order["billing_address"]["phone"])
-            if shopify_order.get("shipping_address", {}).get("phone"): phones.append(shopify_order["shipping_address"]["phone"])
+            if shopify_order.get("phone"):
+                phones.append(shopify_order["phone"])
+            if shopify_order.get("customer", {}).get("phone"):
+                phones.append(shopify_order["customer"]["phone"])
+            if shopify_order.get("billing_address", {}).get("phone"):
+                phones.append(shopify_order["billing_address"]["phone"])
+            if shopify_order.get("shipping_address", {}).get("phone"):
+                phones.append(shopify_order["shipping_address"]["phone"])
             
             unique_phones = list(set([p for p in phones if p]))
             
             # C. Create DB Object (Normalize to Integer if possible, matching your existing schema)
-            # Use the order number from Shopify (likely Int) or fallback to our parsed one
+            # Use the order number from Shopify. Try to cast to Int to match your DB history.
             try:
                 final_order_num = int(shopify_order.get("order_number", raw_number_str))
             except (ValueError, TypeError):
+                # Fallback to string if it contains letters (e.g. "ORD-101")
                 final_order_num = str(shopify_order.get("order_number", raw_number_str))
             
             new_order_record = {
@@ -1687,7 +1692,7 @@ async def handle_order_detail_inquiry(message: str, customer: Dict, **kwargs) ->
                 upsert=True
             )
             
-            # E. Retrieve the inserted document
+            # E. Retrieve the inserted document (ensure we have the _id and full structure)
             order_from_db = await db_service.db.orders.find_one({"order_number": final_order_num})
             
         else:

@@ -801,7 +801,35 @@ Example: `set, ruby, gold plated, traditional`"""
             )
             
             result_text = self._extract_text_from_genai_response(response)
-            analysis = json.loads(self._strip_json_fences(result_text))
+            
+            # 1. EMPTY RESPONSE CHECK (Prevents Crash)
+            if not result_text or not result_text.strip():
+                logger.warning(f"Visual Search: Gemini returned EMPTY response for {image_hash[:8]}.")
+                return {
+                    'success': True, 
+                    'search_query': "bestseller jewelry",  # Safe fallback
+                    'confidence': 0.1,
+                    'visual_description': "I couldn't see the details clearly, but here are our popular items.",
+                    'direct_answer': "I couldn't quite make out the details in that photo."
+                }
+
+            # 2. MARKDOWN CLEANING
+            clean_text = re.sub(r'```json\s*', '', result_text, flags=re.IGNORECASE)
+            clean_text = re.sub(r'```', '', clean_text)
+            clean_text = clean_text.strip()
+            
+            # 3. PARSE
+            try:
+                analysis = json.loads(clean_text)
+            except json.JSONDecodeError:
+                logger.error(f"Visual Search: Invalid JSON from Gemini.\nRaw: {result_text}")
+                return {
+                    'success': True,
+                    'search_query': "latest collection",
+                    'confidence': 0.1,
+                    'visual_description': "I had trouble analyzing the image format.",
+                    'direct_answer': ""
+                }
             
         except Exception as e:
             logger.error(f"Gemini Visual Analysis Failed: {e}", exc_info=True)

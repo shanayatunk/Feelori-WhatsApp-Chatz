@@ -2089,36 +2089,55 @@ async def handle_visual_search(message: str, customer: Dict, **kwargs) -> Option
             return result.get('message', "No matches found.")
 
         # 5. SEND RESULTS
-        products = result.get('products', [])
+        # Convert dicts back to objects if needed (handled by ai_service now, but good to be safe)
+        raw_products = result.get('products', [])
+        products = raw_products  # Assuming ai_service returns objects now
+        
         direct_answer = result.get('direct_answer')
+        confidence = result.get('confidence', 0.0)  # <--- Get Score
         
         if products:
-            # 1. Truncate Query for Header (Max 60 chars allowed by WhatsApp)
-            # Prefix "✨ Matches for '" is 15 chars. Suffix "'" is 1 char.
-            # Safe length for query is 60 - 16 = 44. We use 40 to be safe.
+            # A. Confidence-Based Header Logic
             raw_query = result.get('search_query', '')
-            if len(raw_query) > 40:
-                safe_query = raw_query[:37] + "..."
-            else:
-                safe_query = raw_query
             
-            safe_header = f"✨ Matches for '{safe_query}'"
+            # Truncate query for safety
+            safe_query = (raw_query[:30] + '...') if len(raw_query) > 33 else raw_query
+            
+            if confidence > 0.85:
+                # High confidence: Be specific
+                safe_header = f"✨ Matches: '{safe_query}'"
+            else:
+                # Low confidence: Be humble
+                safe_header = f"✨ Similar to: '{safe_query}'"
+            
             # 🔒 Final defensive check: Ensure header never exceeds 60 chars (future-proofing)
             safe_header = safe_header[:60]
 
-            # 2. Send Product Card
+            # B. Send Product Card
             await _send_product_card(
                 products=products, 
                 customer=customer, 
                 header_text=safe_header,
-                body_text="Here are the closest styles I found:", 
+                body_text="Here are the closest items I found in our collection:", 
                 business_id=business_id
             )
             
-            # 3. Follow-up with Answer (if exists)
-            if direct_answer and caption:
+            # C. Price/Answer Logic
+            final_reply = direct_answer
+            caption_lower = caption.lower()
+            asking_price = any(x in caption_lower for x in ['price', 'cost', 'how much', 'rate', 'rs', 'rupees'])
+            
+            if not final_reply and asking_price and products:
+                top_product = products[0]
+                final_reply = (
+                    f"The item in the first image matches our *{top_product.title}*.\n"
+                    f"💰 Price: *{top_product.currency} {top_product.price}*\n"
+                    f"Tap 'View' above to see more details! 🛍️"
+                )
+
+            if final_reply:
                 await asyncio.sleep(1)
-                await whatsapp_service.send_message(phone_number, f"💡 {direct_answer}", business_id=business_id)
+                await whatsapp_service.send_message(phone_number, final_reply, business_id=business_id)
                 
         return "[Visual search complete]"
 

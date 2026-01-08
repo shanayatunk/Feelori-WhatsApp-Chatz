@@ -758,10 +758,13 @@ Example: `set, ruby, gold plated, traditional`"""
         
         Return a JSON object with these fields:
         1. "search_query": Optimized search string for Shopify (Material + Stone + Type + Style).
-        2. "variants": A list of 2-3 potential alternative search terms (e.g. "Silver version", "Different color").
-        3. "confidence": Float (0.0 - 1.0) indicating image clarity.
+        2. "variants": A list of 2-3 potential alternative search terms.
+        3. "confidence": Float (0.0 - 1.0).
         4. "visual_description": A 1-sentence description.
-        5. "direct_answer": If the user asked a question (Price/Material?), provide a polite answer. Else empty.
+        5. "direct_answer": 
+           - If the user asks about **Price** or **Cost**, LEAVE THIS EMPTY. (The system will provide the price from the catalog).
+           - If the user asks about **Style/Occasion**, answer briefly based on the image.
+           - If the user asks "Do you have this?", answer "Here are the closest matches I found."
         
         Example:
         {{
@@ -769,7 +772,7 @@ Example: `set, ruby, gold plated, traditional`"""
             "variants": ["Ruby necklace", "Traditional gold haram"],
             "confidence": 0.95,
             "visual_description": "Traditional necklace with red stones.",
-            "direct_answer": ""
+            "direct_answer": ""  <-- Left empty because price comes from DB
         }}
         """
         
@@ -798,7 +801,35 @@ Example: `set, ruby, gold plated, traditional`"""
             )
             
             result_text = self._extract_text_from_genai_response(response)
-            analysis = json.loads(self._strip_json_fences(result_text))
+            
+            # 1. EMPTY RESPONSE CHECK (Prevents Crash)
+            if not result_text or not result_text.strip():
+                logger.warning(f"Visual Search: Gemini returned EMPTY response for {image_hash[:8]}.")
+                return {
+                    'success': True, 
+                    'search_query': "bestseller jewelry",  # Safe fallback
+                    'confidence': 0.1,
+                    'visual_description': "I couldn't see the details clearly, but here are our popular items.",
+                    'direct_answer': "I couldn't quite make out the details in that photo."
+                }
+
+            # 2. MARKDOWN CLEANING
+            clean_text = re.sub(r'```json\s*', '', result_text, flags=re.IGNORECASE)
+            clean_text = re.sub(r'```', '', clean_text)
+            clean_text = clean_text.strip()
+            
+            # 3. PARSE
+            try:
+                analysis = json.loads(clean_text)
+            except json.JSONDecodeError:
+                logger.error(f"Visual Search: Invalid JSON from Gemini.\nRaw: {result_text}")
+                return {
+                    'success': True,
+                    'search_query': "latest collection",
+                    'confidence': 0.1,
+                    'visual_description': "I had trouble analyzing the image format.",
+                    'direct_answer': ""
+                }
             
         except Exception as e:
             logger.error(f"Gemini Visual Analysis Failed: {e}", exc_info=True)

@@ -1613,58 +1613,129 @@ def _format_single_order(order: Dict, detailed: bool = False) -> str:
 
 
 async def handle_order_detail_inquiry(message: str, customer: Dict, **kwargs) -> str:
-    """Handles a request for order details with robust lookup and security."""
+    """
+    Handles a request for order details with robust lookup, JIT sync, and security.
+    Implements 'Self-Healing' logic: If DB misses, fetch from Shopify, normalize to Integer, and upsert.
+    """
     business_id = kwargs.get("business_id", "feelori")
     
-    # Extract number
+    # Extract number (flexible regex)
     order_name_match = re.search(r'#?([a-zA-Z]*\d{4,})', message)
     if not order_name_match:
         return await _handle_unclear_request(customer, message)
 
-    raw_number = order_name_match.group(1).upper() # e.g. "1067"
-    prefixed_number = f"#{raw_number}"             # e.g. "#1067"
+    raw_number_str = order_name_match.group(1).upper() # e.g. "1067" (String)
+    prefixed_number = f"#{raw_number_str}"             # e.g. "#1067" (String)
     
-    logger.info(f"Looking up order: {prefixed_number} (and raw: {raw_number})")
+    logger.info(f"Looking up order: {prefixed_number} (raw: {raw_number_str})")
 
-    # 1. Flexible DB Lookup (Try both formats)
+    # 1. SMART DB LOOKUP (Handle Int vs String mismatch efficiently)
+    # Search for: 1067 (Int), "1067" (Str), "#1067" (Str)
+    search_candidates = [prefixed_number, raw_number_str]
+    if raw_number_str.isdigit():
+        search_candidates.append(int(raw_number_str))
+
     order_from_db = await db_service.db.orders.find_one({
-        "order_number": {"$in": [prefixed_number, raw_number]}
+        "order_number": {"$in": search_candidates}
     })
 
+    # --- JIT SYNC START (Self-Healing) ---
     if not order_from_db:
-        logger.warning(f"Order {prefixed_number} not found in DB.")
-        return string_service.get_formatted_string('ORDER_NOT_FOUND_SPECIFIC', business_id=business_id, order_number=prefixed_number)
+        logger.warning(f"Order {prefixed_number} not found in DB. Attempting JIT Sync from Shopify...")
+        
+        # A. Fetch from Shopify Real-time
+        # Try fetching by name first (most reliable)
+        shopify_order = await shopify_service.get_order_by_name(prefixed_number, business_id=business_id)
+        
+        # Fallback: Try raw number if prefixed failed
+        if not shopify_order and raw_number_str.isdigit():
+             shopify_order = await shopify_service.get_order_by_name(raw_number_str, business_id=business_id)
 
-    # Use the normalized name from DB for consistency
-    order_name = order_from_db.get("order_number", prefixed_number)
+        if shopify_order:
+            logger.info(f"JIT Sync: Found {prefixed_number} in Shopify. Syncing to DB.")
+            
+            # B. Extract Phones for Security (FIXED LINTING ERRORS HERE)
+            phones = []
+            if shopify_order.get("phone"):
+                phones.append(shopify_order["phone"])
+            if shopify_order.get("customer", {}).get("phone"):
+                phones.append(shopify_order["customer"]["phone"])
+            if shopify_order.get("billing_address", {}).get("phone"):
+                phones.append(shopify_order["billing_address"]["phone"])
+            if shopify_order.get("shipping_address", {}).get("phone"):
+                phones.append(shopify_order["shipping_address"]["phone"])
+            
+            unique_phones = list(set([p for p in phones if p]))
+            
+            # C. Create DB Object (Normalize to Integer if possible, matching your existing schema)
+            # Use the order number from Shopify. Try to cast to Int to match your DB history.
+            try:
+                final_order_num = int(shopify_order.get("order_number", raw_number_str))
+            except (ValueError, TypeError):
+                # Fallback to string if it contains letters (e.g. "ORD-101")
+                final_order_num = str(shopify_order.get("order_number", raw_number_str))
+            
+            new_order_record = {
+                "order_number": final_order_num, 
+                "shopify_id": str(shopify_order.get("id")),
+                "phone_numbers": unique_phones,
+                "status": "synced_jit", # Metadata for auditing
+                "synced_via": "jit",    # Explicit source tracking
+                "created_at": datetime.utcnow()
+            }
+            
+            # D. Save to Mongo (Idempotent Upsert)
+            # Prevents duplicates if two requests come in at once
+            await db_service.db.orders.update_one(
+                {"order_number": final_order_num},
+                {"$setOnInsert": new_order_record},
+                upsert=True
+            )
+            
+            # E. Retrieve the inserted document (ensure we have the _id and full structure)
+            order_from_db = await db_service.db.orders.find_one({"order_number": final_order_num})
+            
+        else:
+            # F. Truly Not Found
+            logger.warning(f"Order {prefixed_number} does not exist in Shopify either.")
+            return string_service.get_formatted_string('ORDER_NOT_FOUND_SPECIFIC', business_id=business_id, order_number=prefixed_number)
+    # --- JIT SYNC END ---
 
-    # --- SECURITY LOGIC ---
-    is_verified = await cache_service.get(CacheKeys.ORDER_VERIFIED.format(phone=customer['phone_number'], order_name=order_name))
+    # 2. Proceed with Security Check
+    # Normalize order name for display
+    order_name_display = str(order_from_db.get("order_number", prefixed_number))
+    if not order_name_display.startswith("#"):
+        order_name_display = f"#{order_name_display}"
+
+    # Check Verification Cache
+    is_verified = await cache_service.get(CacheKeys.ORDER_VERIFIED.format(phone=customer['phone_number'], order_name=order_name_display))
     
     if not is_verified:
         order_phones = order_from_db.get("phone_numbers", [])
         
+        # Validation: Ensure we have at least one phone number to verify against
         if not order_phones or not isinstance(order_phones[0], str) or len(order_phones[0]) < 4:
-            logger.error(f"Invalid phone data for order {order_name}")
-            return "Unable to verify this order securely. Please contact support."
+            # Fallback for JIT synced orders without phone data (rare but possible)
+            logger.error(f"Invalid phone data for order {order_name_display}")
+            return "For your security, I cannot display this order because the phone number on file is missing or invalid. Please contact support."
 
         expected_last_4 = order_phones[0][-4:]
         
-        # Set Context
+        # Set Context for the next reply (Listening Mode)
         await cache_service.set(CacheKeys.AWAITING_ORDER_VERIFICATION.format(phone=customer['phone_number']), json.dumps({
-            "order_name": order_name,
+            "order_name": order_name_display,
             "expected_last_4": expected_last_4
         }), ttl=300)
 
-        # RETURN the challenge string (Do not send internally)
-        return f"For your security, please reply with the last 4 digits of the phone number used to place order *{order_name}*."
+        # Return the challenge
+        return f"For your security, please reply with the last 4 digits of the phone number used to place order *{order_name_display}*."
 
-    # 2. Fetch Full Details (Shopify)
-    order_to_display = await shopify_service.get_order_by_name(order_name, business_id=business_id)
+    # 3. Fetch Full Details (Shopify)
+    order_to_display = await shopify_service.get_order_by_name(order_name_display, business_id=business_id)
     if not order_to_display:
-        return string_service.get_formatted_string('ORDER_NOT_FOUND_SPECIFIC', business_id=business_id, order_number=order_name)
+        return string_service.get_formatted_string('ORDER_NOT_FOUND_SPECIFIC', business_id=business_id, order_number=order_name_display)
         
-    await cache_service.delete(CacheKeys.ORDER_VERIFIED.format(phone=customer['phone_number'], order_name=order_name))
+    await cache_service.delete(CacheKeys.ORDER_VERIFIED.format(phone=customer['phone_number'], order_name=order_name_display))
     return _format_single_order(order_to_display, detailed=True)
 
 

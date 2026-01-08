@@ -2138,6 +2138,25 @@ async def handle_visual_search(message: str, customer: Dict, **kwargs) -> Option
             if final_reply:
                 await asyncio.sleep(1)
                 await whatsapp_service.send_message(phone_number, final_reply, business_id=business_id)
+        else:
+            # --- GUARDRAIL: Handle No Results (High & Low Confidence) ---
+            if confidence < 0.4:
+                # Scenario 1: AI was confused (Low Confidence)
+                fallback_msg = (
+                    "I couldn't quite identify the jewelry in that image. 🧐\n"
+                    "Could you try a clearer photo, or tell me what you're looking for? (e.g., 'Gold Jhumkas')"
+                )
+            else:
+                # Scenario 2: AI knew what it was, but Shopify had no matches (High Confidence)
+                clean_query = result.get('search_query', 'that item').replace('"', '')
+                fallback_msg = (
+                    f"I see you're looking for *{clean_query}*, but I couldn't find a close match in our collection right now. 😔\n\n"
+                    "Would you like to see our **Bestsellers** instead?"
+                )
+                # Context: Remember to offer bestsellers if they say "yes"
+                await cache_service.set(CacheKeys.LAST_BOT_QUESTION.format(phone=phone_number), "offer_bestsellers", ttl=300)
+
+            await whatsapp_service.send_message(phone_number, fallback_msg, business_id=business_id)
                 
         return "[Visual search complete]"
 

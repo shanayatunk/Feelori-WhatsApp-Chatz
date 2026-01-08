@@ -23,6 +23,7 @@ from app.services.whatsapp_service import whatsapp_service
 from app.services.db_service import db_service
 from app.services.cache_service import cache_service
 from app.services import security_service
+from app.services.security_service import rate_limiter
 from app.services.string_service import string_service
 from app.services.rule_service import rule_service
 from app.utils.queue import message_queue
@@ -2044,42 +2045,71 @@ async def handle_shipping_inquiry(message: str, customer: Dict, **kwargs) -> Opt
     return "To give you an accurate delivery estimate, I need to know which items you're interested in. Could you please search for a product?"
 
 async def handle_visual_search(message: str, customer: Dict, **kwargs) -> Optional[str]:
-    """Handles a visual search request using an uploaded image."""
+    """
+    Handles visual search with Enterprise Guardrails (Size, Type, Rate Limit).
+    """
     try:
         business_id = kwargs.get("business_id", "feelori")
-        media_id = message.replace("visual_search_", "").strip().split("_caption_")[0]
         phone_number = customer["phone_number"]
-        if not media_id: 
-            return "I couldn't read the image. Please try uploading it again."
 
-        await whatsapp_service.send_message(phone_number, "🔍 Analyzing your image and searching our catalog... ✨", business_id=business_id)
-        image_bytes, mime_type = await whatsapp_service.get_media_content(media_id, business_id=business_id)
-        if not image_bytes or not mime_type: 
-            return "I had trouble downloading your image. Please try again."
-
-        result = await asyncio.wait_for(
-            ai_service.find_exact_product_by_image(image_bytes, mime_type),
-            timeout=20.0 # Longer timeout for image processing
-        )
-        if not result or not result.get('success') or not result.get('products'):
-            return "I couldn't find a good match for your image. 😔\n💡 **Tip:** Use clear, well-lit photos!"
-
-        products = result.get('products', [])
-        match_type = result.get('match_type', 'similar')
-        header_text = f"✨ Found {len(products)} Similar Products"
-        if match_type == 'exact': 
-            header_text = "🎯 Perfect Match Found!"
-        elif match_type == 'very_similar': 
-            header_text = f"🌟 Found {len(products)} Excellent Matches"
+        # 1. PARSE PAYLOAD
+        clean_payload = message.replace("visual_search_", "")
+        parts = clean_payload.split("_caption_")
+        media_id = parts[0].strip()
+        caption = parts[1].strip() if len(parts) > 1 else ""
         
-        await _send_product_card(products=products, customer=customer, header_text=header_text, body_text="Here are some products matching your style!", business_id=business_id)
-        return "[Sent visual search results]"
-    except asyncio.TimeoutError:
-        logger.warning(f"Visual search timed out for media ID {media_id}")
-        return "My image search is taking a little too long right now. Please try again in a moment!"
+        # 2. RATE LIMIT CHECK (Prevent Abuse: 5 searches / 10 mins)
+        is_allowed = await rate_limiter.check_rate_limit(f"visual_search:{phone_number}", limit=5, window=600)
+        if not is_allowed:
+            return "You've sent a lot of images! Please wait a few minutes before searching again. ⏳"
+
+        # Acknowledge
+        await whatsapp_service.send_message(phone_number, "🔍 Analyzing your photo... ✨", business_id=business_id)
+        
+        # 3. DOWNLOAD & GUARDRAILS
+        image_bytes, mime_type = await whatsapp_service.get_media_content(media_id, business_id=business_id)
+        
+        if not image_bytes:
+            return "I couldn't download the image. Please try again."
+            
+        allowed_mimes = ["image/jpeg", "image/png", "image/webp"]
+        if mime_type not in allowed_mimes:
+            return "I can only analyze standard images (JPG, PNG). Please try another format."
+        
+        if len(image_bytes) > 5 * 1024 * 1024: # 5MB limit
+            return "That image is a bit too large for me to process. Please try a smaller one."
+
+        # 4. EXECUTE SEARCH
+        result = await ai_service.find_products_by_image_content(image_bytes, mime_type, caption, business_id=business_id)
+        
+        if not result.get('success'):
+            # Fallback to text search if caption is strong
+            if caption and len(caption) > 4:
+                return await handle_product_search(caption, customer, business_id=business_id)
+            return result.get('message', "No matches found.")
+
+        # 5. SEND RESULTS
+        products = result.get('products', [])
+        direct_answer = result.get('direct_answer')
+        
+        if products:
+            await _send_product_card(
+                products=products, 
+                customer=customer, 
+                header_text=f"✨ Matches for '{result.get('search_query')}'",
+                body_text="Here are the closest styles I found:", 
+                business_id=business_id
+            )
+            
+            if direct_answer and caption:
+                await asyncio.sleep(1)
+                await whatsapp_service.send_message(phone_number, f"💡 {direct_answer}", business_id=business_id)
+                
+        return "[Visual search complete]"
+
     except Exception as e:
-        logger.error(f"Critical error in visual search: {e}", exc_info=True)
-        return "Something went wrong during the visual search. Please try again. 😔"
+        logger.error(f"Visual search handler error: {e}", exc_info=True)
+        return "Something went wrong while searching. Please try again."
 
 async def handle_order_inquiry(phone_number: str, customer: Dict, **kwargs) -> str:
     """

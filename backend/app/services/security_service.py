@@ -156,6 +156,16 @@ class AdvancedRateLimiter:
             await self.redis.expire(key, window)
         return current_count <= limit
 
+    async def check_rate_limit(self, key: str, limit: int = 10, window: int = 60) -> bool:
+        """Generic rate limit checker with custom key."""
+        if not self.redis: 
+            return True
+        rate_key = f"rate_limit:{key}"
+        current_count = await self.redis.incr(rate_key)
+        if current_count == 1: 
+            await self.redis.expire(rate_key, window)
+        return current_count <= limit
+
 # Globally accessible instances
 login_tracker = RedisLoginAttemptTracker(cache_service.redis)
 rate_limiter = AdvancedRateLimiter(cache_service.redis)

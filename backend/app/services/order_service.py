@@ -137,29 +137,68 @@ class QuestionDetector:
 # --- Core Message Processing Orchestration ---
 
 async def _handle_security_verification(clean_phone: str, message_text: str, customer: Dict) -> Optional[str]:
-    """Checks if the user is in an order verification state and handles their response."""
+    """
+    Checks if the user is in an order verification state and handles their response.
+    Includes brute-force protection (Max 3 attempts).
+    """
     verification_state_raw = await cache_service.get(CacheKeys.AWAITING_ORDER_VERIFICATION.format(phone=clean_phone))
     if not verification_state_raw:
         return None
+
+    # 1. ESCAPE HATCH: Check if user wants to cancel or switch topics
+    # If the message is text (not digits) and looks like a command/intent
+    clean_text = message_text.lower().strip()
+    escape_words = {"cancel", "stop", "exit", "quit", "no", "nevermind", "show", "buy", "hi", "hello", "menu"}
+    
+    # If user says an escape word OR a sentence without digits (like "i dont know")
+    if clean_text in escape_words or (len(clean_text) > 5 and not re.search(r'\d', clean_text)):
+        await cache_service.delete(CacheKeys.AWAITING_ORDER_VERIFICATION.format(phone=clean_phone))
+        # Returning None lets the message fall through to the main AI/Intent handler
+        return None 
 
     try:
         verification_state = json.loads(verification_state_raw)
         expected_last_4 = verification_state["expected_last_4"]
         order_name = verification_state["order_name"]
+        attempts = verification_state.get("attempts", 0)
 
-        if message_text and message_text.strip() == expected_last_4:
+        # 2. Proceed with digit verification...
+        # Normalize input (remove spaces/dashes)
+        input_digits = re.sub(r'\D', '', message_text)
+
+        if input_digits and input_digits == expected_last_4:
+            # SUCCESS: Verify and proceed
             await cache_service.set(CacheKeys.ORDER_VERIFIED.format(phone=clean_phone, order_name=order_name), "1", ttl=60)
             await cache_service.delete(CacheKeys.AWAITING_ORDER_VERIFICATION.format(phone=clean_phone))
 
             response = await handle_order_detail_inquiry(order_name, customer)
             return response[:4096] if response else None
+        
         else:
-            await cache_service.delete(CacheKeys.AWAITING_ORDER_VERIFICATION.format(phone=clean_phone))
-            return "That's not correct. Please try asking for your order status again."
+            # FAILURE LOGIC
+            attempts += 1
+            
+            if attempts >= 3:
+                # MAX ATTEMPTS REACHED: Lock out
+                await cache_service.delete(CacheKeys.AWAITING_ORDER_VERIFICATION.format(phone=clean_phone))
+                logger.warning(f"Security check failed 3 times for {clean_phone} on order {order_name}")
+                return "⛔ Verification failed. For security reasons, I cannot show this order. Please contact our support team if you need help."
+            
+            # RETRY ALLOWED: Update state and warn user
+            verification_state["attempts"] = attempts
+            await cache_service.set(
+                CacheKeys.AWAITING_ORDER_VERIFICATION.format(phone=clean_phone),
+                json.dumps(verification_state),
+                ttl=300
+            )
+            
+            remaining = 3 - attempts
+            return f"That doesn't match our records. You have {remaining} attempt{'s' if remaining != 1 else ''} remaining. Please try again."
+
     except (json.JSONDecodeError, KeyError):
         logger.warning(f"Invalid verification state for {clean_phone}. Clearing state.")
         await cache_service.delete(CacheKeys.AWAITING_ORDER_VERIFICATION.format(phone=clean_phone))
-        return None # Fall through to normal processing
+        return None
 
 async def _handle_triage_flow(clean_phone: str, message_text: str, message_type: str, business_id: str = "feelori") -> Optional[str]:
     """Handles the entire automated triage state machine."""
@@ -1724,7 +1763,8 @@ async def handle_order_detail_inquiry(message: str, customer: Dict, **kwargs) ->
         # Set Context for the next reply (Listening Mode)
         await cache_service.set(CacheKeys.AWAITING_ORDER_VERIFICATION.format(phone=customer['phone_number']), json.dumps({
             "order_name": order_name_display,
-            "expected_last_4": expected_last_4
+            "expected_last_4": expected_last_4,
+            "attempts": 0  # Initialize counter
         }), ttl=300)
 
         # Return the challenge

@@ -1613,59 +1613,55 @@ def _format_single_order(order: Dict, detailed: bool = False) -> str:
 
 
 async def handle_order_detail_inquiry(message: str, customer: Dict, **kwargs) -> str:
-    """Handles a request for order details, including a new security verification step."""
+    """Handles a request for order details with robust lookup and security."""
     business_id = kwargs.get("business_id", "feelori")
-    order_name_match = re.search(r'#?[a-zA-Z]*\d{4,}', message)
+    
+    # Extract number
+    order_name_match = re.search(r'#?([a-zA-Z]*\d{4,})', message)
     if not order_name_match:
         return await _handle_unclear_request(customer, message)
 
-    order_name = order_name_match.group(0).upper()
-    if not order_name.startswith('#'):
-        order_name = f"#{order_name}"
+    raw_number = order_name_match.group(1).upper() # e.g. "1067"
+    prefixed_number = f"#{raw_number}"             # e.g. "#1067"
+    
+    logger.info(f"Looking up order: {prefixed_number} (and raw: {raw_number})")
 
-    # Use the local DB first to get order phone numbers for verification
-    order_from_db = await db_service.db.orders.find_one({"order_number": order_name})
+    # 1. Flexible DB Lookup (Try both formats)
+    order_from_db = await db_service.db.orders.find_one({
+        "order_number": {"$in": [prefixed_number, raw_number]}
+    })
+
     if not order_from_db:
-        # --- THIS IS THE FIX ---
-        # Use get_formatted_string with order_number as a kwarg
-        return string_service.get_formatted_string('ORDER_NOT_FOUND_SPECIFIC', business_id=business_id, order_number=order_name)
-        # --- END OF FIX ---
+        logger.warning(f"Order {prefixed_number} not found in DB.")
+        return string_service.get_formatted_string('ORDER_NOT_FOUND_SPECIFIC', business_id=business_id, order_number=prefixed_number)
 
-    # --- ✅ NEW SECURITY LOGIC ---
-    # 1. Check if the user has already been verified for this specific order in the last minute.
+    # Use the normalized name from DB for consistency
+    order_name = order_from_db.get("order_number", prefixed_number)
+
+    # --- SECURITY LOGIC ---
     is_verified = await cache_service.get(CacheKeys.ORDER_VERIFIED.format(phone=customer['phone_number'], order_name=order_name))
     
     if not is_verified:
-        # 2. If not verified, get the real phone numbers associated with the order from our DB.
         order_phones = order_from_db.get("phone_numbers", [])
-        if not order_phones:
-            logger.warning(f"Security check failed: No phone numbers found in DB for order {order_name} to verify against.")
-            # Use the corrected string here as well
-            return string_service.get_formatted_string('ORDER_NOT_FOUND_SPECIFIC', business_id=business_id, order_number=order_name)
-
-        # 3. Store the expected last 4 digits and set the user's state to 'awaiting_order_verification'.
+        
         if not order_phones or not isinstance(order_phones[0], str) or len(order_phones[0]) < 4:
             logger.error(f"Invalid phone data for order {order_name}")
-            return "Unable to verify this order. Please contact support."
+            return "Unable to verify this order securely. Please contact support."
+
         expected_last_4 = order_phones[0][-4:]
+        
+        # Set Context
         await cache_service.set(CacheKeys.AWAITING_ORDER_VERIFICATION.format(phone=customer['phone_number']), json.dumps({
             "order_name": order_name,
             "expected_last_4": expected_last_4
-        }), ttl=300) # Give them 5 minutes to respond
+        }), ttl=300)
 
-        # 4. Send the challenge question to the user instead of the order details.
-        await whatsapp_service.send_message(
-            to_phone=customer["phone_number"],
-            message=f"For your security, please reply with the last 4 digits of the phone number used to place order {order_name}."
-        )
-        return "" # Return an empty string to send no other messages right now.
+        # RETURN the challenge string (Do not send internally)
+        return f"For your security, please reply with the last 4 digits of the phone number used to place order *{order_name}*."
 
-    # --- END OF NEW SECURITY LOGIC ---
-
-    # 5. If the user IS verified, fetch the full details from Shopify, clear the flag, and show the details.
+    # 2. Fetch Full Details (Shopify)
     order_to_display = await shopify_service.get_order_by_name(order_name, business_id=business_id)
     if not order_to_display:
-        # And use the corrected string here one last time for safety
         return string_service.get_formatted_string('ORDER_NOT_FOUND_SPECIFIC', business_id=business_id, order_number=order_name)
         
     await cache_service.delete(CacheKeys.ORDER_VERIFIED.format(phone=customer['phone_number'], order_name=order_name))

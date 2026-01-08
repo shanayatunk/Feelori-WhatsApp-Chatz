@@ -725,10 +725,28 @@ Example: `set, ruby, gold plated, traditional`"""
         cached_data = await cache_service.get(cache_key)
         if cached_data:
             try:
-                result = json.loads(cached_data)
-                logger.info(f"Visual Search: CACHE HIT for {image_hash[:8]}. Returning instantly.")
-                return result 
-            except Exception:  # FIX: Added 'Exception' to silence linter
+                cached_result = json.loads(cached_data)
+                
+                # --- FIX: Re-hydrate Dictionaries into Pydantic Objects ---
+                # This ensures the caller receives 'Product' objects, not dicts.
+                products_from_cache = []
+                for p_data in cached_result.get('products', []):
+                    try:
+                        products_from_cache.append(Product(**p_data))
+                    except Exception as e:
+                        logger.warning(f"Skipping invalid cached product: {e}")
+
+                if products_from_cache:
+                    logger.info(f"Visual Search: CACHE HIT for {image_hash[:8]}. Returning {len(products_from_cache)} objects.")
+                    return {
+                        'success': True,
+                        'products': products_from_cache,  # Now sending Objects ✅
+                        'search_query': cached_result.get('search_query'),
+                        'direct_answer': cached_result.get('direct_answer')
+                    }
+            except Exception as e:
+                logger.error(f"Cache corruption for {image_hash[:8]}: {e}")
+                # Fall through to fresh search if cache fails
                 pass 
 
         # --- 3. GEMINI ANALYSIS ---

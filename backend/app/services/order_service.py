@@ -313,6 +313,43 @@ def _can_update_status_to_open(conversation: dict) -> bool:
     return True
 
 
+async def try_authoritative_answer(business_id: str, message: str) -> Optional[str]:
+    """
+    Checks if the message triggers a hard-coded Knowledge Base answer.
+    Returns the answer string if found, else None.
+    """
+    try:
+        # Fetch Config (Cached request state ideally, or direct DB)
+        # Using db_service for direct access
+        config = await db_service.db.business_configs.find_one({"business_id": business_id})
+        if not config or "knowledge_base" not in config:
+            return None
+
+        kb = config.get("knowledge_base", {})
+        message_lower = message.lower().strip()
+
+        # Check all categories (social_media, policies, custom_faqs)
+        for category_name, entries in kb.items():
+            if not isinstance(entries, dict): 
+                continue
+            
+            for key, entry in entries.items():
+                # entry is { "value": "...", "triggers": ["..."], "enabled": true }
+                if not entry.get("enabled", True): 
+                    continue
+                
+                triggers = entry.get("triggers", [])
+                # Logic: If ANY trigger phrase is in the message
+                if triggers and any(t.lower() in message_lower for t in triggers):
+                    logger.info(f"Authoritative Answer Triggered: {key} (Business: {business_id})")
+                    return entry.get("value")
+                    
+    except Exception as e:
+        logger.error(f"Error in authoritative answer check: {e}")
+        return None
+    return None
+
+
 async def process_message(phone_number: str, message_text: str, message_type: str, quoted_wamid: str | None, business_id: str = "feelori", profile_name: str = None) -> str | None:
     """
     Processes an incoming message, handling triage states before
@@ -990,6 +1027,29 @@ async def process_message(phone_number: str, message_text: str, message_type: st
                     logger.info(f"Contextual Order Lookup: '{message_text}' -> detected '{order_number}'")
                     return await route_message("order_detail_inquiry", clean_phone, order_number, customer, quoted_wamid, business_id=business_id)
             # -------------------------------------
+
+        # --- AUTHORITATIVE KNOWLEDGE CHECK ---
+        # Before asking AI, check if we have a hard answer for this.
+        if message_type == "text":
+            exact_answer = await try_authoritative_answer(business_id, message_text)
+            if exact_answer:
+                await whatsapp_service.send_message(clean_phone, exact_answer, business_id=business_id)
+                # Log it as an outbound message (source="system_kb")
+                timestamp = datetime.utcnow()
+                await db_service.db.message_logs.insert_one({
+                    "tenant_id": business_id,
+                    "business_id": business_id,
+                    "phone": clean_phone,
+                    "direction": "outbound",
+                    "source": "system_kb",
+                    "message_type": "text",
+                    "text": exact_answer,
+                    "status": "sending",
+                    "timestamp": timestamp,
+                    "conversation_id": conversation_id
+                })
+                return exact_answer
+        # -------------------------------------
 
         if message_type == "interactive" or message_text.startswith("visual_search_"):
             intent = await analyze_intent(message_text, message_type, customer, quoted_wamid)

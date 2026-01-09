@@ -313,6 +313,43 @@ def _can_update_status_to_open(conversation: dict) -> bool:
     return True
 
 
+async def try_authoritative_answer(business_id: str, message: str) -> Optional[str]:
+    """
+    Checks if the message triggers a hard-coded Knowledge Base answer.
+    Returns the answer string if found, else None.
+    """
+    try:
+        # Fetch Config (Cached request state ideally, or direct DB)
+        # Using db_service for direct access
+        config = await db_service.db.business_configs.find_one({"business_id": business_id})
+        if not config or "knowledge_base" not in config:
+            return None
+
+        kb = config.get("knowledge_base", {})
+        message_lower = message.lower().strip()
+
+        # Check all categories (social_media, policies, custom_faqs)
+        for category_name, entries in kb.items():
+            if not isinstance(entries, dict): 
+                continue
+            
+            for key, entry in entries.items():
+                # entry is { "value": "...", "triggers": ["..."], "enabled": true }
+                if not entry.get("enabled", True): 
+                    continue
+                
+                triggers = entry.get("triggers", [])
+                # Logic: If ANY trigger phrase is in the message
+                if triggers and any(t.lower() in message_lower for t in triggers):
+                    logger.info(f"Authoritative Answer Triggered: {key} (Business: {business_id})")
+                    return entry.get("value")
+                    
+    except Exception as e:
+        logger.error(f"Error in authoritative answer check: {e}")
+        return None
+    return None
+
+
 async def process_message(phone_number: str, message_text: str, message_type: str, quoted_wamid: str | None, business_id: str = "feelori", profile_name: str = None) -> str | None:
     """
     Processes an incoming message, handling triage states before
@@ -990,6 +1027,29 @@ async def process_message(phone_number: str, message_text: str, message_type: st
                     logger.info(f"Contextual Order Lookup: '{message_text}' -> detected '{order_number}'")
                     return await route_message("order_detail_inquiry", clean_phone, order_number, customer, quoted_wamid, business_id=business_id)
             # -------------------------------------
+
+        # --- AUTHORITATIVE KNOWLEDGE CHECK ---
+        # Before asking AI, check if we have a hard answer for this.
+        if message_type == "text":
+            exact_answer = await try_authoritative_answer(business_id, message_text)
+            if exact_answer:
+                await whatsapp_service.send_message(clean_phone, exact_answer, business_id=business_id)
+                # Log it as an outbound message (source="system_kb")
+                timestamp = datetime.utcnow()
+                await db_service.db.message_logs.insert_one({
+                    "tenant_id": business_id,
+                    "business_id": business_id,
+                    "phone": clean_phone,
+                    "direction": "outbound",
+                    "source": "system_kb",
+                    "message_type": "text",
+                    "text": exact_answer,
+                    "status": "sending",
+                    "timestamp": timestamp,
+                    "conversation_id": conversation_id
+                })
+                return exact_answer
+        # -------------------------------------
 
         if message_type == "interactive" or message_text.startswith("visual_search_"):
             intent = await analyze_intent(message_text, message_type, customer, quoted_wamid)
@@ -2095,70 +2155,90 @@ async def handle_visual_search(message: str, customer: Dict, **kwargs) -> Option
         raw_products = result.get('products', [])
         products = raw_products  # Assuming ai_service returns objects now
         
-        direct_answer = result.get('direct_answer')
-        confidence = result.get('confidence', 0.0)  # <--- Get Score
+        # --- LOGIC START ---
+        direct_answer = result.get('direct_answer', '')
+        confidence = result.get('confidence', 0.0)
         
+        # 1. CLEAN UP AI ANSWER (The Muzzle)
+        lazy_phrases = [
+            "cannot determine the price", "check with the seller", 
+            "refer to the product listing", "price of this item from the image",
+            "i don't have access to real-time"
+        ]
+        if any(phrase in direct_answer.lower() for phrase in lazy_phrases):
+            logger.info(f"Suppressing lazy AI answer: '{direct_answer}'")
+            direct_answer = ""
+
+        # 2. DETERMINE FINAL REPLY
+        final_reply = ""
+        caption_lower = caption.lower()
+        asking_price = any(x in caption_lower for x in ['price', 'cost', 'how much', 'rate', 'rs', 'rupees'])
+
         if products:
-            # A. Confidence-Based Header Logic
-            raw_query = result.get('search_query', '')
+            # SCENARIO A: Products Found (Success)
+            top_product = products[0]
             
-            # Truncate query for safety
+            # A1. Construct Header
+            raw_query = result.get('search_query', '')
             safe_query = (raw_query[:30] + '...') if len(raw_query) > 33 else raw_query
             
             if confidence > 0.85:
-                # High confidence: Be specific
                 safe_header = f"✨ Matches: '{safe_query}'"
             else:
-                # Low confidence: Be humble
                 safe_header = f"✨ Similar to: '{safe_query}'"
-            
-            # 🔒 Final defensive check: Ensure header never exceeds 60 chars (future-proofing)
-            safe_header = safe_header[:60]
+            safe_header = safe_header[:60]  # Hard Guardrail
 
-            # B. Send Product Card
+            # A2. Answer Price Question (DEFENSIVE CHECK)
+            if asking_price:
+                # Safely get price/currency to prevent crashes if missing
+                price = getattr(top_product, "price", None)
+                currency = getattr(top_product, "currency", "INR")
+                
+                if price:
+                    final_reply = (
+                        f"The item in the first image matches our *{top_product.title}*.\n"
+                        f"💰 Price: *{currency} {price}*\n"
+                        f"Tap 'View' above to see more details! 🛍️"
+                    )
+                else:
+                    # Fallback if price is hidden/missing
+                    final_reply = (
+                        f"The item in the first image matches our *{top_product.title}*.\n"
+                        f"Please tap 'View' above to check the latest price and availability! 🛍️"
+                    )
+            else:
+                # Use AI's answer if it's NOT lazy, otherwise generic helpful text
+                final_reply = direct_answer if direct_answer else "Here are the closest items I found in our collection:"
+
+            # A3. Send Product Card
             await _send_product_card(
                 products=products, 
                 customer=customer, 
                 header_text=safe_header,
-                body_text="Here are the closest items I found in our collection:", 
+                body_text="Tap 'View Items' to shop 👇", 
                 business_id=business_id
             )
-            
-            # C. Price/Answer Logic
-            final_reply = direct_answer
-            caption_lower = caption.lower()
-            asking_price = any(x in caption_lower for x in ['price', 'cost', 'how much', 'rate', 'rs', 'rupees'])
-            
-            if not final_reply and asking_price and products:
-                top_product = products[0]
-                final_reply = (
-                    f"The item in the first image matches our *{top_product.title}*.\n"
-                    f"💰 Price: *{top_product.currency} {top_product.price}*\n"
-                    f"Tap 'View' above to see more details! 🛍️"
-                )
 
-            if final_reply:
-                await asyncio.sleep(1)
-                await whatsapp_service.send_message(phone_number, final_reply, business_id=business_id)
         else:
-            # --- GUARDRAIL: Handle No Results (High & Low Confidence) ---
+            # SCENARIO B: No Products Found (Fallback)
+            
+            # B1. Determine Message based on Confidence
             if confidence < 0.4:
-                # Scenario 1: AI was confused (Low Confidence)
-                fallback_msg = (
-                    "I couldn't quite identify the jewelry in that image. 🧐\n"
-                    "Could you try a clearer photo, or tell me what you're looking for? (e.g., 'Gold Jhumkas')"
-                )
+                # AI was confused
+                final_reply = "I couldn't quite identify the jewelry in that image. 🧐\nCould you try a clearer photo, or tell me what you're looking for?"
             else:
-                # Scenario 2: AI knew what it was, but Shopify had no matches (High Confidence)
+                # AI knew it, but we don't have it
                 clean_query = result.get('search_query', 'that item').replace('"', '')
-                fallback_msg = (
+                final_reply = (
                     f"I see you're looking for *{clean_query}*, but I couldn't find a close match in our collection right now. 😔\n\n"
                     "Would you like to see our **Bestsellers** instead?"
                 )
-                # Context: Remember to offer bestsellers if they say "yes"
                 await cache_service.set(CacheKeys.LAST_BOT_QUESTION.format(phone=phone_number), "offer_bestsellers", ttl=300)
 
-            await whatsapp_service.send_message(phone_number, fallback_msg, business_id=business_id)
+        # 3. SEND FINAL REPLY (If exists)
+        if final_reply:
+            await asyncio.sleep(1)  # Small delay for UX pacing
+            await whatsapp_service.send_message(phone_number, final_reply, business_id=business_id)
                 
         return "[Visual search complete]"
 

@@ -48,17 +48,19 @@ async def update_knowledge_base(business_id: str, payload: KnowledgeBaseConfig, 
 @router.get("/{business_id}")
 async def get_knowledge_base(business_id: str, user=Depends(verify_jwt_token)):
     """
-    Get the knowledge base for a specific business.
+    Get the knowledge base. 
+    Crucial: specific fields (like locations) must be present even if empty in DB.
     """
     try:
         config = await db_service.db.business_configs.find_one({"business_id": business_id})
-        if not config:
-            raise HTTPException(status_code=404, detail="Business config not found")
         
-        kb = config.get("knowledge_base", {})
-        return {"status": "success", "data": kb}
-    except HTTPException:
-        raise
+        # Start with empty dict if no config
+        raw_kb = config.get("knowledge_base", {}) if config else {}
+        
+        # --- THE FIX: Run through Pydantic to apply defaults (creates empty 'locations' object) ---
+        kb_model = KnowledgeBase(**raw_kb)
+        
+        return {"status": "success", "data": kb_model.model_dump()}
     except Exception as e:
-        logger.error(f"Error fetching knowledge base for {business_id}: {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Failed to fetch knowledge base: {str(e)}")
+        logger.error(f"Error fetching knowledge base: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Internal Server Error")

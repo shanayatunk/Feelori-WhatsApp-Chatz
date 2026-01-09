@@ -2505,26 +2505,29 @@ async def _send_product_card(products: List[Product], customer: Dict, header_tex
             business_id=business_id
         )
     else:
-        # 3. Fail-Safe Path: All items failed validation.
         # SMART FALLBACK: Generate a link based on the products we TRIED to send.
-        logger.warning("❌ All products rejected. Sending text fallback.")
+        logger.warning(f"All {len(products)} products failed validation. Sending smart fallback.")
 
-        fallback_query = ""
+        fallback_url = "https://feelori.com/collections/all"  # Default safety net
+        
         if products:
-            # Try to use the first tag (usually category like 'earrings')
-            if products[0].tags:
-                fallback_query = products[0].tags[0]
-            # Or fall back to the product type/title
+            top_match = products[0]
+            
+            # PRIORITY 1: Direct Product Link (Best Experience) 🥇
+            # If we have a handle, send them straight to the item!
+            if hasattr(top_match, 'handle') and top_match.handle:
+                fallback_url = f"https://feelori.com/products/{top_match.handle}"
+                
+            # PRIORITY 2: Fallback to Title Search (Better than Tag Search) 🥈
+            # If handle is missing, search for the specific title
             else:
-                fallback_query = products[0].title.split()[0] # First word of title
-
-        # Construct URL
-        fallback_url = f"https://feelori.com/search?q={fallback_query}" if fallback_query else "https://feelori.com/collections/all"
+                encoded_title = top_match.title.replace(' ', '+')
+                fallback_url = f"https://feelori.com/search?q={encoded_title}"
 
         fallback_msg = (
             f"{header_text}\n\n"
-            f"I found some beautiful items matching *{fallback_query or 'your search'}*, but I can't display them here right now. 😔\n\n"
-            f"You can view them directly on our website:\n{fallback_url}"
+            f"I found this exact design matching your photo, but I can't display the card here right now. 😔\n\n"
+            f"👇 *Tap to view details & price on our website:*\n{fallback_url}"
         )
 
         await whatsapp_service.send_message(

@@ -24,13 +24,21 @@ class KnowledgeEntry(BaseModel):
     enabled: bool = True
 
 
+class LocationConfig(BaseModel):
+    """Simple configuration for store location details."""
+    store_address: str = Field(default="", description="Physical address of the store")
+    operating_hours: str = Field(default="", description="e.g. Mon-Sat 10am-7pm")
+    google_maps_link: str = Field(default="", description="Link to Google Maps")
+
+
 class KnowledgeBase(BaseModel):
     """Knowledge base for authoritative answers on policies, social media, and custom FAQs."""
     social_media: Dict[str, KnowledgeEntry] = Field(default_factory=dict)
     policies: Dict[str, KnowledgeEntry] = Field(default_factory=dict)
-    
-    # Flexible field for custom FAQs
     custom_faqs: Dict[str, KnowledgeEntry] = Field(default_factory=dict)
+    
+    # Store location configuration
+    locations: LocationConfig = Field(default_factory=LocationConfig)
 
 
 class BusinessConfig(Document):

@@ -1382,25 +1382,27 @@ def _get_whatsapp_product_id(product: Product) -> Optional[str]:
     """
     Extracts the correct ID for WhatsApp Catalog (Meta).
     STRICT MODE: Meta ONLY accepts Variant IDs (Content IDs).
-    Returns None if no valid Variant ID is found.
     """
     if not product:
         return None
 
-    # 1. PRIORITY: Use the first variant ID (matches Meta Content ID)
-    candidate_id = getattr(product, "first_variant_id", None)
-    
-    # 2. CHECK VARIANTS LIST
+    candidate_id = None
+
+    # 1. Try explicit 'first_variant_id' field (if populated by service)
+    if hasattr(product, "first_variant_id") and product.first_variant_id:
+        candidate_id = product.first_variant_id
+
+    # 2. Try fetching ID from the first variant in the list
     if not candidate_id and hasattr(product, "variants") and product.variants:
          v = product.variants[0]
+         # Handle both dict and object access
          candidate_id = v.get("id") if isinstance(v, dict) else getattr(v, "id", None)
 
-    # 3. STRICT CHECK: Do NOT fall back to product.id
     if not candidate_id:
-        logger.warning(f"Skipping product '{getattr(product, 'title', 'N/A')}' - No Variant ID found.")
+        # LOG WARNING: This is likely why your card failed!
         return None
 
-    # 4. CLEANUP: Strip GID
+    # 3. Clean up GID (gid://shopify/ProductVariant/12345 -> 12345)
     id_str = str(candidate_id)
     if 'gid://' in id_str:
         return id_str.rstrip('/').split('/')[-1]
@@ -2138,6 +2140,25 @@ async def handle_visual_search(message: str, customer: Dict, **kwargs) -> Option
             if final_reply:
                 await asyncio.sleep(1)
                 await whatsapp_service.send_message(phone_number, final_reply, business_id=business_id)
+        else:
+            # --- GUARDRAIL: Handle No Results (High & Low Confidence) ---
+            if confidence < 0.4:
+                # Scenario 1: AI was confused (Low Confidence)
+                fallback_msg = (
+                    "I couldn't quite identify the jewelry in that image. 🧐\n"
+                    "Could you try a clearer photo, or tell me what you're looking for? (e.g., 'Gold Jhumkas')"
+                )
+            else:
+                # Scenario 2: AI knew what it was, but Shopify had no matches (High Confidence)
+                clean_query = result.get('search_query', 'that item').replace('"', '')
+                fallback_msg = (
+                    f"I see you're looking for *{clean_query}*, but I couldn't find a close match in our collection right now. 😔\n\n"
+                    "Would you like to see our **Bestsellers** instead?"
+                )
+                # Context: Remember to offer bestsellers if they say "yes"
+                await cache_service.set(CacheKeys.LAST_BOT_QUESTION.format(phone=phone_number), "offer_bestsellers", ttl=300)
+
+            await whatsapp_service.send_message(phone_number, fallback_msg, business_id=business_id)
                 
         return "[Visual search complete]"
 
@@ -2448,22 +2469,30 @@ async def _handle_standard_search(products: List[Product], message: str, custome
 
 async def _send_product_card(products: List[Product], customer: Dict, header_text: str, body_text: str, business_id: str = "feelori"):
     """
-    Sends a rich multi-product message card.
-    Includes SAFE FILTERING to prevent Meta API errors (#131009).
-    Includes SMART FALLBACK to send a context-aware link if catalog fails.
+    Sends a rich multi-product message card with X-RAY LOGGING.
     """
     catalog_id = await whatsapp_service.get_catalog_id(business_id=business_id)
 
-    # 1. Filter: Only include in-stock products with VALID Meta IDs
     valid_items = []
     filtered_products_for_fallback = []
 
+    logger.info(f"--- X-RAY: Validating {len(products)} products for WhatsApp ---")
+
     for p in products:
-        if p.availability == "in_stock":
-            w_id = _get_whatsapp_product_id(p)
-            if w_id:
-                valid_items.append({"product_retailer_id": w_id})
-                filtered_products_for_fallback.append(p)
+        w_id = _get_whatsapp_product_id(p)
+        is_in_stock = (p.availability == "in_stock")
+        
+        # LOGGING EVERY DECISION
+        if is_in_stock and w_id:
+            valid_items.append({"product_retailer_id": w_id})
+            filtered_products_for_fallback.append(p)
+            logger.info(f"✅ ACCEPTED: {p.title} | Meta ID: {w_id}")
+        else:
+            logger.warning(
+                f"⚠️ REJECTED: {p.title}\n"
+                f"   - Availability: {p.availability} (Need 'in_stock')\n"
+                f"   - Meta ID Found: {w_id} (Need valid ID)"
+            )
 
     # 2. Check: Do we have any valid items to send?
     if valid_items:
@@ -2478,7 +2507,7 @@ async def _send_product_card(products: List[Product], customer: Dict, header_tex
     else:
         # 3. Fail-Safe Path: All items failed validation.
         # SMART FALLBACK: Generate a link based on the products we TRIED to send.
-        logger.warning(f"All {len(products)} products failed validation. Sending smart fallback.")
+        logger.warning("❌ All products rejected. Sending text fallback.")
 
         fallback_query = ""
         if products:

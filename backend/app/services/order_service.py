@@ -319,8 +319,7 @@ async def try_authoritative_answer(business_id: str, message: str) -> Optional[s
     Returns the answer string if found, else None.
     """
     try:
-        # Fetch Config (Cached request state ideally, or direct DB)
-        # Using db_service for direct access
+        # Fetch Config
         config = await db_service.db.business_configs.find_one({"business_id": business_id})
         if not config or "knowledge_base" not in config:
             return None
@@ -334,12 +333,14 @@ async def try_authoritative_answer(business_id: str, message: str) -> Optional[s
                 continue
             
             for key, entry in entries.items():
-                # entry is { "value": "...", "triggers": ["..."], "enabled": true }
+                # 🚨 SECURITY FIX: Skip if entry is just a string (e.g. "123 Main St")
+                if not isinstance(entry, dict):
+                    continue
+
                 if not entry.get("enabled", True): 
                     continue
                 
                 triggers = entry.get("triggers", [])
-                # Logic: If ANY trigger phrase is in the message
                 if triggers and any(t.lower() in message_lower for t in triggers):
                     logger.info(f"Authoritative Answer Triggered: {key} (Business: {business_id})")
                     return entry.get("value")
@@ -1005,35 +1006,63 @@ async def process_message(phone_number: str, message_text: str, message_type: st
             return response
         # --- End of Refactored State Handling ---
 
+        # --- Context-Aware Response Handling (LAST_BOT_QUESTION) ---
         last_question_raw = await cache_service.redis.get(CacheKeys.LAST_BOT_QUESTION.format(phone=clean_phone))
         if last_question_raw:
-            last_question = last_question_raw.decode()
-            await cache_service.redis.delete(CacheKeys.LAST_BOT_QUESTION.format(phone=clean_phone))
+            # 1. Decode safely (handle bytes or string)
+            if isinstance(last_question_raw, bytes):
+                last_question = last_question_raw.decode('utf-8')
+            else:
+                last_question = str(last_question_raw)
+            
             clean_msg = message_text.lower().strip()
-            if last_question == "offer_bestsellers" and clean_msg in default_rules.AFFIRMATIVE_RESPONSES:
-                return await handle_bestsellers(customer=customer)
-            if last_question == "offer_unfiltered_products" and clean_msg in default_rules.AFFIRMATIVE_RESPONSES:
-                return await handle_show_unfiltered_products(customer=customer)
-            if clean_msg in default_rules.NEGATIVE_RESPONSES:
-                return "No problem! Let me know if there's anything else I can help you find. ✨"
-
-            # --- NEW: Contextual Order Handler ---
-            if last_question == "awaiting_order_number":
+            cache_key = CacheKeys.LAST_BOT_QUESTION.format(phone=clean_phone)
+            
+            # 2. Handle "offer_bestsellers"
+            if last_question == "offer_bestsellers":
+                if clean_msg in default_rules.AFFIRMATIVE_RESPONSES:
+                    response = await handle_bestsellers(customer=customer, business_id=business_id)
+                    await cache_service.redis.delete(cache_key)
+                    return response
+                elif clean_msg in default_rules.NEGATIVE_RESPONSES:
+                    await cache_service.redis.delete(cache_key)
+                    return "No problem! Let me know if there's anything else I can help you find. ✨"
+            
+            # 3. Handle "offer_unfiltered_products"
+            elif last_question == "offer_unfiltered_products":
+                if clean_msg in default_rules.AFFIRMATIVE_RESPONSES:
+                    response = await handle_show_unfiltered_products(customer=customer, business_id=business_id)
+                    await cache_service.redis.delete(cache_key)
+                    return response
+                elif clean_msg in default_rules.NEGATIVE_RESPONSES:
+                    await cache_service.redis.delete(cache_key)
+                    return "No problem! Let me know if there's anything else I can help you find. ✨"
+            
+            # 4. Handle "awaiting_order_number"
+            elif last_question == "awaiting_order_number":
                 # User is replying to "Please give me your order ID"
                 # We extract the first sequence of 4 or more digits
                 number_match = re.search(r'\d{4,}', message_text)
                 if number_match:
                     order_number = number_match.group(0)
                     logger.info(f"Contextual Order Lookup: '{message_text}' -> detected '{order_number}'")
+                    await cache_service.redis.delete(cache_key)
                     return await route_message("order_detail_inquiry", clean_phone, order_number, customer, quoted_wamid, business_id=business_id)
-            # -------------------------------------
+                # If no number match, don't delete cache yet (user might retry)
+            
+            # 5. If no match found (user changed topic), leave cache for now
+            # It will be overwritten by new context or expire naturally
+        # ---------------------------------------------------------
 
         # --- AUTHORITATIVE KNOWLEDGE CHECK ---
         # Before asking AI, check if we have a hard answer for this.
         if message_type == "text":
             exact_answer = await try_authoritative_answer(business_id, message_text)
             if exact_answer:
+                logger.info(f"Sending authoritative answer to {clean_phone}. Halting AI flow.")
+                
                 await whatsapp_service.send_message(clean_phone, exact_answer, business_id=business_id)
+                
                 # Log it as an outbound message (source="system_kb")
                 timestamp = datetime.utcnow()
                 await db_service.db.message_logs.insert_one({
@@ -1048,6 +1077,8 @@ async def process_message(phone_number: str, message_text: str, message_type: st
                     "timestamp": timestamp,
                     "conversation_id": conversation_id
                 })
+                
+                # 🚨 CRITICAL: Return immediately to prevent double replies
                 return exact_answer
         # -------------------------------------
 
@@ -1151,6 +1182,22 @@ async def process_message(phone_number: str, message_text: str, message_type: st
                         )
                 
                 return response[:4096] if response else None
+        
+        # --- SHORTCUT HANDLER: Explicit Buying Intent ---
+        if message_type == "text":
+            normalized_msg = message_text.lower().strip()
+            buying_intent_keywords = ["new order", "buy now", "place order", "i will order"]
+            
+            if any(keyword in normalized_msg for keyword in buying_intent_keywords):
+                buying_intent_response = (
+                    "Great! 🎉 I can help you with that. Are you looking for:\n\n"
+                    "1️⃣ Necklaces\n"
+                    "2️⃣ Earrings\n"
+                    "3️⃣ Bangles\n"
+                    "4️⃣ Something else?"
+                )
+                return buying_intent_response
+        # -------------------------------------------------
         
         logger.debug(f"Classifying intent with AI for: '{message_text}'")
         
@@ -2043,11 +2090,43 @@ async def handle_latest_arrivals(customer: Dict, **kwargs) -> Optional[str]:
 async def handle_bestsellers(customer: Dict, **kwargs) -> Optional[str]:
     """Shows the top-selling products."""
     business_id = kwargs.get("business_id", "feelori")
-    products, _ = await shopify_service.get_products(query="", limit=5, sort_key="BEST_SELLING", business_id=business_id)
-    if not products: 
+    
+    # 1. Log the business_id being used
+    logger.info(f"Fetching bestsellers for business_id: {business_id}")
+    
+    try:
+        # 2. Fetch products and log the result
+        products, total_count = await shopify_service.get_products(
+            query="", 
+            limit=5, 
+            sort_key="BEST_SELLING", 
+            business_id=business_id
+        )
+        
+        # 3. Log the raw result (count of products)
+        logger.info(f"Bestsellers fetch result for {business_id}: {len(products) if products else 0} products returned (total_count: {total_count})")
+        
+        if not products:
+            # 4. If products is empty, log a WARNING with the specific reason
+            logger.warning(
+                f"Bestsellers fetch returned empty list for business_id={business_id}. "
+                f"Total count from API: {total_count}. "
+                f"This could indicate: (1) No products in store, (2) API error, (3) Sort key 'BEST_SELLING' not supported."
+            )
+            return "I couldn't fetch our bestsellers right now. Please try again shortly."
+        
+        await _send_product_card(
+            products=products, 
+            customer=customer, 
+            header_text="Check out our bestsellers! 🌟", 
+            body_text="These are the items our customers love most.", 
+            business_id=business_id
+        )
+        return "[Sent bestseller recommendations]"
+        
+    except Exception as e:
+        logger.error(f"Error fetching bestsellers for business_id={business_id}: {e}", exc_info=True)
         return "I couldn't fetch our bestsellers right now. Please try again shortly."
-    await _send_product_card(products=products, customer=customer, header_text="Check out our bestsellers! 🌟", body_text="These are the items our customers love most.", business_id=business_id)
-    return "[Sent bestseller recommendations]"
 
 async def handle_more_results(message: str, customer: Dict, **kwargs) -> Optional[str]:
     """Shows more results based on the last search or viewed product."""

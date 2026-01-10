@@ -2090,11 +2090,43 @@ async def handle_latest_arrivals(customer: Dict, **kwargs) -> Optional[str]:
 async def handle_bestsellers(customer: Dict, **kwargs) -> Optional[str]:
     """Shows the top-selling products."""
     business_id = kwargs.get("business_id", "feelori")
-    products, _ = await shopify_service.get_products(query="", limit=5, sort_key="BEST_SELLING", business_id=business_id)
-    if not products: 
+    
+    # 1. Log the business_id being used
+    logger.info(f"Fetching bestsellers for business_id: {business_id}")
+    
+    try:
+        # 2. Fetch products and log the result
+        products, total_count = await shopify_service.get_products(
+            query="", 
+            limit=5, 
+            sort_key="BEST_SELLING", 
+            business_id=business_id
+        )
+        
+        # 3. Log the raw result (count of products)
+        logger.info(f"Bestsellers fetch result for {business_id}: {len(products) if products else 0} products returned (total_count: {total_count})")
+        
+        if not products:
+            # 4. If products is empty, log a WARNING with the specific reason
+            logger.warning(
+                f"Bestsellers fetch returned empty list for business_id={business_id}. "
+                f"Total count from API: {total_count}. "
+                f"This could indicate: (1) No products in store, (2) API error, (3) Sort key 'BEST_SELLING' not supported."
+            )
+            return "I couldn't fetch our bestsellers right now. Please try again shortly."
+        
+        await _send_product_card(
+            products=products, 
+            customer=customer, 
+            header_text="Check out our bestsellers! 🌟", 
+            body_text="These are the items our customers love most.", 
+            business_id=business_id
+        )
+        return "[Sent bestseller recommendations]"
+        
+    except Exception as e:
+        logger.error(f"Error fetching bestsellers for business_id={business_id}: {e}", exc_info=True)
         return "I couldn't fetch our bestsellers right now. Please try again shortly."
-    await _send_product_card(products=products, customer=customer, header_text="Check out our bestsellers! 🌟", body_text="These are the items our customers love most.", business_id=business_id)
-    return "[Sent bestseller recommendations]"
 
 async def handle_more_results(message: str, customer: Dict, **kwargs) -> Optional[str]:
     """Shows more results based on the last search or viewed product."""

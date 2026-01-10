@@ -822,6 +822,16 @@ async def process_message(phone_number: str, message_text: str, message_type: st
             if current_step == "identify_category":
                 normalized = message_text.lower().strip()
 
+                # --- Map Numeric Inputs to Ranges ---
+                price_map = {
+                    "1": "3000-5000",
+                    "2": "5000-10000",
+                    "3": "above 10000"
+                }
+                if normalized in price_map:
+                    normalized = price_map[normalized]
+                # ------------------------------------
+
                 # Detect price range intent
                 price_range = None
                 
@@ -834,6 +844,15 @@ async def process_message(phone_number: str, message_text: str, message_type: st
                 # 2k-5k / between / 2000-5000 → 2000_5000
                 elif any(keyword in normalized for keyword in ["2k-5k", "2k - 5k", "2k to 5k", "2000-5000", "2000 - 5000", "between", "2-5k", "2-5 k"]):
                     price_range = "2000_5000"
+                # 3000-5000 / 3k-5k → 3000_5000
+                elif any(keyword in normalized for keyword in ["3000-5000", "3000 - 5000", "3k-5k", "3k - 5k", "3k to 5k", "3-5k", "3-5 k"]):
+                    price_range = "3000_5000"
+                # 5000-10000 / 5k-10k → 5000_10000
+                elif any(keyword in normalized for keyword in ["5000-10000", "5000 - 10000", "5k-10k", "5k - 10k", "5k to 10k", "5-10k", "5-10 k"]):
+                    price_range = "5000_10000"
+                # above 10000 / above 10k → above_10000
+                elif any(keyword in normalized for keyword in ["above 10000", "above 10k", "above 10 k", "over 10000", "over 10k", "> 10k", ">10k"]):
+                    price_range = "above_10000"
 
                 if price_range:
                     from app.models.conversation import Conversation
@@ -885,8 +904,11 @@ async def process_message(phone_number: str, message_text: str, message_type: st
                 category = slots.get("category", "these")
                 return (
                     f"Great choice! ✨ We have beautiful *{category}* available.\n\n"
-                    "What is your preferred price range?\n"
-                    "• Under 2k\n• 2k–5k\n• Above 5k"
+                    "What is your preferred price range?\n\n"
+                    "1️⃣ ₹3k – ₹5k\n"
+                    "2️⃣ ₹5k – ₹10k\n"
+                    "3️⃣ Above ₹10k\n\n"
+                    "Reply with *1, 2, or 3* — or type a specific range like *6000 above*."
                 )
 
             if step == "qualified":
@@ -1152,17 +1174,24 @@ async def process_message(phone_number: str, message_text: str, message_type: st
 
                     # --- 3. Send Admin Alert (WhatsApp) ---
                     if config.admin_phone:
-                        alert_msg = (
-                            f"🔔 *New Sales Lead ({business_id})*\n"
-                            f"👤 Customer: +{clean_phone}\n"
-                            f"⏰ Time: {now_ist.strftime('%I:%M %p')}\n"
-                            f"📂 Status: {'✅ User told to call' if is_open else '💤 User told we are closed'}\n"
-                            f"Ticket created in Dashboard."
-                        )
-                        # Send non-blocking alert
-                        asyncio.create_task(
-                            whatsapp_service.send_message(config.admin_phone, alert_msg, business_id=business_id)
-                        )
+                        # Dedup Check: Don't spam admin if already alerted in last 1 hour
+                        alert_key = f"sales_alert_sent:{clean_phone}"
+                        already_alerted = await cache_service.redis.get(alert_key)
+                        
+                        if not already_alerted:
+                            alert_msg = (
+                                f"🔔 *New Sales Lead ({business_id})*\n"
+                                f"👤 Customer: +{clean_phone}\n"
+                                f"⏰ Time: {now_ist.strftime('%I:%M %p')}\n"
+                                f"📂 Status: {'✅ User told to call' if is_open else '💤 User told we are closed'}\n"
+                                f"Ticket created in Dashboard."
+                            )
+                            # Send non-blocking alert
+                            asyncio.create_task(
+                                whatsapp_service.send_message(config.admin_phone, alert_msg, business_id=business_id)
+                            )
+                            # Mark as sent for 1 hour
+                            await cache_service.redis.set(alert_key, "1", ex=3600)
 
                     # --- 4. Reply to User ---
                     if is_open:

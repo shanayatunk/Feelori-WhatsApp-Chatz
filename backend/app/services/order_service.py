@@ -1231,10 +1231,12 @@ async def process_message(phone_number: str, message_text: str, message_type: st
                     else:
                         await whatsapp_service.send_message(
                             clean_phone,
-                            f"Thanks for reaching out! 🌙\n\n"
-                            f"Our sales team is currently offline (Open 11 AM – 10 PM IST).\n\n"
-                            f"✅ I have created a priority request for you.\n"
-                            f"My team will contact you here as soon as we open tomorrow morning!",
+                            (
+                                "Thanks for reaching out! 🌙\n\n"
+                                "Our sales team is currently offline (Open 11 AM – 10 PM IST).\n\n"
+                                "✅ I have created a priority request for you.\n"
+                                "My team will contact you here as soon as we open tomorrow morning!"
+                            ),
                             business_id=business_id
                         )
                         return None
@@ -1846,7 +1848,27 @@ async def handle_product_search(message: List[str] | str, customer: Dict, **kwar
             return await _handle_unclear_request(customer, original_message)
         
         # 3. Build query parts from the ORIGINAL message to keep price filters.
-        text_query, price_filter = query_builder.build_query_parts(original_message)
+        # --- WORKFLOW GUARD: Do not parse price if marketing workflow owns it ---
+        clean_phone = customer.get("phone_number", "")
+        conversation = None
+        try:
+            conversation = await db_service.db.conversations.find_one(
+                {"external_user_id": clean_phone, "tenant_id": business_id}
+            )
+        except Exception as e:
+            logger.debug(f"Could not fetch conversation for {clean_phone}: {e}")
+        
+        if conversation and conversation.get("flow_context", {}).get("intent") == "marketing_interest":
+            current_step = conversation["flow_context"].get("step")
+            if current_step in {"identify_category", "qualified"}:
+                logger.info("Skipping price parsing: handled by marketing workflow.")
+                text_query = " ".join(message) if isinstance(message, list) else message
+                price_filter = None
+                # Continue execution using workflow-driven logic
+            else:
+                text_query, price_filter = query_builder.build_query_parts(original_message)
+        else:
+            text_query, price_filter = query_builder.build_query_parts(original_message)
         
         # --- CONTEXT INJECTION (Fix for Price-Only Searches) ---
         # Guard: Only check history if we have a price BUT no text query

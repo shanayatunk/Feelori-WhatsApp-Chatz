@@ -13,7 +13,7 @@ from pymongo import ReturnDocument
 
 from rapidfuzz import process, fuzz
 
-from app.config.settings import settings
+from app.config.settings import settings, get_business_config
 from app.config import rules as default_rules  # Keep as fallback for constants not yet in BusinessConfig
 from app.models.domain import Product
 from app.services.security_service import EnhancedSecurityService
@@ -1072,6 +1072,47 @@ async def process_message(phone_number: str, message_text: str, message_type: st
                 elif clean_msg in default_rules.NEGATIVE_RESPONSES:
                     await cache_service.redis.delete(cache_key)
                     return "No problem! Let me know if there's anything else I can help you find. ✨"
+            
+            # --- HANDLE ESCALATION REASON (Sales vs Support) ---
+            if last_question == "escalation_reason":
+                # Clear the state immediately
+                await cache_service.redis.delete(cache_key)
+                
+                normalized_msg = message_text.lower().strip()
+                
+                # Option 1: Existing Order -> Proceed to Order Lookup
+                if normalized_msg == "1" or "order" in normalized_msg:
+                    return await handle_human_escalation(
+                        clean_phone, 
+                        message_text, 
+                        business_id, 
+                        profile_name=profile_name, 
+                        skip_menu=True  # <--- Bypass menu to run lookup
+                    )
+                    
+                # Option 2: New Inquiry -> General Support / Contact Info
+                elif normalized_msg == "2" or "new" in normalized_msg or "inquiry" in normalized_msg:
+                    # Fetch config to ensure we send real numbers, not {{Variables}}
+                    config = get_business_config(business_id)
+                    
+                    return await whatsapp_service.send_message(
+                        clean_phone,
+                        f"Understood. 🧑‍💻\n\n"
+                        f"For new inquiries, you can reach our team directly at:\n"
+                        f"📞 {config.support_phone}\n"
+                        f"📧 {config.support_email}\n\n"
+                        "We usually reply within a few hours!",
+                        business_id=business_id
+                    )
+                
+                # Invalid Input -> Default to Option 2 (Safer than looping)
+                else:
+                    config = get_business_config(business_id)
+                    return await whatsapp_service.send_message(
+                        clean_phone,
+                        f"Please reach out to us directly:\n📞 {config.support_phone}",
+                        business_id=business_id
+                    )
             
             # 3. Handle "offer_unfiltered_products"
             elif last_question == "offer_unfiltered_products":

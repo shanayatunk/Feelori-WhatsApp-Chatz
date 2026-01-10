@@ -564,7 +564,17 @@ async def process_message(phone_number: str, message_text: str, message_type: st
             return "You have been resubscribed! 🎉"
         # ----------------------------------------
 
+        # ✅ MOVED HERE: Define customer before using it
         customer = await get_or_create_customer(clean_phone, profile_name=profile_name)
+
+        # --- AUTHORITATIVE KNOWLEDGE CHECK ---
+        # Facts (KB) → Explicit shortcuts → Workflow memory → Search → AI (LAST)
+        if message_type == "text":
+            exact_answer = await try_authoritative_answer(business_id, message_text)
+            if exact_answer:
+                await whatsapp_service.send_message(clean_phone, exact_answer, business_id=business_id)
+                return exact_answer
+        # -------------------------------------
 
         # --- PHASE 4.1: Initialize workflow on first broadcast reply ---
         # Check if this is a broadcast reply that needs workflow initialization
@@ -1054,33 +1064,6 @@ async def process_message(phone_number: str, message_text: str, message_type: st
             # It will be overwritten by new context or expire naturally
         # ---------------------------------------------------------
 
-        # --- AUTHORITATIVE KNOWLEDGE CHECK ---
-        # Before asking AI, check if we have a hard answer for this.
-        if message_type == "text":
-            exact_answer = await try_authoritative_answer(business_id, message_text)
-            if exact_answer:
-                logger.info(f"Sending authoritative answer to {clean_phone}. Halting AI flow.")
-                
-                await whatsapp_service.send_message(clean_phone, exact_answer, business_id=business_id)
-                
-                # Log it as an outbound message (source="system_kb")
-                timestamp = datetime.utcnow()
-                await db_service.db.message_logs.insert_one({
-                    "tenant_id": business_id,
-                    "business_id": business_id,
-                    "phone": clean_phone,
-                    "direction": "outbound",
-                    "source": "system_kb",
-                    "message_type": "text",
-                    "text": exact_answer,
-                    "status": "sending",
-                    "timestamp": timestamp,
-                    "conversation_id": conversation_id
-                })
-                
-                # 🚨 CRITICAL: Return immediately to prevent double replies
-                return exact_answer
-        # -------------------------------------
 
         if message_type == "interactive" or message_text.startswith("visual_search_"):
             intent = await analyze_intent(message_text, message_type, customer, quoted_wamid)
@@ -1198,6 +1181,25 @@ async def process_message(phone_number: str, message_text: str, message_type: st
                 )
                 return buying_intent_response
         # -------------------------------------------------
+        
+        # --- GIFTING INTENT SHORTCUT ---
+        if message_type == "text":
+            gift_keywords = {"wife", "husband", "gift", "anniversary", "birthday", "suggest", "recommend"}
+            if any(k in message_text.lower() for k in gift_keywords):
+                await cache_service.set(
+                    CacheKeys.LAST_BOT_QUESTION.format(phone=clean_phone),
+                    "offer_bestsellers",
+                    ttl=900
+                )
+                return await whatsapp_service.send_message(
+                    clean_phone,
+                    "That's lovely! 💖 I'd be happy to help you find the perfect gift.\n\n"
+                    "Would you like to explore:\n"
+                    "✨ Necklaces\n✨ Earrings\n✨ Bangles\n\n"
+                    "Or see our *Bestsellers*?",
+                    business_id=business_id
+                )
+        # ---------------------------------
         
         logger.debug(f"Classifying intent with AI for: '{message_text}'")
         

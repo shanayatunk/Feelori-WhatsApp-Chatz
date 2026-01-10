@@ -1146,9 +1146,9 @@ async def process_message(phone_number: str, message_text: str, message_type: st
             # 2. Handle "offer_bestsellers"
             if last_question == "offer_bestsellers":
                 if clean_msg in default_rules.AFFIRMATIVE_RESPONSES:
-                    response = await handle_bestsellers(customer=customer, business_id=business_id)
+                    await handle_bestsellers(customer=customer, business_id=business_id)
                     await cache_service.redis.delete(cache_key)
-                    return response
+                    return None
                 elif clean_msg in default_rules.NEGATIVE_RESPONSES:
                     await cache_service.redis.delete(cache_key)
                     return "No problem! Let me know if there's anything else I can help you find. ✨"
@@ -1199,7 +1199,7 @@ async def process_message(phone_number: str, message_text: str, message_type: st
                     # --- 3. Send Admin Alert (WhatsApp) ---
                     if config.admin_phone:
                         # Dedup Check: Don't spam admin if already alerted in last 1 hour
-                        alert_key = f"sales_alert_sent:{clean_phone}"
+                        alert_key = f"sales_alert_sent:{business_id}:{clean_phone}"
                         already_alerted = await cache_service.redis.get(alert_key)
                         
                         if not already_alerted:

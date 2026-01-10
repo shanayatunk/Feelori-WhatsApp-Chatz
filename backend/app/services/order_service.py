@@ -161,7 +161,13 @@ class QueryBuilder:
         message_for_text_search = message
         if price_words:
             for word in price_words:
-                message_for_text_search = message_for_text_search.replace(word, "")
+                # Use \b to ensure we match whole words and ignore case
+                message_for_text_search = re.sub(
+                    r'\b' + re.escape(word) + r'\b',
+                    '',
+                    message_for_text_search,
+                    flags=re.IGNORECASE
+                )
         keywords = self._extract_keywords(message_for_text_search)
         text_query = self._build_prioritized_query(keywords)
         return text_query, price_filter
@@ -1844,7 +1850,8 @@ async def handle_product_search(message: List[str] | str, customer: Dict, **kwar
         
         # --- CONTEXT INJECTION (Fix for Price-Only Searches) ---
         # Guard: Only check history if we have a price BUT no text query
-        if not text_query and price_filter:
+        # AND message is a list/tuple (from AI Intent Classifier, not Visual Search captions)
+        if not text_query and price_filter and isinstance(message, (list, tuple)):
             # User sent "6000 above" but no product name. Check history.
             last_search_raw = await cache_service.redis.get(CacheKeys.LAST_SEARCH.format(phone=customer['phone_number']))
             

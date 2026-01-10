@@ -71,44 +71,43 @@ class StringService:
 
     def get_formatted_string(self, key: str, business_id: str, **kwargs) -> str:
         """
-        Gets a string template and formats it with business configuration and optional variables.
-        
-        Args:
-            key: The string key to retrieve from the cache
-            business_id: The business identifier (e.g., 'feelori', 'goldencollections')
-            **kwargs: Optional override variables for formatting (e.g., order_number, customer_name)
-            
-        Returns:
-            Formatted string with business config variables and kwargs substituted.
-            Falls back to raw string if formatting fails.
+        Gets a string template and replaces {{Variables}} with business config values.
         """
-        # 1. Fetch the raw string template
+        # 1. Fetch the raw string template (e.g., "Call us at {{Support_Phone}}")
         raw_string = self.get_string(key)
+        if not raw_string:
+            return ""
         
         # 2. Fetch the business configuration
-        business_config = get_business_config(business_id)
+        config = get_business_config(business_id)
         
-        # 3. Create context dictionary with business config fields
-        context = {
-            "business_name": business_config.business_name,
-            "support_email": business_config.support_email,
-            "support_phone": business_config.support_phone,
-            "website_url": business_config.website_url,
-            "business_address": business_config.business_address
+        # 3. Define the variable map (Ingredients)
+        # We use .get() or getattr() to be safe if a field is missing
+        replacements = {
+            "{{Store_Name}}": config.business_name,
+            "{{Store_Address}}": config.business_address,
+            "{{Support_Phone}}": config.support_phone,
+            "{{Wholesale_Phone}}": getattr(config, "wholesale_phone", config.support_phone),
+            "{{Support_Email}}": config.support_email,
+            "{{Store_Hours}}": getattr(config, "store_hours", "11 AM - 8 PM"),
+            "{{Website_URL}}": config.website_url,
+            "{{Shipping_Policy_URL}}": getattr(config, "shipping_policy_url", config.website_url),
+            "{{Google_Review_Link}}": getattr(config, "google_review_url", config.website_url),
+            "{{Social_Media_Links}}": getattr(config, "social_media_links", "")
         }
+
+        # 4. Also include any dynamic kwargs passed in code (e.g., order_number)
+        # Convert kwargs keys to {{Key}} format if they aren't already
+        for k, v in kwargs.items():
+            replacements[f"{{{{{k}}}}}"] = str(v)
+
+        # 5. Perform the replacement
+        formatted_text = raw_string
+        for placeholder, value in replacements.items():
+            if value is not None:
+                formatted_text = formatted_text.replace(placeholder, str(value))
         
-        # 4. Update context with any kwargs (allows one-off overrides)
-        context.update(kwargs)
-        
-        # 5. Safe formatting with try/except
-        try:
-            return raw_string.format(**context)
-        except KeyError as e:
-            logger.warning(f"[TEMPLATE] Missing placeholder {e} in string {key} | business={business_id}")
-            return raw_string  # Fallback: Return raw string, do not crash
-        except Exception as e:
-            logger.error(f"Formatting error for {key}: {e}")
-            return raw_string
+        return formatted_text
 
 # Globally accessible instance
 string_service = StringService()

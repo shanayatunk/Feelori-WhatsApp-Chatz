@@ -208,7 +208,7 @@ BUSINESS_REGISTRY: Dict[str, BusinessConfig] = {
     "feelori": BusinessConfig(
         business_name="FeelOri",
         support_email="support@feelori.com",
-        support_phone="+91 9967680579",
+        support_phone="+91 8374864499",
         wholesale_phone="+91 7337294499",
         store_hours="Mon–Sat: 11:00 AM – 8:00 PM IST",
         website_url="https://feelori.com",

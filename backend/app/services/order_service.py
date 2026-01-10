@@ -1006,28 +1006,53 @@ async def process_message(phone_number: str, message_text: str, message_type: st
             return response
         # --- End of Refactored State Handling ---
 
+        # --- Context-Aware Response Handling (LAST_BOT_QUESTION) ---
         last_question_raw = await cache_service.redis.get(CacheKeys.LAST_BOT_QUESTION.format(phone=clean_phone))
         if last_question_raw:
-            last_question = last_question_raw.decode()
-            await cache_service.redis.delete(CacheKeys.LAST_BOT_QUESTION.format(phone=clean_phone))
+            # 1. Decode safely (handle bytes or string)
+            if isinstance(last_question_raw, bytes):
+                last_question = last_question_raw.decode('utf-8')
+            else:
+                last_question = str(last_question_raw)
+            
             clean_msg = message_text.lower().strip()
-            if last_question == "offer_bestsellers" and clean_msg in default_rules.AFFIRMATIVE_RESPONSES:
-                return await handle_bestsellers(customer=customer)
-            if last_question == "offer_unfiltered_products" and clean_msg in default_rules.AFFIRMATIVE_RESPONSES:
-                return await handle_show_unfiltered_products(customer=customer)
-            if clean_msg in default_rules.NEGATIVE_RESPONSES:
-                return "No problem! Let me know if there's anything else I can help you find. ✨"
-
-            # --- NEW: Contextual Order Handler ---
-            if last_question == "awaiting_order_number":
+            cache_key = CacheKeys.LAST_BOT_QUESTION.format(phone=clean_phone)
+            
+            # 2. Handle "offer_bestsellers"
+            if last_question == "offer_bestsellers":
+                if clean_msg in default_rules.AFFIRMATIVE_RESPONSES:
+                    response = await handle_bestsellers(customer=customer, business_id=business_id)
+                    await cache_service.redis.delete(cache_key)
+                    return response
+                elif clean_msg in default_rules.NEGATIVE_RESPONSES:
+                    await cache_service.redis.delete(cache_key)
+                    return "No problem! Let me know if there's anything else I can help you find. ✨"
+            
+            # 3. Handle "offer_unfiltered_products"
+            elif last_question == "offer_unfiltered_products":
+                if clean_msg in default_rules.AFFIRMATIVE_RESPONSES:
+                    response = await handle_show_unfiltered_products(customer=customer, business_id=business_id)
+                    await cache_service.redis.delete(cache_key)
+                    return response
+                elif clean_msg in default_rules.NEGATIVE_RESPONSES:
+                    await cache_service.redis.delete(cache_key)
+                    return "No problem! Let me know if there's anything else I can help you find. ✨"
+            
+            # 4. Handle "awaiting_order_number"
+            elif last_question == "awaiting_order_number":
                 # User is replying to "Please give me your order ID"
                 # We extract the first sequence of 4 or more digits
                 number_match = re.search(r'\d{4,}', message_text)
                 if number_match:
                     order_number = number_match.group(0)
                     logger.info(f"Contextual Order Lookup: '{message_text}' -> detected '{order_number}'")
+                    await cache_service.redis.delete(cache_key)
                     return await route_message("order_detail_inquiry", clean_phone, order_number, customer, quoted_wamid, business_id=business_id)
-            # -------------------------------------
+                # If no number match, don't delete cache yet (user might retry)
+            
+            # 5. If no match found (user changed topic), leave cache for now
+            # It will be overwritten by new context or expire naturally
+        # ---------------------------------------------------------
 
         # --- AUTHORITATIVE KNOWLEDGE CHECK ---
         # Before asking AI, check if we have a hard answer for this.
@@ -1157,6 +1182,22 @@ async def process_message(phone_number: str, message_text: str, message_type: st
                         )
                 
                 return response[:4096] if response else None
+        
+        # --- SHORTCUT HANDLER: Explicit Buying Intent ---
+        if message_type == "text":
+            normalized_msg = message_text.lower().strip()
+            buying_intent_keywords = ["new order", "buy now", "place order", "i will order"]
+            
+            if any(keyword in normalized_msg for keyword in buying_intent_keywords):
+                buying_intent_response = (
+                    "Great! 🎉 I can help you with that. Are you looking for:\n\n"
+                    "1️⃣ Necklaces\n"
+                    "2️⃣ Earrings\n"
+                    "3️⃣ Bangles\n"
+                    "4️⃣ Something else?"
+                )
+                return buying_intent_response
+        # -------------------------------------------------
         
         logger.debug(f"Classifying intent with AI for: '{message_text}'")
         

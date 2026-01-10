@@ -59,6 +59,16 @@ class SearchConfig:
     MAX_SEARCH_RESULTS: int = 5
     QA_RESULT_LIMIT: int = 1
 
+
+def normalize_price_text(text: str) -> str:
+    """Normalizes '5k', '10k' to '5000', '10000' in any string."""
+    return re.sub(
+        r'\b(\d+)\s*k\b',
+        lambda m: str(int(m.group(1)) * 1000),
+        text.lower()
+    )
+
+
 class QueryBuilder:
     """Builds search queries from natural language messages."""
     def __init__(self, config: SearchConfig, customer: Optional[Dict] = None):
@@ -820,13 +830,16 @@ async def process_message(phone_number: str, message_text: str, message_type: st
 
             # Step: identify_category → qualified
             if current_step == "identify_category":
-                normalized = message_text.lower().strip()
+                normalized = normalize_price_text(message_text.lower().strip())
 
-                # --- Map Numeric Inputs to Ranges ---
+                # --- Map Numeric Inputs & Button IDs to Ranges ---
                 price_map = {
                     "1": "3000-5000",
                     "2": "5000-10000",
-                    "3": "above 10000"
+                    "3": "above 10000",
+                    "price_3000_5000": "3000-5000",
+                    "price_5000_10000": "5000-10000",
+                    "price_above_10000": "above 10000"
                 }
                 if normalized in price_map:
                     normalized = price_map[normalized]
@@ -902,14 +915,19 @@ async def process_message(phone_number: str, message_text: str, message_type: st
 
             if step == "identify_category":
                 category = slots.get("category", "these")
-                return (
-                    f"Great choice! ✨ We have beautiful *{category}* available.\n\n"
-                    "What is your preferred price range?\n\n"
-                    "1️⃣ ₹3k – ₹5k\n"
-                    "2️⃣ ₹5k – ₹10k\n"
-                    "3️⃣ Above ₹10k\n\n"
-                    "Reply with *1, 2, or 3* — or type a specific range like *6000 above*."
+                options = {
+                    "price_3000_5000": "₹3k – ₹5k",
+                    "price_5000_10000": "₹5k – ₹10k",
+                    "price_above_10000": "Above ₹10k"
+                }
+                
+                await whatsapp_service.send_quick_replies(
+                    clean_phone,
+                    f"Great choice! ✨ We have beautiful *{category}* available.\n\nPlease choose your preferred price range:",
+                    options,
+                    business_id=business_id
                 )
+                return None
 
             if step == "qualified":
                 # A) Idempotency Guard
@@ -1842,6 +1860,15 @@ async def handle_product_search(message: List[str] | str, customer: Dict, **kwar
                         # Update the display string so logs make sense
                         message_str = f"{text_query} ({original_message})"
                         logger.info(f"Inferred context '{text_query}' for price-only search '{original_message}'")
+                        
+                        # --- PERSISTENCE FIX ---
+                        # Update LAST_SEARCH immediately so "Show more" works with this new context
+                        await cache_service.set(
+                            CacheKeys.LAST_SEARCH.format(phone=customer['phone_number']),
+                            json.dumps({"query": f"{text_query} {original_message}", "page": 1}),
+                            ttl=900
+                        )
+                        # -----------------------
                 except Exception as e:
                     logger.warning(f"Failed to inject context for price search: {e}")
         # -------------------------------------------------------

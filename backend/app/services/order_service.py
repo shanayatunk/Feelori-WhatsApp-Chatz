@@ -319,8 +319,7 @@ async def try_authoritative_answer(business_id: str, message: str) -> Optional[s
     Returns the answer string if found, else None.
     """
     try:
-        # Fetch Config (Cached request state ideally, or direct DB)
-        # Using db_service for direct access
+        # Fetch Config
         config = await db_service.db.business_configs.find_one({"business_id": business_id})
         if not config or "knowledge_base" not in config:
             return None
@@ -328,13 +327,18 @@ async def try_authoritative_answer(business_id: str, message: str) -> Optional[s
         kb = config.get("knowledge_base", {})
         message_lower = message.lower().strip()
 
-        # Check all categories (social_media, policies, custom_faqs)
+        # Check all categories (social_media, policies, etc.)
         for category_name, entries in kb.items():
+            # Safety Check 1: Ensure the category itself is a dictionary
             if not isinstance(entries, dict): 
                 continue
             
             for key, entry in entries.items():
-                # entry is { "value": "...", "triggers": ["..."], "enabled": true }
+                # Safety Check 2: Ensure the entry is a dictionary (Fixes the 'str' crash)
+                if not isinstance(entry, dict):
+                    continue
+
+                # Now safe to use .get()
                 if not entry.get("enabled", True): 
                     continue
                 
@@ -1033,7 +1037,10 @@ async def process_message(phone_number: str, message_text: str, message_type: st
         if message_type == "text":
             exact_answer = await try_authoritative_answer(business_id, message_text)
             if exact_answer:
+                logger.info(f"Sending authoritative answer to {clean_phone}. Halting AI flow.")
+                
                 await whatsapp_service.send_message(clean_phone, exact_answer, business_id=business_id)
+                
                 # Log it as an outbound message (source="system_kb")
                 timestamp = datetime.utcnow()
                 await db_service.db.message_logs.insert_one({
@@ -1048,6 +1055,8 @@ async def process_message(phone_number: str, message_text: str, message_type: st
                     "timestamp": timestamp,
                     "conversation_id": conversation_id
                 })
+                
+                # 🚨 CRITICAL: Return immediately to prevent double replies
                 return exact_answer
         # -------------------------------------
 

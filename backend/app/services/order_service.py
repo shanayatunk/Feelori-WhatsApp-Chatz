@@ -5,7 +5,7 @@ import json
 import asyncio
 import logging
 import tenacity
-from datetime import datetime
+from datetime import datetime, timedelta
 from dataclasses import dataclass, field
 from typing import Set, Dict, List, Tuple, Optional, Any
 from pymongo import ReturnDocument
@@ -1124,21 +1124,67 @@ async def process_message(phone_number: str, message_text: str, message_type: st
                         skip_menu=True  # <--- Bypass menu to run lookup
                     )
                     
-                # Option 2: New Inquiry -> General Support / Contact Info
+                # Option 2: New Inquiry -> Smart Gatekeeper + Admin Alert
                 elif normalized_msg == "2" or "new" in normalized_msg or "inquiry" in normalized_msg:
-                    # Fetch config to ensure we send real numbers, not {{Variables}}
                     config = get_business_config(business_id)
                     
-                    await whatsapp_service.send_message(
-                        clean_phone,
-                        f"Understood. 🧑‍💻\n\n"
-                        f"For new inquiries, you can reach our team directly at:\n"
-                        f"📞 {config.support_phone}\n"
-                        f"📧 {config.support_email}\n\n"
-                        "We usually reply within a few hours!",
-                        business_id=business_id
-                    )
-                    return None
+                    # --- 1. Create Dashboard Ticket (So it shows in "Needs Attention") ---
+                    # We use status="pending" so it appears in the default Triage view
+                    triage_ticket = {
+                        "customer_phone": clean_phone,
+                        "order_number": "N/A",
+                        "issue_type": "sales_inquiry",
+                        "status": "pending",
+                        "business_id": business_id,
+                        "assigned_to": None,
+                        "created_at": datetime.utcnow()
+                    }
+                    await db_service.db.triage_tickets.insert_one(triage_ticket)
+
+                    # --- 2. Check Time (IST) ---
+                    # Simple UTC+5:30 conversion
+                    now_utc = datetime.utcnow()
+                    now_ist = now_utc + timedelta(hours=5, minutes=30)
+                    current_hour = now_ist.hour
+                    
+                    # Open between 11 AM (11) and 10 PM (22)
+                    is_open = 11 <= current_hour < 22
+
+                    # --- 3. Send Admin Alert (WhatsApp) ---
+                    if config.admin_phone:
+                        alert_msg = (
+                            f"🔔 *New Sales Lead ({business_id})*\n"
+                            f"👤 Customer: +{clean_phone}\n"
+                            f"⏰ Time: {now_ist.strftime('%I:%M %p')}\n"
+                            f"📂 Status: {'✅ User told to call' if is_open else '💤 User told we are closed'}\n"
+                            f"Ticket created in Dashboard."
+                        )
+                        # Send non-blocking alert
+                        asyncio.create_task(
+                            whatsapp_service.send_message(config.admin_phone, alert_msg, business_id=business_id)
+                        )
+
+                    # --- 4. Reply to User ---
+                    if is_open:
+                        await whatsapp_service.send_message(
+                            clean_phone,
+                            f"Perfect. 🌟 We are online!\n\n"
+                            f"Please call or WhatsApp our team directly:\n"
+                            f"📞 {config.support_phone}\n\n"
+                            "Mention that you are looking for a *New Order*.",
+                            business_id=business_id
+                        )
+                        return None
+                    else:
+                        await whatsapp_service.send_message(
+                            clean_phone,
+                            f"Thanks for reaching out! 🌙\n\n"
+                            f"Our sales team is currently offline (Open 11 AM – 10 PM IST).\n\n"
+                            f"✅ I have created a priority request for you.\n"
+                            f"My team will contact you here as soon as we open tomorrow morning!",
+                            business_id=business_id
+                        )
+                        return None
                 
                 # Invalid Input -> Default to Option 2 (Safer than looping)
                 else:
@@ -2192,9 +2238,18 @@ async def handle_latest_arrivals(customer: Dict, **kwargs) -> Optional[str]:
     """Shows the newest products."""
     business_id = kwargs.get("business_id", "feelori")
     products, _ = await shopify_service.get_products(query="", limit=5, sort_key="CREATED_AT", business_id=business_id)
+    
     if not products: 
         return "I couldn't fetch the latest arrivals right now. Please try again shortly."
-        await _send_product_card(products=products, customer=customer, header_text="Here are our latest arrivals! ✨", body_text="Freshly added to our collection.", business_id=business_id)
+    
+    # ✅ FIX: Send the card BEFORE returning None
+    await _send_product_card(
+        products=products, 
+        customer=customer, 
+        header_text="Here are our latest arrivals! ✨", 
+        body_text="Freshly added to our collection.", 
+        business_id=business_id
+    )
     return None
 
 async def handle_bestsellers(customer: Dict, **kwargs) -> Optional[str]:

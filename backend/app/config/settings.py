@@ -31,6 +31,7 @@ class BusinessConfig(BaseModel):
     support_email: str
     support_phone: str
     wholesale_phone: Optional[str] = None
+    admin_phone: Optional[str] = None
     store_hours: str = "Mon-Sat: 11:00 AM – 8:00 PM IST"
     website_url: str
     business_address: str
@@ -210,7 +211,8 @@ BUSINESS_REGISTRY: Dict[str, BusinessConfig] = {
         support_email="support@feelori.com",
         support_phone="+91 8374864499",
         wholesale_phone="+91 7337294499",
-        store_hours="Mon–Sat: 11:00 AM – 8:00 PM IST",
+        admin_phone="+919967680579",
+        store_hours="Mon-Sat: 11:00 AM – 10:00 PM IST",
         website_url="https://feelori.com",
         business_address="Sai Nidhi, Plot 9, Krishnapuri Colony, Lakshmi Nagar, West Marredpally, Secunderabad, Telangana 500026, India",
         google_review_url="https://g.page/r/CbA6KqXz4_UpEBM/review",
@@ -222,7 +224,8 @@ BUSINESS_REGISTRY: Dict[str, BusinessConfig] = {
         support_email="info@goldencollections.com",
         support_phone="+91 7337294499",
         wholesale_phone="+91 7337294499",
-        store_hours="Mon–Sat: 11:00 AM – 8:00 PM IST",
+        admin_phone="+917337294499",
+        store_hours="Mon-Sat: 11:00 AM – 10:00 PM IST",
         website_url="https://goldencollections.com",
         business_address="Sai Nidhi, Plot 9, Krishnapuri Colony, Lakshmi Nagar, West Marredpally, Secunderabad, Telangana 500026, India",
         google_review_url="https://g.page/r/CSSXrZR11xK9EBM/review",

@@ -615,7 +615,7 @@ async def process_message(phone_number: str, message_text: str, message_type: st
             exact_answer = await try_authoritative_answer(business_id, message_text)
             if exact_answer:
                 await whatsapp_service.send_message(clean_phone, exact_answer, business_id=business_id)
-                return exact_answer
+                return None
         # -------------------------------------
 
         # --- GIFTING INTENT SHORTCUT ---
@@ -1450,6 +1450,9 @@ async def process_message(phone_number: str, message_text: str, message_type: st
         proposed_workflow = None  # Initialize for centralized workflow application
 
         if ai_intent == "product_search":
+            if conversation.get("flow_context", {}).get("intent") == "marketing_interest":
+                logger.info("Skipping product_search because marketing workflow is active.")
+                return None
             response = await handle_product_search(message=ai_keywords, customer=customer, phone_number=clean_phone, quoted_wamid=quoted_wamid, business_id=business_id)
         
         elif ai_intent == "human_escalation":
@@ -2834,7 +2837,7 @@ async def _handle_unclear_request(customer: Dict, original_message: str) -> str:
     """Handles cases where the search intent is unclear."""
     return "I'd love to help! Could you tell me what type of jewelry you're looking for? (e.g., Necklaces, Earrings, Sets)"
 
-async def _handle_standard_search(products: List[Product], message: str, customer: Dict, business_id: str = "feelori") -> str:
+async def _handle_standard_search(products: List[Product], message: str, customer: Dict, business_id: str = "feelori") -> None:
     """Handles standard product search results."""
     phone_number = customer["phone_number"]
     await cache_service.set(

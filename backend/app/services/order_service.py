@@ -327,23 +327,20 @@ async def try_authoritative_answer(business_id: str, message: str) -> Optional[s
         kb = config.get("knowledge_base", {})
         message_lower = message.lower().strip()
 
-        # Check all categories (social_media, policies, etc.)
+        # Check all categories (social_media, policies, custom_faqs)
         for category_name, entries in kb.items():
-            # Safety Check 1: Ensure the category itself is a dictionary
             if not isinstance(entries, dict): 
                 continue
             
             for key, entry in entries.items():
-                # Safety Check 2: Ensure the entry is a dictionary (Fixes the 'str' crash)
+                # 🚨 SECURITY FIX: Skip if entry is just a string (e.g. "123 Main St")
                 if not isinstance(entry, dict):
                     continue
 
-                # Now safe to use .get()
                 if not entry.get("enabled", True): 
                     continue
                 
                 triggers = entry.get("triggers", [])
-                # Logic: If ANY trigger phrase is in the message
                 if triggers and any(t.lower() in message_lower for t in triggers):
                     logger.info(f"Authoritative Answer Triggered: {key} (Business: {business_id})")
                     return entry.get("value")

@@ -1282,7 +1282,7 @@ async def process_message(phone_number: str, message_text: str, message_type: st
             response = await handle_product_search(message=ai_keywords, customer=customer, phone_number=clean_phone, quoted_wamid=quoted_wamid, business_id=business_id)
         
         elif ai_intent == "human_escalation":
-             response = await handle_human_escalation(phone_number=clean_phone, customer=customer, business_id=business_id)
+             response = await handle_human_escalation(phone_number=clean_phone, message_text=message_text, business_id=business_id, profile_name=profile_name, skip_menu=False)
 
         elif ai_intent == "product_inquiry":
             try:
@@ -2480,12 +2480,33 @@ async def handle_thank_you(**kwargs) -> str:
     return string_service.get_formatted_string("THANK_YOU_RESPONSE", business_id=business_id)
 
 
-async def handle_human_escalation(phone_number: str, customer: Dict, **kwargs) -> str:
+async def handle_human_escalation(phone_number: str, message_text: str, business_id: str, profile_name: str = None, skip_menu: bool = False) -> str:
     """
     STARTS the automated triage flow instead of immediately escalating.
     It proactively finds the user's orders and asks them to confirm.
     """
-    business_id = kwargs.get("business_id", "feelori")
+    # --- ENTERPRISE FORK: Sales vs Support ---
+    # If we haven't asked yet, and the user didn't explicitly trigger a specific flow
+    if not skip_menu:
+        # Set a memory marker so we know to handle the answer next
+        await cache_service.set(
+            CacheKeys.LAST_BOT_QUESTION.format(phone=phone_number),
+            "escalation_reason",
+            ttl=300
+        )
+        
+        # Send the Menu
+        msg = (
+            "To connect you with the right person, is this regarding:\n\n"
+            "1️⃣ *An Existing Order* (Status, Issues, Returns)\n"
+            "2️⃣ *New Inquiry* (Bulk, Custom, General)\n\n"
+            "Please reply with *1* or *2*."
+        )
+        await whatsapp_service.send_message(phone_number, msg, business_id=business_id)
+        return  # 🚨 CRITICAL: Return immediately to stop order lookup
+
+    # ---------------------------------------------------------
+    
     logger.info(f"Starting triage flow for {phone_number} instead of escalating.")
     
     # 1. Proactively search our database for recent orders

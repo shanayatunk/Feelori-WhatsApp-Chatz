@@ -5,7 +5,7 @@ import json
 import asyncio
 import logging
 import tenacity
-from datetime import datetime
+from datetime import datetime, timedelta
 from dataclasses import dataclass, field
 from typing import Set, Dict, List, Tuple, Optional, Any
 from pymongo import ReturnDocument
@@ -59,6 +59,16 @@ class SearchConfig:
     MAX_SEARCH_RESULTS: int = 5
     QA_RESULT_LIMIT: int = 1
 
+
+def normalize_price_text(text: str) -> str:
+    """Normalizes '5k', '10k' to '5000', '10000' in any string."""
+    return re.sub(
+        r'\b(\d+)\s*k\b',
+        lambda m: str(int(m.group(1)) * 1000),
+        text.lower()
+    )
+
+
 class QueryBuilder:
     """Builds search queries from natural language messages."""
     def __init__(self, config: SearchConfig, customer: Optional[Dict] = None):
@@ -102,24 +112,62 @@ class QueryBuilder:
         return query
 
     def _parse_price_filter(self, message: str) -> Tuple[Optional[Dict], List[str]]:
-        less_than_match = re.search(r'\b(under|below|less than|<)\s*₹?(\d+k?)\b', message, re.IGNORECASE)
-        if less_than_match:
-            price_str = less_than_match.group(2).replace('k', '000')
-            return {"price": {"lessThan": float(price_str)}}, less_than_match.group(0).split()
+        """
+        Parses price filters like 'under 2000', 'above 5000', '2000 under', 'rs 5000 above'.
+        Returns a Shopify-compatible filter dict and the list of words used for the price.
+        """
+        # --- IMPROVEMENT: Normalize Currency Symbols ---
+        clean_msg = (
+            message.lower()
+            .replace("₹", "")
+            .replace("rs", "")
+            .replace("rupees", "")
+            .replace(",", "")
+            .strip()
+        )
 
-        greater_than_match = re.search(r'\b(over|above|more than|>)\s*₹?(\d+k?)\b', message, re.IGNORECASE)
-        if greater_than_match:
-            price_str = greater_than_match.group(2).replace('k', '000')
-            return {"price": {"greaterThan": float(price_str)}}, greater_than_match.group(0).split()
-            
-        return None, []
+        # Regex for Prefix: "under 2000", "above 5k"
+        prefix_lt = re.search(r'\b(under|below|less than|less|<)\s*(\d+k?)\b', clean_msg)
+        prefix_gt = re.search(r'\b(over|above|more than|more|>)\s*(\d+k?)\b', clean_msg)
+
+        # Regex for Suffix: "2000 under", "5k above"
+        suffix_lt = re.search(r'\b(\d+k?)\s*(under|below|less)\b', clean_msg)
+        suffix_gt = re.search(r'\b(\d+k?)\s*(over|above|more)\b', clean_msg)
+
+        def normalize(val: str) -> float:
+            return float(val.replace("k", "000"))
+
+        price_filter = None
+        used_words = []
+
+        # Prioritize patterns (Suffix takes precedence if both exist to avoid overlap)
+        if suffix_lt:
+            price_filter = {"price": {"lessThan": normalize(suffix_lt.group(1))}}
+            used_words = suffix_lt.group(0).split()
+        elif suffix_gt:
+            price_filter = {"price": {"greaterThan": normalize(suffix_gt.group(1))}}
+            used_words = suffix_gt.group(0).split()
+        elif prefix_lt:
+            price_filter = {"price": {"lessThan": normalize(prefix_lt.group(2))}}
+            used_words = prefix_lt.group(0).split()
+        elif prefix_gt:
+            price_filter = {"price": {"greaterThan": normalize(prefix_gt.group(2))}}
+            used_words = prefix_gt.group(0).split()
+
+        return price_filter, used_words
 
     def build_query_parts(self, message: str) -> Tuple[str, Optional[Dict]]:
         price_filter, price_words = self._parse_price_filter(message)
         message_for_text_search = message
         if price_words:
             for word in price_words:
-                message_for_text_search = message_for_text_search.replace(word, "")
+                # Use \b to ensure we match whole words and ignore case
+                message_for_text_search = re.sub(
+                    r'\b' + re.escape(word) + r'\b',
+                    '',
+                    message_for_text_search,
+                    flags=re.IGNORECASE
+                )
         keywords = self._extract_keywords(message_for_text_search)
         text_query = self._build_prioritized_query(keywords)
         return text_query, price_filter
@@ -223,7 +271,7 @@ async def _handle_triage_flow(clean_phone: str, message_text: str, message_type:
         order_to_confirm = triage_state.get("order_number")
         if message_text == TriageButtons.CONFIRM_YES:
             await _send_triage_issue_list(clean_phone, order_to_confirm)
-            return "[Bot is handling triage step 2: issue selection]"
+            return None
         else:
             new_state = {"state": TriageStates.AWAITING_ORDER_NUMBER}
             await cache_service.set(CacheKeys.TRIAGE_STATE.format(phone=clean_phone), json.dumps(new_state), ttl=900)
@@ -234,7 +282,7 @@ async def _handle_triage_flow(clean_phone: str, message_text: str, message_type:
         if re.fullmatch(r'#?[A-Z]{0,3}\d{4,6}', order_number, re.IGNORECASE):
             await cache_service.delete(CacheKeys.TRIAGE_STATE.format(phone=clean_phone))
             await _send_triage_issue_list(clean_phone, order_number)
-            return "[Bot is handling triage step 2: issue selection]"
+            return None
         else:
             return "That doesn't look like a valid order number. Please try again (e.g., #FO1039)."
 
@@ -295,7 +343,7 @@ async def _handle_triage_flow(clean_phone: str, message_text: str, message_type:
         if current_state:
             await cache_service.delete(CacheKeys.TRIAGE_STATE.format(phone=clean_phone))
         await _send_triage_issue_list(clean_phone, order_number)
-        return "[Bot is handling triage step 2: issue selection]"
+        return None
 
     return None # Fall through if no triage state was handled
 
@@ -573,7 +621,7 @@ async def process_message(phone_number: str, message_text: str, message_type: st
             exact_answer = await try_authoritative_answer(business_id, message_text)
             if exact_answer:
                 await whatsapp_service.send_message(clean_phone, exact_answer, business_id=business_id)
-                return exact_answer
+                return None
         # -------------------------------------
 
         # --- GIFTING INTENT SHORTCUT ---
@@ -585,7 +633,7 @@ async def process_message(phone_number: str, message_text: str, message_type: st
                     "offer_bestsellers",
                     ttl=900
                 )
-                return await whatsapp_service.send_message(
+                await whatsapp_service.send_message(
                     clean_phone,
                     "That's lovely! 💖 I'd be happy to help you find the perfect gift.\n\n"
                     "Would you like to explore:\n"
@@ -593,6 +641,7 @@ async def process_message(phone_number: str, message_text: str, message_type: st
                     "Or see our *Bestsellers*?",
                     business_id=business_id
                 )
+                return None
         # ---------------------------------
 
         # --- SHORTCUT HANDLER: Explicit Buying Intent ---
@@ -608,7 +657,8 @@ async def process_message(phone_number: str, message_text: str, message_type: st
                     "3️⃣ Bangles\n"
                     "4️⃣ Something else?"
                 )
-                return buying_intent_response
+                await whatsapp_service.send_message(clean_phone, buying_intent_response, business_id=business_id)
+                return None
         # -------------------------------------------------
 
         # --- PHASE 4.1: Initialize workflow on first broadcast reply ---
@@ -786,7 +836,20 @@ async def process_message(phone_number: str, message_text: str, message_type: st
 
             # Step: identify_category → qualified
             if current_step == "identify_category":
-                normalized = message_text.lower().strip()
+                normalized = normalize_price_text(message_text.lower().strip())
+
+                # --- Map Numeric Inputs & Button IDs to Ranges ---
+                price_map = {
+                    "1": "3000-5000",
+                    "2": "5000-10000",
+                    "3": "above 10000",
+                    "price_3000_5000": "3000-5000",
+                    "price_5000_10000": "5000-10000",
+                    "price_above_10000": "above 10000"
+                }
+                if normalized in price_map:
+                    normalized = price_map[normalized]
+                # ------------------------------------
 
                 # Detect price range intent
                 price_range = None
@@ -800,6 +863,15 @@ async def process_message(phone_number: str, message_text: str, message_type: st
                 # 2k-5k / between / 2000-5000 → 2000_5000
                 elif any(keyword in normalized for keyword in ["2k-5k", "2k - 5k", "2k to 5k", "2000-5000", "2000 - 5000", "between", "2-5k", "2-5 k"]):
                     price_range = "2000_5000"
+                # 3000-5000 / 3k-5k → 3000_5000
+                elif any(keyword in normalized for keyword in ["3000-5000", "3000 - 5000", "3k-5k", "3k - 5k", "3k to 5k", "3-5k", "3-5 k"]):
+                    price_range = "3000_5000"
+                # 5000-10000 / 5k-10k → 5000_10000
+                elif any(keyword in normalized for keyword in ["5000-10000", "5000 - 10000", "5k-10k", "5k - 10k", "5k to 10k", "5-10k", "5-10 k"]):
+                    price_range = "5000_10000"
+                # above 10000 / above 10k → above_10000
+                elif any(keyword in normalized for keyword in ["above 10000", "above 10k", "above 10 k", "over 10000", "over 10k", "> 10k", ">10k"]):
+                    price_range = "above_10000"
 
                 if price_range:
                     from app.models.conversation import Conversation
@@ -849,11 +921,19 @@ async def process_message(phone_number: str, message_text: str, message_type: st
 
             if step == "identify_category":
                 category = slots.get("category", "these")
-                return (
-                    f"Great choice! ✨ We have beautiful *{category}* available.\n\n"
-                    "What is your preferred price range?\n"
-                    "• Under 2k\n• 2k–5k\n• Above 5k"
+                options = {
+                    "price_3000_5000": "₹3k – ₹5k",
+                    "price_5000_10000": "₹5k – ₹10k",
+                    "price_above_10000": "Above ₹10k"
+                }
+                
+                await whatsapp_service.send_quick_replies(
+                    clean_phone,
+                    f"Great choice! ✨ We have beautiful *{category}* available.\n\nPlease choose your preferred price range:",
+                    options,
+                    business_id=business_id
                 )
+                return None
 
             if step == "qualified":
                 # A) Idempotency Guard
@@ -1090,29 +1170,86 @@ async def process_message(phone_number: str, message_text: str, message_type: st
                         skip_menu=True  # <--- Bypass menu to run lookup
                     )
                     
-                # Option 2: New Inquiry -> General Support / Contact Info
+                # Option 2: New Inquiry -> Smart Gatekeeper + Admin Alert
                 elif normalized_msg == "2" or "new" in normalized_msg or "inquiry" in normalized_msg:
-                    # Fetch config to ensure we send real numbers, not {{Variables}}
                     config = get_business_config(business_id)
                     
-                    return await whatsapp_service.send_message(
-                        clean_phone,
-                        f"Understood. 🧑‍💻\n\n"
-                        f"For new inquiries, you can reach our team directly at:\n"
-                        f"📞 {config.support_phone}\n"
-                        f"📧 {config.support_email}\n\n"
-                        "We usually reply within a few hours!",
-                        business_id=business_id
-                    )
+                    # --- 1. Create Dashboard Ticket (So it shows in "Needs Attention") ---
+                    # We use status="pending" so it appears in the default Triage view
+                    triage_ticket = {
+                        "customer_phone": clean_phone,
+                        "order_number": "N/A",
+                        "issue_type": "sales_inquiry",
+                        "status": "pending",
+                        "business_id": business_id,
+                        "assigned_to": None,
+                        "created_at": datetime.utcnow()
+                    }
+                    await db_service.db.triage_tickets.insert_one(triage_ticket)
+
+                    # --- 2. Check Time (IST) ---
+                    # Simple UTC+5:30 conversion
+                    now_utc = datetime.utcnow()
+                    now_ist = now_utc + timedelta(hours=5, minutes=30)
+                    current_hour = now_ist.hour
+                    
+                    # Open between 11 AM (11) and 10 PM (22)
+                    is_open = 11 <= current_hour < 22
+
+                    # --- 3. Send Admin Alert (WhatsApp) ---
+                    if config.admin_phone:
+                        # Dedup Check: Don't spam admin if already alerted in last 1 hour
+                        alert_key = f"sales_alert_sent:{clean_phone}"
+                        already_alerted = await cache_service.redis.get(alert_key)
+                        
+                        if not already_alerted:
+                            alert_msg = (
+                                f"🔔 *New Sales Lead ({business_id})*\n"
+                                f"👤 Customer: +{clean_phone}\n"
+                                f"⏰ Time: {now_ist.strftime('%I:%M %p')}\n"
+                                f"📂 Status: {'✅ User told to call' if is_open else '💤 User told we are closed'}\n"
+                                f"Ticket created in Dashboard."
+                            )
+                            # Send non-blocking alert
+                            asyncio.create_task(
+                                whatsapp_service.send_message(config.admin_phone, alert_msg, business_id=business_id)
+                            )
+                            # Mark as sent for 1 hour
+                            await cache_service.redis.set(alert_key, "1", ex=3600)
+
+                    # --- 4. Reply to User ---
+                    if is_open:
+                        await whatsapp_service.send_message(
+                            clean_phone,
+                            f"Perfect. 🌟 We are online!\n\n"
+                            f"Please call or WhatsApp our team directly:\n"
+                            f"📞 {config.support_phone}\n\n"
+                            "Mention that you are looking for a *New Order*.",
+                            business_id=business_id
+                        )
+                        return None
+                    else:
+                        await whatsapp_service.send_message(
+                            clean_phone,
+                            (
+                                "Thanks for reaching out! 🌙\n\n"
+                                "Our sales team is currently offline (Open 11 AM – 10 PM IST).\n\n"
+                                "✅ I have created a priority request for you.\n"
+                                "My team will contact you here as soon as we open tomorrow morning!"
+                            ),
+                            business_id=business_id
+                        )
+                        return None
                 
                 # Invalid Input -> Default to Option 2 (Safer than looping)
                 else:
-                    config = get_business_config(business_id)
-                    return await whatsapp_service.send_message(
+                     config = get_business_config(business_id)
+                     await whatsapp_service.send_message(
                         clean_phone,
                         f"Please reach out to us directly:\n📞 {config.support_phone}",
                         business_id=business_id
                     )
+                     return None
             
             # 3. Handle "offer_unfiltered_products"
             elif last_question == "offer_unfiltered_products":
@@ -1183,9 +1320,10 @@ async def process_message(phone_number: str, message_text: str, message_type: st
             
             return response[:4096] if response else None
 
-        # --- REPLACED: Flexible Order Number Detection ---
+        # --- TIGHTENED: Flexible Order Number Detection (No raw numbers) ---
         # Catches: "#1234", "Order 1234", "Its 1234", "No. 1234", "Is 1234"
-        order_match = re.search(r'(?:#|order\s+|no\.?\s+|its\s+|is\s+|^)([A-Z]{0,3}\d{4,6})\b', message_text.strip(), re.IGNORECASE)
+        # Does NOT catch: "5000" (raw numbers are price filters, not orders)
+        order_match = re.search(r'(?:#|order\s+|no\.?\s+|its\s+|is\s+)([A-Z]{0,3}\d{4,6})\b', message_text.strip(), re.IGNORECASE)
 
         if order_match:
             # We found an order number!
@@ -1320,6 +1458,9 @@ async def process_message(phone_number: str, message_text: str, message_type: st
         proposed_workflow = None  # Initialize for centralized workflow application
 
         if ai_intent == "product_search":
+            if conversation.get("flow_context", {}).get("intent") == "marketing_interest":
+                logger.info("Skipping product_search because marketing workflow is active.")
+                return None
             response = await handle_product_search(message=ai_keywords, customer=customer, phone_number=clean_phone, quoted_wamid=quoted_wamid, business_id=business_id)
         
         elif ai_intent == "human_escalation":
@@ -1594,13 +1735,13 @@ def _analyze_interactive_intent(message: str) -> str:
 def analyze_text_intent(message_lower: str) -> str:
     """Analyzes intent for text messages using rules from the database."""
 
-    # --- THIS IS THE FIX --
-    # The regex now accepts optional letters (A-Z) between the '#' and the numbers.
-    if re.fullmatch(r'#?[A-Z]{0,3}\d{4,6}', message_lower.strip(), re.IGNORECASE):
+    # --- TIGHTENED: Require prefix to avoid matching price filters ---
+    # Only matches: "#1234", "Order 1234", "No. 1234" (not raw "5000")
+    if re.fullmatch(r'(?:#|order\s*|no\.?\s*)[A-Z]{0,3}\d{4,6}', message_lower.strip(), re.IGNORECASE):
         return "order_detail_inquiry"
 
     # We apply the same fix to the search regex.
-    if re.search(r'#?[A-Z]{0,3}\d{4,6}', message_lower, re.IGNORECASE):
+    if re.search(r'(?:#|order\s+|no\.?\s+)[A-Z]{0,3}\d{4,6}', message_lower, re.IGNORECASE):
         return "order_detail_inquiry"
     # --- END OF FIX ---
 
@@ -1707,10 +1848,69 @@ async def handle_product_search(message: List[str] | str, customer: Dict, **kwar
             return await _handle_unclear_request(customer, original_message)
         
         # 3. Build query parts from the ORIGINAL message to keep price filters.
-        text_query, price_filter = query_builder.build_query_parts(original_message)
+        # --- WORKFLOW GUARD: Do not parse price if marketing workflow owns it ---
+        clean_phone = customer.get("phone_number", "")
+        conversation = None
+        try:
+            conversation = await db_service.db.conversations.find_one(
+                {"external_user_id": clean_phone, "tenant_id": business_id}
+            )
+        except Exception as e:
+            logger.debug(f"Could not fetch conversation for {clean_phone}: {e}")
+        
+        if conversation and conversation.get("flow_context", {}).get("intent") == "marketing_interest":
+            current_step = conversation["flow_context"].get("step")
+            if current_step in {"identify_category", "qualified"}:
+                logger.info("Skipping price parsing: handled by marketing workflow.")
+                text_query = " ".join(message) if isinstance(message, list) else message
+                price_filter = None
+                # Continue execution using workflow-driven logic
+            else:
+                text_query, price_filter = query_builder.build_query_parts(original_message)
+        else:
+            text_query, price_filter = query_builder.build_query_parts(original_message)
+        
+        # --- CONTEXT INJECTION (Fix for Price-Only Searches) ---
+        # Guard: Only check history if we have a price BUT no text query
+        # AND message is a list/tuple (from AI Intent Classifier, not Visual Search captions)
+        if not text_query and price_filter and isinstance(message, (list, tuple)):
+            # User sent "6000 above" but no product name. Check history.
+            last_search_raw = await cache_service.redis.get(CacheKeys.LAST_SEARCH.format(phone=customer['phone_number']))
+            
+            # Guard: If cache is expired (None), we skip this block (Stale Check)
+            if last_search_raw:
+                try:
+                    last_search_data = json.loads(last_search_raw)
+                    last_query = last_search_data.get("query", "")
+                    
+                    # Extract keywords from the PREVIOUS search
+                    # We reuse the QueryBuilder to get just the keywords (ignoring previous price filters)
+                    prev_keywords = query_builder._extract_keywords(last_query)
+                    
+                    if prev_keywords:
+                        text_query = " AND ".join(prev_keywords)
+                        # Update the display string so logs make sense
+                        message_str = f"{text_query} ({original_message})"
+                        logger.info(f"Inferred context '{text_query}' for price-only search '{original_message}'")
+                        
+                        # --- PERSISTENCE FIX ---
+                        # Update LAST_SEARCH immediately so "Show more" works with this new context
+                        await cache_service.set(
+                            CacheKeys.LAST_SEARCH.format(phone=customer['phone_number']),
+                            json.dumps({"query": f"{text_query} {original_message}", "page": 1}),
+                            ttl=900
+                        )
+                        # -----------------------
+                except Exception as e:
+                    logger.warning(f"Failed to inject context for price search: {e}")
+        # -------------------------------------------------------
         
         # 4. Use the clean keyword string for logging, display, and cache keys.
-        message_str = " ".join(keywords)
+        # (Only set if context injection didn't set it)
+        try:
+            _ = message_str  # Check if already set by context injection
+        except NameError:
+            message_str = " ".join(keywords)
         # --- END OF CORRECTED LOGIC ---
 
         # Check if any keyword is in our unavailable list.
@@ -1739,7 +1939,8 @@ async def handle_product_search(message: List[str] | str, customer: Dict, **kwar
             else:
                 return await _handle_no_results(customer, message_str)
 
-        return await _handle_standard_search(filtered_products, message_str, customer, business_id=business_id)
+        await _handle_standard_search(filtered_products, message_str, customer, business_id=business_id)
+        return None
     except Exception:
         safe_msg = (original_message if 'original_message' in locals()
                     else (message if isinstance(message, str) else " ".join(message)))
@@ -2046,7 +2247,7 @@ async def handle_buy_request(product_id: str, customer: Dict, **kwargs) -> Optio
             variant_options,
             business_id=business_id
         )
-        return "[Bot asked for variant selection]"
+        return None
     elif variants:
         # --- THIS IS THE FIX ---
         # 1. Get the direct add-to-cart URL.
@@ -2065,7 +2266,7 @@ async def handle_buy_request(product_id: str, customer: Dict, **kwargs) -> Optio
             business_id=business_id
         )
         
-        return f"[Sent plain text checkout link for {product.title}]"
+        return None
         # --- END OF FIX ---
     else:
         product_url = shopify_service.get_product_page_url(product.handle, business_id=business_id)
@@ -2090,7 +2291,7 @@ async def handle_price_inquiry(message: str, customer: Dict, **kwargs) -> Option
     if product_to_price_raw:
         product_to_price = Product.parse_raw(product_to_price_raw)
         await whatsapp_service.send_product_detail_with_buttons(phone_number, product_to_price, business_id=business_id)
-        return "[Bot sent product details]"
+        return None
     
     return "I can help with prices! Which product are you interested in? Try searching for something like 'gold necklaces' first."
 
@@ -2117,7 +2318,7 @@ async def handle_product_detail(message: str, customer: Dict, **kwargs) -> Optio
             ttl=900
         )
         await whatsapp_service.send_product_detail_with_buttons(customer["phone_number"], product, business_id=business_id)
-        return "[Bot sent product details]"
+        return None
 
     return "Sorry, I couldn't find details for that product."
 
@@ -2125,10 +2326,19 @@ async def handle_latest_arrivals(customer: Dict, **kwargs) -> Optional[str]:
     """Shows the newest products."""
     business_id = kwargs.get("business_id", "feelori")
     products, _ = await shopify_service.get_products(query="", limit=5, sort_key="CREATED_AT", business_id=business_id)
+    
     if not products: 
         return "I couldn't fetch the latest arrivals right now. Please try again shortly."
-    await _send_product_card(products=products, customer=customer, header_text="Here are our latest arrivals! ✨", body_text="Freshly added to our collection.", business_id=business_id)
-    return "[Sent latest arrival recommendations]"
+    
+    # ✅ FIX: Send the card BEFORE returning None
+    await _send_product_card(
+        products=products, 
+        customer=customer, 
+        header_text="Here are our latest arrivals! ✨", 
+        body_text="Freshly added to our collection.", 
+        business_id=business_id
+    )
+    return None
 
 async def handle_bestsellers(customer: Dict, **kwargs) -> Optional[str]:
     """Shows the top-selling products."""
@@ -2165,7 +2375,7 @@ async def handle_bestsellers(customer: Dict, **kwargs) -> Optional[str]:
             body_text="These are the items our customers love most.", 
             business_id=business_id
         )
-        return "[Sent bestseller recommendations]"
+        return None
         
     except Exception as e:
         logger.error(f"Error fetching bestsellers for business_id={business_id}: {e}", exc_info=True)
@@ -2204,7 +2414,7 @@ async def handle_more_results(message: str, customer: Dict, **kwargs) -> Optiona
     if not products: 
         return f"I couldn't find any more designs for '{raw_query_for_display}'. Try something else."
     await _send_product_card(products=products, customer=customer, header_text=header_text, body_text="Here are a few more options.", business_id=business_id)
-    return f"[Sent more results for '{raw_query_for_display}']"
+    return None
 
 async def handle_shipping_inquiry(message: str, customer: Dict, **kwargs) -> Optional[str]:
     """Provides shipping information and handles contextual delivery time questions."""
@@ -2362,7 +2572,7 @@ async def handle_visual_search(message: str, customer: Dict, **kwargs) -> Option
             await asyncio.sleep(1)  # Small delay for UX pacing
             await whatsapp_service.send_message(phone_number, final_reply, business_id=business_id)
                 
-        return "[Visual search complete]"
+        return None
 
     except Exception as e:
         logger.error(f"Visual search handler error: {e}", exc_info=True)
@@ -2544,7 +2754,7 @@ async def handle_human_escalation(phone_number: str, message_text: str, business
             "Please reply with *1* or *2*."
         )
         await whatsapp_service.send_message(phone_number, msg, business_id=business_id)
-        return  # 🚨 CRITICAL: Return immediately to stop order lookup
+        return None  # 🚨 CRITICAL: Return immediately to stop order lookup
 
     # ---------------------------------------------------------
     
@@ -2576,7 +2786,7 @@ async def handle_human_escalation(phone_number: str, message_text: str, business
             options,
             business_id=business_id
         )
-        return "[Bot is asking to confirm order for triage]"
+        return None
 
     else:
         # 4. MULTIPLE ORDERS FOUND: Ask to select.
@@ -2594,7 +2804,7 @@ async def handle_human_escalation(phone_number: str, message_text: str, business
             options,
             business_id=business_id
         )
-        return "[Bot is asking to select order for triage]"
+        return None
 
 # --- Helper Functions for Handlers ---
 
@@ -2656,7 +2866,7 @@ async def _handle_unclear_request(customer: Dict, original_message: str) -> str:
     """Handles cases where the search intent is unclear."""
     return "I'd love to help! Could you tell me what type of jewelry you're looking for? (e.g., Necklaces, Earrings, Sets)"
 
-async def _handle_standard_search(products: List[Product], message: str, customer: Dict, business_id: str = "feelori") -> str:
+async def _handle_standard_search(products: List[Product], message: str, customer: Dict, business_id: str = "feelori") -> None:
     """Handles standard product search results."""
     phone_number = customer["phone_number"]
     await cache_service.set(
@@ -2688,7 +2898,7 @@ async def _handle_standard_search(products: List[Product], message: str, custome
             contextual_answer = f"Regarding your question about delivery to **{city.title()}**: it typically takes **3-5 business days**." if city else "Regarding delivery: it's typically **3-5 business days** for metro cities."
             await whatsapp_service.send_message(phone_number, contextual_answer)
     
-    return f"[Sent {len(products)} product recommendations]"
+    return None
 
 async def _send_product_card(products: List[Product], customer: Dict, header_text: str, body_text: str, business_id: str = "feelori"):
     """

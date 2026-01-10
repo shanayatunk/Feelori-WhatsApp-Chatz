@@ -25,16 +25,18 @@ class WhatsAppBusinessConfig(BaseModel):
 
 class BusinessConfig(BaseModel):
     """
-    Configuration model for business metadata (contact info, address, etc.).
-    Used for business information display and customer support.
+    Configuration model for business metadata.
     """
     business_name: str
     support_email: str
     support_phone: str
+    wholesale_phone: Optional[str] = None
+    store_hours: str = "Mon-Sat: 11:00 AM – 8:00 PM IST"
     website_url: str
     business_address: str
     google_review_url: Optional[str] = None
     shipping_policy_url: Optional[str] = None
+    social_media_links: str = ""
 
 
 class Settings(BaseSettings):
@@ -206,20 +208,26 @@ BUSINESS_REGISTRY: Dict[str, BusinessConfig] = {
     "feelori": BusinessConfig(
         business_name="FeelOri",
         support_email="support@feelori.com",
-        support_phone="+91 8374864499",
+        support_phone="+91 9967680579",
+        wholesale_phone="+91 7337294499",
+        store_hours="Mon–Sat: 11:00 AM – 8:00 PM IST",
         website_url="https://feelori.com",
-        business_address="Sai Nidhi, Plot 9, Krishnapuri Colony, Lakshmi Nagar, West Marredpally, Secunderabad, Hyderabad, Telangana 500026, India",
+        business_address="Sai Nidhi, Plot 9, Krishnapuri Colony, Lakshmi Nagar, West Marredpally, Secunderabad, Telangana 500026, India",
         google_review_url="https://g.page/r/CbA6KqXz4_UpEBM/review",
-        shipping_policy_url="https://feelori.com/policies/shipping-policy"
+        shipping_policy_url="https://feelori.com/policies/shipping-policy",
+        social_media_links="• Instagram: @FeeloriOfficial\n• Facebook: FeeloriOfficial"
     ),
     "goldencollections": BusinessConfig(
         business_name="Golden Collections",
         support_email="info@goldencollections.com",
         support_phone="+91 7337294499",
+        wholesale_phone="+91 7337294499",
+        store_hours="Mon–Sat: 11:00 AM – 8:00 PM IST",
         website_url="https://goldencollections.com",
-        business_address="Sai Nidhi, Plot 9, Krishnapuri Colony, Lakshmi Nagar, West Marredpally, Secunderabad, Hyderabad, Telangana 500026, India",
+        business_address="Sai Nidhi, Plot 9, Krishnapuri Colony, Lakshmi Nagar, West Marredpally, Secunderabad, Telangana 500026, India",
         google_review_url="https://g.page/r/CSSXrZR11xK9EBM/review",
-        shipping_policy_url="https://goldencollections.com/policies/shipping-policy"
+        shipping_policy_url="https://goldencollections.com/policies/shipping-policy",
+        social_media_links="• Instagram: @GoldenCollections\n• YouTube: GoldenCollections"
     )
 }
 
